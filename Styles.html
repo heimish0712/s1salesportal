@@ -3036,3 +3036,99 @@ button .portal-guide-help,
 }
 
 </style>
+
+/* PATCH P1-21: 전 화면 공통 글자 크기 조절 */
+html {
+  --portal-font-scale: 1;
+  --portal-font-zoom: 1;
+}
+body {
+  zoom: var(--portal-font-zoom);
+}
+.font-scale-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 32px;
+  padding: 3px 5px;
+  border: 1px solid #d0d5dd;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(16,24,40,.04);
+  white-space: nowrap;
+}
+.font-scale-label {
+  padding: 0 5px 0 7px;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+.font-scale-btn,
+button.font-scale-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 25px;
+  min-width: 30px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid #dbe2ec;
+  background: #f8fafc;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+.font-scale-btn:hover:not(:disabled),
+button.font-scale-btn:hover:not(:disabled) {
+  background: #eef4ff;
+  border-color: #b2ccff;
+  color: #1d4ed8;
+  opacity: 1;
+}
+.font-scale-reset,
+button.font-scale-reset {
+  width: 40px;
+  min-width: 40px;
+  font-size: 11px;
+}
+.font-scale-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  height: 25px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #101828;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+body.portal-font-zoom-active .font-scale-control {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.08);
+}
+@supports not (zoom: 1) {
+  body.portal-font-zoom-active {
+    font-size: calc(14px * var(--portal-font-scale));
+  }
+  body.portal-font-zoom-active input,
+  body.portal-font-zoom-active select,
+  body.portal-font-zoom-active textarea,
+  body.portal-font-zoom-active button,
+  body.portal-font-zoom-active table,
+  body.portal-font-zoom-active .nav-item,
+  body.portal-font-zoom-active .badge,
+  body.portal-font-zoom-active .current-user-badge {
+    font-size: inherit;
+  }
+}
+@media (max-width: 1100px) {
+  .font-scale-label { display: none; }
+  .font-scale-control { gap: 2px; }
+  .font-scale-value { min-width: 38px; padding: 0 5px; }
+}

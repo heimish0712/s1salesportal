@@ -688,4 +688,173 @@ function filterCustomerRowsByPermissionClient_(rows) {
   return rows.filter(isCustomerRowAllowedByClientPermission_);
 }
 
+
+
+// PATCH P1-21: 전 화면 공통 글자 크기 컨트롤
+// - 글자 크기는 계정별 사용자설정_DB에 저장합니다.
+// - 화면 렌더링을 다시 하지 않고 CSS 변수만 변경하므로 입력 중 포커스를 건드리지 않습니다.
+const PORTAL_FONT_SCALE_KEY_P121 = 'uiFontScale';
+const PORTAL_FONT_SCALE_DEFAULT_P121 = 1;
+const PORTAL_FONT_SCALE_MIN_P121 = 0.85;
+const PORTAL_FONT_SCALE_MAX_P121 = 1.35;
+const PORTAL_FONT_SCALE_STEP_P121 = 0.05;
+const PORTAL_FONT_SCALE_LOCAL_KEY_P121 = 'salesPortal.uiFontScale.last';
+const PORTAL_FONT_SCALE_LOCAL_PREFIX_P121 = 'salesPortal.uiFontScale.email.';
+let portalFontScaleStateP121 = {
+  scale: PORTAL_FONT_SCALE_DEFAULT_P121,
+  loaded: false,
+  loading: false,
+  saving: false,
+  saveTimer: null,
+  userChangedAt: 0,
+  serverLoadStartedAt: 0
+};
+
+function clampPortalFontScaleP121_(value) {
+  let n = Number(value);
+  if (!isFinite(n) || n <= 0) n = PORTAL_FONT_SCALE_DEFAULT_P121;
+  n = Math.max(PORTAL_FONT_SCALE_MIN_P121, Math.min(PORTAL_FONT_SCALE_MAX_P121, n));
+  return Math.round(n * 100) / 100;
+}
+
+function getPortalFontScaleEmailKeyP121_() {
+  let email = '';
+  try {
+    const p = getPortalPermission_ ? getPortalPermission_() : null;
+    email = String((p && p.email) || '').trim().toLowerCase();
+  } catch (err) {}
+  return email ? (PORTAL_FONT_SCALE_LOCAL_PREFIX_P121 + email) : '';
+}
+
+function readPortalFontScaleLocalP121_() {
+  try {
+    const emailKey = getPortalFontScaleEmailKeyP121_();
+    const byEmail = emailKey ? localStorage.getItem(emailKey) : '';
+    const raw = byEmail || localStorage.getItem(PORTAL_FONT_SCALE_LOCAL_KEY_P121) || '';
+    if (!raw) return null;
+    return clampPortalFontScaleP121_(raw);
+  } catch (err) {
+    return null;
+  }
+}
+
+function writePortalFontScaleLocalP121_(scale) {
+  try {
+    const value = String(clampPortalFontScaleP121_(scale));
+    localStorage.setItem(PORTAL_FONT_SCALE_LOCAL_KEY_P121, value);
+    const emailKey = getPortalFontScaleEmailKeyP121_();
+    if (emailKey) localStorage.setItem(emailKey, value);
+  } catch (err) {}
+}
+
+function applyPortalFontScaleP121_(scale, options) {
+  options = options || {};
+  scale = clampPortalFontScaleP121_(scale);
+  portalFontScaleStateP121.scale = scale;
+
+  const percent = Math.round(scale * 100);
+  const root = document.documentElement;
+  if (root) {
+    root.style.setProperty('--portal-font-scale', String(scale));
+    root.style.setProperty('--portal-font-zoom', String(scale));
+    root.setAttribute('data-portal-font-scale', String(scale));
+  }
+  if (document.body) {
+    document.body.classList.toggle('portal-font-zoom-active', Math.abs(scale - 1) > 0.001);
+    document.body.setAttribute('data-portal-font-scale-percent', String(percent));
+  }
+
+  const valueEl = document.getElementById('fontScaleValue');
+  if (valueEl) valueEl.textContent = percent + '%';
+
+  document.querySelectorAll('.font-scale-btn').forEach(function(btn) { btn.disabled = false; });
+  const control = document.getElementById('fontScaleControl');
+  if (control) {
+    control.title = '현재 글자 크기: ' + percent + '% · 이 계정에 저장됩니다.';
+  }
+
+  if (options.saveLocal !== false) writePortalFontScaleLocalP121_(scale);
+}
+
+function initPortalFontScaleP121_() {
+  const localScale = readPortalFontScaleLocalP121_();
+  applyPortalFontScaleP121_(localScale || PORTAL_FONT_SCALE_DEFAULT_P121, { saveLocal: false });
+  loadPortalFontScalePreferenceP121_();
+}
+
+// Client_Router에서 호출하기 쉽게 기존 명명 규칙 wrapper도 제공합니다.
+function initPortalFontScale_() {
+  return initPortalFontScaleP121_();
+}
+
+function loadPortalFontScalePreferenceP121_() {
+  if (portalFontScaleStateP121.loading) return;
+  portalFontScaleStateP121.loading = true;
+  portalFontScaleStateP121.serverLoadStartedAt = Date.now();
+  const startedAt = portalFontScaleStateP121.serverLoadStartedAt;
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      portalFontScaleStateP121.loading = false;
+      portalFontScaleStateP121.loaded = true;
+      const serverScale = res && res.preferences ? res.preferences.fontScale : null;
+      if (serverScale == null || serverScale === '') return;
+      // 서버 로딩 이후 사용자가 이미 조정했으면 오래된 서버값으로 덮지 않습니다.
+      if (portalFontScaleStateP121.userChangedAt && portalFontScaleStateP121.userChangedAt > startedAt) return;
+      applyPortalFontScaleP121_(serverScale, { saveLocal: true });
+    })
+    .withFailureHandler(function(err) {
+      portalFontScaleStateP121.loading = false;
+      portalFontScaleStateP121.loaded = true;
+      console.warn('글자 크기 사용자 설정 로딩 실패', err);
+    })
+    .getPortalUserUiPreferences();
+}
+
+function changePortalFontScaleP121_(direction) {
+  direction = Number(direction) || 0;
+  if (!direction) return;
+  const next = clampPortalFontScaleP121_(portalFontScaleStateP121.scale + (direction > 0 ? PORTAL_FONT_SCALE_STEP_P121 : -PORTAL_FONT_SCALE_STEP_P121));
+  portalFontScaleStateP121.userChangedAt = Date.now();
+  applyPortalFontScaleP121_(next, { saveLocal: true });
+  scheduleSavePortalFontScaleP121_();
+}
+
+function changePortalFontScale_(direction) {
+  return changePortalFontScaleP121_(direction);
+}
+
+function resetPortalFontScaleP121_() {
+  portalFontScaleStateP121.userChangedAt = Date.now();
+  applyPortalFontScaleP121_(PORTAL_FONT_SCALE_DEFAULT_P121, { saveLocal: true });
+  scheduleSavePortalFontScaleP121_();
+}
+
+function resetPortalFontScale_() {
+  return resetPortalFontScaleP121_();
+}
+
+function scheduleSavePortalFontScaleP121_() {
+  if (portalFontScaleStateP121.saveTimer) clearTimeout(portalFontScaleStateP121.saveTimer);
+  portalFontScaleStateP121.saveTimer = setTimeout(function() {
+    savePortalFontScalePreferenceP121_();
+  }, 450);
+}
+
+function savePortalFontScalePreferenceP121_() {
+  const scale = clampPortalFontScaleP121_(portalFontScaleStateP121.scale);
+  portalFontScaleStateP121.saving = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      portalFontScaleStateP121.saving = false;
+      if (res && res.value) applyPortalFontScaleP121_(res.value, { saveLocal: true });
+    })
+    .withFailureHandler(function(err) {
+      portalFontScaleStateP121.saving = false;
+      console.warn('글자 크기 사용자 설정 저장 실패', err);
+      // 저장 실패해도 현재 화면 글자 크기와 localStorage는 유지합니다.
+    })
+    .savePortalUserUiPreference(PORTAL_FONT_SCALE_KEY_P121, scale);
+}
+
 </script>

@@ -177,3 +177,133 @@ function normalizePortalHexColor_(value, fallback) {
   if (/^[0-9a-fA-F]{6}$/.test(text)) return '#' + text;
   return fallback;
 }
+
+
+/***************************************
+ * PATCH P1-21: 계정별 UI 글자 크기 저장
+ * - 모든 화면 공통 글자 크기 컨트롤에서 사용합니다.
+ * - 사용자별 설정은 사용자설정_DB에 저장합니다.
+ ***************************************/
+const PORTAL_USER_PREF_SHEET_NAME_P121 = '사용자설정_DB';
+const PORTAL_USER_PREF_HEADERS_P121 = ['이메일', '사용자명', '설정키', '설정값', '수정일시'];
+const PORTAL_USER_PREF_FONT_SCALE_KEY_P121 = 'uiFontScale';
+const PORTAL_USER_PREF_FONT_SCALE_DEFAULT_P121 = 1;
+const PORTAL_USER_PREF_FONT_SCALE_MIN_P121 = 0.85;
+const PORTAL_USER_PREF_FONT_SCALE_MAX_P121 = 1.35;
+
+function getPortalUserUiPreferences() {
+  const perm = getPortalCurrentPermission_ ? getPortalCurrentPermission_() : null;
+  const email = String((perm && perm.email) || getPortalActiveUserEmail_() || '').trim().toLowerCase();
+  const displayName = (perm && (perm.displayName || perm.name)) || email || '웹앱사용자';
+  const sheet = ensurePortalUserPrefSheetP121_();
+  const prefs = readPortalUserPrefMapP121_(sheet, email);
+  const fontScale = normalizePortalFontScaleP121_(prefs[PORTAL_USER_PREF_FONT_SCALE_KEY_P121], PORTAL_USER_PREF_FONT_SCALE_DEFAULT_P121);
+  return {
+    ok: true,
+    email: email,
+    displayName: displayName,
+    preferences: {
+      fontScale: fontScale,
+      fontScalePercent: Math.round(fontScale * 100)
+    }
+  };
+}
+
+function savePortalUserUiPreference(key, value) {
+  key = String(key || '').trim();
+  if (key !== PORTAL_USER_PREF_FONT_SCALE_KEY_P121) {
+    throw new Error('지원하지 않는 사용자 설정입니다: ' + key);
+  }
+
+  const perm = getPortalCurrentPermission_ ? getPortalCurrentPermission_() : null;
+  const email = String((perm && perm.email) || getPortalActiveUserEmail_() || '').trim().toLowerCase();
+  if (!email) throw new Error('현재 접속자 이메일을 확인하지 못해 사용자 설정을 저장할 수 없습니다.');
+
+  const displayName = (perm && (perm.displayName || perm.name)) || email || '웹앱사용자';
+  const normalizedValue = normalizePortalFontScaleP121_(value, PORTAL_USER_PREF_FONT_SCALE_DEFAULT_P121);
+  const sheet = ensurePortalUserPrefSheetP121_();
+  upsertPortalUserPrefP121_(sheet, email, displayName, key, String(normalizedValue));
+  return {
+    ok: true,
+    email: email,
+    key: key,
+    value: normalizedValue,
+    valuePercent: Math.round(normalizedValue * 100),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function ensurePortalUserPrefSheetP121_() {
+  const ss = getWebAppDbSpreadsheet_();
+  let sheet = ss.getSheetByName(PORTAL_USER_PREF_SHEET_NAME_P121);
+  if (!sheet) {
+    sheet = ss.insertSheet(PORTAL_USER_PREF_SHEET_NAME_P121);
+    sheet.getRange(1, 1, 1, PORTAL_USER_PREF_HEADERS_P121.length).setValues([PORTAL_USER_PREF_HEADERS_P121]);
+    sheet.setFrozenRows(1);
+    try {
+      sheet.getRange(1, 1, 1, PORTAL_USER_PREF_HEADERS_P121.length).setFontWeight('bold').setBackground('#eef2ff');
+      sheet.autoResizeColumns(1, PORTAL_USER_PREF_HEADERS_P121.length);
+    } catch (err) {}
+    return sheet;
+  }
+
+  const width = Math.max(PORTAL_USER_PREF_HEADERS_P121.length, sheet.getLastColumn() || PORTAL_USER_PREF_HEADERS_P121.length);
+  const current = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
+  let changed = false;
+  PORTAL_USER_PREF_HEADERS_P121.forEach(function(h, i) {
+    if (String(current[i] || '').trim() !== h) {
+      sheet.getRange(1, i + 1).setValue(h);
+      changed = true;
+    }
+  });
+  if (changed) {
+    try {
+      sheet.getRange(1, 1, 1, PORTAL_USER_PREF_HEADERS_P121.length).setFontWeight('bold').setBackground('#eef2ff');
+      sheet.autoResizeColumns(1, PORTAL_USER_PREF_HEADERS_P121.length);
+    } catch (err) {}
+  }
+  return sheet;
+}
+
+function readPortalUserPrefMapP121_(sheet, email) {
+  const map = {};
+  email = String(email || '').trim().toLowerCase();
+  if (!email || !sheet || sheet.getLastRow() < 2) return map;
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, PORTAL_USER_PREF_HEADERS_P121.length).getDisplayValues();
+  values.forEach(function(row) {
+    const rowEmail = String(row[0] || '').trim().toLowerCase();
+    const key = String(row[2] || '').trim();
+    if (rowEmail === email && key) map[key] = String(row[3] || '').trim();
+  });
+  return map;
+}
+
+function upsertPortalUserPrefP121_(sheet, email, displayName, key, value) {
+  email = String(email || '').trim().toLowerCase();
+  key = String(key || '').trim();
+  const now = new Date();
+  const rowValue = [email, String(displayName || '').trim(), key, String(value == null ? '' : value), now];
+  if (!sheet) sheet = ensurePortalUserPrefSheetP121_();
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, 3).getDisplayValues();
+    for (let i = 0; i < values.length; i++) {
+      const rowEmail = String(values[i][0] || '').trim().toLowerCase();
+      const rowKey = String(values[i][2] || '').trim();
+      if (rowEmail === email && rowKey === key) {
+        sheet.getRange(i + 2, 1, 1, PORTAL_USER_PREF_HEADERS_P121.length).setValues([rowValue]);
+        return i + 2;
+      }
+    }
+  }
+  sheet.getRange(lastRow + 1, 1, 1, PORTAL_USER_PREF_HEADERS_P121.length).setValues([rowValue]);
+  return lastRow + 1;
+}
+
+function normalizePortalFontScaleP121_(value, fallback) {
+  let n = Number(value);
+  if (!isFinite(n) || n <= 0) n = Number(fallback || PORTAL_USER_PREF_FONT_SCALE_DEFAULT_P121) || PORTAL_USER_PREF_FONT_SCALE_DEFAULT_P121;
+  n = Math.max(PORTAL_USER_PREF_FONT_SCALE_MIN_P121, Math.min(PORTAL_USER_PREF_FONT_SCALE_MAX_P121, n));
+  return Math.round(n * 100) / 100;
+}

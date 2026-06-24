@@ -30,7 +30,17 @@
           <div class="page-title" id="pageTitle">영업전산 HOME</div>
           <div class="subtitle" id="pageSubtitle">영업 현황 및 공지사항을 볼 수 있습니다.</div>
         </div>
-        <div class="topbar-right"><div class="current-user-badge" id="currentUserBadge">권한 확인 중</div><div class="badge">MVP v73 · contract detail</div></div>
+        <div class="topbar-right">
+          <div class="current-user-badge" id="currentUserBadge">권한 확인 중</div>
+          <div class="font-scale-control" id="fontScaleControl" title="현재 계정의 화면 글자 크기를 조정합니다. 재접속해도 유지됩니다.">
+            <span class="font-scale-label">글자</span>
+            <button type="button" class="font-scale-btn" onclick="changePortalFontScale_(-1)" title="글자 줄이기">A-</button>
+            <button type="button" class="font-scale-btn font-scale-reset" onclick="resetPortalFontScale_()" title="기본 글자 크기">기본</button>
+            <button type="button" class="font-scale-btn" onclick="changePortalFontScale_(1)" title="글자 키우기">A+</button>
+            <span class="font-scale-value" id="fontScaleValue">100%</span>
+          </div>
+          <div class="badge">MVP v73 · contract detail</div>
+        </div>
       </div>
 
       <section class="page-section active" id="homeSection">

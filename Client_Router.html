@@ -1,5 +1,6 @@
 <script>
 window.onload = function() {
+  try { initPortalFontScale_(); } catch (err) { console.warn('글자 크기 설정 시작 실패', err); }
   try { loadPortalSettings_({ silent: true }); } catch (err) { console.warn('설정_DB 로딩 시작 실패', err); }
   try { loadPortalCurrentPermission_({ silent: true }); } catch (err) { console.warn('권한_DB 로딩 시작 실패', err); }
   // v46: HOME은 즉시 표시합니다. 무거운 대시보드 갱신/공지 전체 조회는 화면을 막지 않습니다.
