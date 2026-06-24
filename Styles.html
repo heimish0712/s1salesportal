@@ -2378,4 +2378,254 @@ button .portal-guide-help,
 .customer-search-controls.customer-search-controls-with-filter .customer-sort-wrap { order: 7; margin-left: 0 !important; }
 .customer-search-controls.customer-search-controls-with-filter #customerTopPager { order: 8; margin-left: 0 !important; }
 
+
+/* P1-17 오늘 할 일 통합형 리디자인 */
+.today-layout {
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 18px;
+}
+.today-unified-card {
+  border-radius: 18px;
+  border: 1px solid #d8e2f0;
+  box-shadow: 0 14px 34px rgba(16, 24, 40, .06);
+  padding: 18px;
+}
+.today-card-headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.today-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.today-head-actions button {
+  height: 38px;
+  border-radius: 10px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+.today-summary-grid {
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 10px;
+  margin: 14px 0 16px;
+}
+.today-summary-card {
+  border-radius: 16px;
+  border: 1px solid #dbe7f5;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  min-height: 78px;
+  padding: 14px 16px;
+}
+.today-summary-card.today-summary-main {
+  border-color: #b9d3fb;
+  background: linear-gradient(180deg, #eef6ff 0%, #ffffff 100%);
+}
+.today-summary-label {
+  color: #475467;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.today-summary-value {
+  margin-top: 6px;
+  color: #101828;
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -0.05em;
+}
+.today-task-filterbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 14px;
+  padding: 10px;
+  border-radius: 14px;
+  background: #f4f7fb;
+  border: 1px solid #e4ebf5;
+}
+.today-filter-chip {
+  min-width: 0;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid #d6e1ee;
+  background: #fff;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 800;
+}
+.today-filter-chip.active {
+  background: #1d74d8;
+  color: #fff;
+  border-color: #1d74d8;
+  box-shadow: 0 6px 14px rgba(29,116,216,.18);
+}
+.today-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.today-task-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  gap: 10px;
+  align-items: stretch;
+  border: 1px solid #dfe7f2;
+  border-radius: 16px;
+  background: #fff;
+  padding: 12px;
+  box-shadow: 0 8px 20px rgba(16,24,40,.035);
+}
+.today-task-row.is-contact {
+  border-left: 5px solid #7cb7f2;
+}
+.today-task-row.is-manual {
+  border-left: 5px solid #b8c2d1;
+}
+.today-task-row.done {
+  opacity: .62;
+  background: #f7f8fa;
+}
+.today-task-row.done .todayTodoText {
+  text-decoration: line-through;
+  color: #667085;
+}
+.today-task-hidden {
+  display: none !important;
+}
+.today-task-check {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8px;
+}
+.today-task-check input {
+  width: 20px;
+  height: 20px;
+  accent-color: #1d74d8;
+}
+.today-task-body {
+  min-width: 0;
+}
+.today-task-topline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.today-task-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.today-task-badge.contact {
+  background: #e8f3ff;
+  color: #1557a6;
+  border: 1px solid #c9defa;
+}
+.today-task-badge.manual {
+  background: #f1f4f8;
+  color: #475467;
+  border: 1px solid #dfe5ec;
+}
+.today-task-time {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #fff7e6;
+  color: #9a6700;
+  border: 1px solid #f7dd9c;
+  font-size: 11px;
+  font-weight: 900;
+}
+.today-task-company {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+.todayTodoText {
+  width: 100%;
+  min-height: 50px;
+  border-radius: 12px !important;
+  border: 1px solid #d8e1ed !important;
+  background: #fbfdff !important;
+  color: #101828 !important;
+  font-size: 14px !important;
+  line-height: 1.55 !important;
+  padding: 10px 12px !important;
+  resize: vertical;
+}
+.todayTodoText:focus {
+  background: #fff !important;
+  border-color: #2b7de9 !important;
+  box-shadow: 0 0 0 3px rgba(29,116,216,.12) !important;
+}
+.today-task-meta {
+  margin-top: 7px;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.today-task-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.today-task-actions button {
+  min-width: 0;
+  height: 30px;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+.today-todo-remove {
+  align-self: start;
+  min-width: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: #f2f4f7;
+  color: #667085;
+  font-size: 18px;
+  line-height: 1;
+}
+.today-empty-state {
+  margin-top: 10px;
+  padding: 24px 16px;
+  text-align: center;
+  color: #667085;
+  background: #fbfcfe;
+  border: 1px dashed #cfd8e6;
+  border-radius: 16px;
+  font-size: 13px;
+}
+@media (max-width: 1000px) {
+  .today-layout { grid-template-columns: 1fr; }
+  .today-card-headline { display: block; }
+  .today-head-actions { margin-top: 12px; }
+  .today-summary-grid { grid-template-columns: repeat(2, minmax(110px, 1fr)); }
+}
+@media (max-width: 680px) {
+  .today-task-row { grid-template-columns: 28px minmax(0, 1fr); }
+  .today-todo-remove { grid-column: 2; justify-self: end; }
+  .today-summary-grid { grid-template-columns: 1fr 1fr; }
+}
+
 </style>

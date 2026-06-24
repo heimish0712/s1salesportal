@@ -1,4 +1,7 @@
 <script>
+let todayTaskFilterP117_ = 'open';
+let todayAutoSaveTimerP117_ = null;
+
 function isTodaySectionActiveV57_() {
   const section = document.getElementById('todaySection');
   return !!(section && section.classList && section.classList.contains('active'));
@@ -26,7 +29,7 @@ function readTodayCacheV57_(dateStr) {
 }
 
 function saveTodayCacheV57_(data) {
-  data = data || {};
+  data = normalizeTodayDataP117_(data || {});
   const dateStr = String(data.selectedDate || todaySelectedDate || formatDateInput_(new Date()));
   const copy = Object.assign({}, data, { selectedDate: dateStr, cachedAt: Date.now() });
   todayCacheByDateV57[dateStr] = copy;
@@ -37,15 +40,78 @@ function saveTodayCacheV57_(data) {
   return copy;
 }
 
+function normalizeTodayDataP117_(data) {
+  data = data || {};
+  const tasks = Array.isArray(data.tasks) ? data.tasks : normalizeTodayLegacyTasksP117_(data.todos || [], data.nextActions || []);
+  data.tasks = tasks.map(normalizeTodayTaskP117_);
+  data.todos = data.tasks;
+  data.nextActions = Array.isArray(data.nextActions) ? data.nextActions : [];
+  return data;
+}
+
+function normalizeTodayLegacyTasksP117_(todos, nextActions) {
+  todos = Array.isArray(todos) ? todos : [];
+  nextActions = Array.isArray(nextActions) ? nextActions : [];
+  const manual = todos.map(function(t) {
+    t = t || {};
+    return Object.assign({}, t, { category: t.category || '수동', sourceType: t.sourceType || 'MANUAL' });
+  });
+  const actions = nextActions.map(function(item, idx) {
+    item = item || {};
+    return {
+      id: 'contact_' + idx,
+      done: false,
+      category: '컨택예정',
+      sourceType: 'CONTACT_NEXT',
+      sourceId: item.sourceId || item.historyId || String(idx),
+      customerNo: item.customerNo || '',
+      company: item.company || '',
+      rowNo: item.rowNo || '',
+      timeText: item.nextActionAt || '',
+      content: buildTodayContactTaskTextP117_(item),
+      author: item.author || ''
+    };
+  });
+  return manual.concat(actions);
+}
+
+function normalizeTodayTaskP117_(task) {
+  task = task || {};
+  const sourceType = String(task.sourceType || '').trim() || 'MANUAL';
+  return {
+    id: String(task.id || '').trim() || ('task_' + Math.random().toString(36).slice(2, 10)),
+    done: !!task.done,
+    content: String(task.content || '').trim(),
+    author: String(task.author || '').trim(),
+    category: String(task.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '컨택예정' : '수동'),
+    sourceType: sourceType,
+    sourceId: String(task.sourceId || '').trim(),
+    customerNo: String(task.customerNo || '').trim(),
+    company: String(task.company || '').trim(),
+    rowNo: String(task.rowNo || '').trim(),
+    timeText: String(task.timeText || task.nextActionAt || '').trim(),
+    priority: String(task.priority || '').trim(),
+    updatedAt: String(task.updatedAt || '').trim()
+  };
+}
+
+function buildTodayContactTaskTextP117_(item) {
+  const parts = [];
+  if (item.company) parts.push('[' + item.company + ']');
+  if (item.nextAction) parts.push(item.nextAction);
+  if (item.nextActionAt) parts.push(String(item.nextActionAt).replace(/^\d{4}-\d{1,2}-\d{1,2}\s*/, ''));
+  if (item.content) parts.push('- ' + item.content);
+  return parts.join(' ').trim() || '컨택 예정 확인';
+}
+
 function renderTodayDataV57_(data) {
-  todayCurrentData = data || { selectedDate: todaySelectedDate, todos: [], nextActions: [] };
+  todayCurrentData = normalizeTodayDataP117_(data || { selectedDate: todaySelectedDate, tasks: [] });
   todaySelectedDate = todayCurrentData.selectedDate || todaySelectedDate;
-  renderTodayTodos(todayCurrentData.todos || []);
-  renderTodayNextActions(todayCurrentData.nextActions || []);
-  renderTodaySummaryV111_(todayCurrentData.todos || [], todayCurrentData.nextActions || []);
+  renderTodayTasksP117_(todayCurrentData.tasks || []);
+  renderTodaySummaryV111_(todayCurrentData.tasks || []);
   renderTodayCalendar();
   const label = document.getElementById('todaySelectedLabel');
-  if (label) label.textContent = todaySelectedDate + ' 할 일';
+  if (label) label.textContent = todaySelectedDate + ' 오늘 할 일';
 }
 
 function preloadTodayPageV57_(options) {
@@ -53,8 +119,8 @@ function preloadTodayPageV57_(options) {
   const dateStr = String(options.date || todaySelectedDate || formatDateInput_(new Date()));
   const cached = readTodayCacheV57_(dateStr);
   if (cached) {
-    todayCurrentData = cached;
-    if (isTodaySectionActiveV57_()) renderTodayDataV57_(cached);
+    todayCurrentData = normalizeTodayDataP117_(cached);
+    if (isTodaySectionActiveV57_()) renderTodayDataV57_(todayCurrentData);
     const age = Date.now() - Number(todayLastLoadAtByDateV57[dateStr] || 0);
     if (age > 0 && age < TODAY_BACKGROUND_REFRESH_MS_V57) return;
   }
@@ -64,10 +130,8 @@ function preloadTodayPageV57_(options) {
   google.script.run
     .withSuccessHandler(function(data) {
       todayLoadingByDateV57[dateStr] = false;
-      data = saveTodayCacheV57_(data || { selectedDate: dateStr, todos: [], nextActions: [] });
-      if (String(todaySelectedDate || '') === String(data.selectedDate || '') && isTodaySectionActiveV57_()) {
-        renderTodayDataV57_(data);
-      }
+      data = saveTodayCacheV57_(data || { selectedDate: dateStr, tasks: [] });
+      if (String(todaySelectedDate || '') === String(data.selectedDate || '') && isTodaySectionActiveV57_()) renderTodayDataV57_(data);
     })
     .withFailureHandler(function(err) {
       todayLoadingByDateV57[dateStr] = false;
@@ -81,7 +145,7 @@ function loadTodayPage(options) {
   const dateStr = String(todaySelectedDate || formatDateInput_(new Date()));
   renderTodayCalendar();
   const label = document.getElementById('todaySelectedLabel');
-  if (label) label.textContent = dateStr + ' 할 일';
+  if (label) label.textContent = dateStr + ' 오늘 할 일';
   const area = document.getElementById('todayTodoArea');
 
   const cached = !options.force ? readTodayCacheV57_(dateStr) : null;
@@ -104,7 +168,7 @@ function loadTodayPage(options) {
   google.script.run
     .withSuccessHandler(function(data) {
       todayLoadingByDateV57[dateStr] = false;
-      data = saveTodayCacheV57_(data || { selectedDate: dateStr, todos: [], nextActions: [] });
+      data = saveTodayCacheV57_(data || { selectedDate: dateStr, tasks: [] });
       renderTodayDataV57_(data);
     })
     .withFailureHandler(function(err) {
@@ -120,139 +184,191 @@ function loadTodayPage(options) {
     .getPortalTodayData(dateStr);
 }
 
-
-function renderTodaySummaryV111_(todos, nextActions) {
+function renderTodaySummaryV111_(tasks) {
   const area = document.getElementById('todaySummaryArea');
   if (!area) return;
-  todos = Array.isArray(todos) ? todos : [];
-  nextActions = Array.isArray(nextActions) ? nextActions : [];
-  const totalTodos = todos.filter(function(t) { return String((t && t.content) || '').trim(); }).length;
-  const doneTodos = todos.filter(function(t) { return t && t.done && String(t.content || '').trim(); }).length;
-  const pendingTodos = Math.max(0, totalTodos - doneTodos);
-  const nextCount = nextActions.length;
+  tasks = Array.isArray(tasks) ? tasks : [];
+  const active = tasks.filter(function(t) { return t && !t.done && String(t.content || '').trim(); });
+  const done = tasks.filter(function(t) { return t && t.done && String(t.content || '').trim(); });
+  const contact = active.filter(function(t) { return t.category === '컨택예정' || t.sourceType === 'CONTACT_NEXT'; });
+  const customer = active.filter(function(t) { return t.customerNo || t.rowNo || t.company; });
   area.innerHTML = '' +
-    '<div class="today-summary-card"><div class="today-summary-label">수동 할 일</div><div class="today-summary-value">' + totalTodos + '</div></div>' +
-    '<div class="today-summary-card"><div class="today-summary-label">완료</div><div class="today-summary-value">' + doneTodos + '</div></div>' +
-    '<div class="today-summary-card"><div class="today-summary-label">미완료</div><div class="today-summary-value">' + pendingTodos + '</div></div>' +
-    '<div class="today-summary-card"><div class="today-summary-label">컨택 예정</div><div class="today-summary-value">' + nextCount + '</div></div>';
+    '<div class="today-summary-card today-summary-main"><div class="today-summary-label">오늘 할 일</div><div class="today-summary-value">' + active.length + '</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">고객 관련</div><div class="today-summary-value">' + customer.length + '</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">컨택 예정</div><div class="today-summary-value">' + contact.length + '</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">완료</div><div class="today-summary-value">' + done.length + '</div></div>';
 }
 
-function isTodayTodoEditingV111_() {
-  const active = document.activeElement;
-  return !!(active && active.closest && active.closest('#todayTodoList'));
+function setTodayTaskFilterP117_(filter) {
+  todayTaskFilterP117_ = filter || 'open';
+  renderTodayTasksP117_(collectTodayTodos_());
+  renderTodaySummaryV111_(collectTodayTodos_());
 }
 
-function appendTodayTodoTextV111_(content) {
-  const list = document.getElementById('todayTodoList');
-  if (!list) return;
-  const text = String(content || '').trim();
-  if (!text) return;
-  const rows = Array.from(list.querySelectorAll('.today-todo-row'));
-  let target = rows.find(function(row) {
-    const ta = row.querySelector('.todayTodoText');
-    return ta && !String(ta.value || '').trim();
-  });
-  if (!target) {
-    list.insertAdjacentHTML('beforeend', renderTodayTodoRow_({ content: '', done: false }, 0));
-    target = list.querySelector('.today-todo-row:last-child');
-  }
-  const textarea = target && target.querySelector('.todayTodoText');
-  if (!textarea) return;
-  textarea.value = text;
-  textarea.focus();
-  try { textarea.setSelectionRange(textarea.value.length, textarea.value.length); } catch (err) {}
-  toast('오늘 할 일에 추가했습니다. 저장 버튼을 눌러 확정하세요.');
+function getTodayTaskVisibleP117_(task) {
+  const f = todayTaskFilterP117_ || 'open';
+  if (f === 'all') return true;
+  if (f === 'open') return !task.done;
+  if (f === 'done') return !!task.done;
+  if (f === 'manual') return !task.done && task.category === '수동';
+  if (f === 'contact') return !task.done && (task.category === '컨택예정' || task.sourceType === 'CONTACT_NEXT');
+  return true;
 }
 
-function addTodayNextActionToTodoV111_(encoded) {
-  let item = {};
-  try { item = JSON.parse(decodeURIComponent(String(encoded || ''))); } catch (err) { item = {}; }
-  const parts = [];
-  if (item.company) parts.push('[' + item.company + ']');
-  if (item.nextAction) parts.push(item.nextAction);
-  if (item.nextActionAt) parts.push(String(item.nextActionAt).replace(/^\d{4}-\d{1,2}-\d{1,2}\s*/, ''));
-  if (item.content) parts.push('- ' + item.content);
-  appendTodayTodoTextV111_(parts.join(' '));
-}
-
-function getTodayNextActionPayloadV111_(item) {
-  try {
-    return encodeURIComponent(JSON.stringify({
-      company: item.company || '',
-      nextAction: item.nextAction || '',
-      nextActionAt: item.nextActionAt || '',
-      content: item.content || ''
-    }));
-  } catch (err) {
-    return '';
-  }
-}
-
-function renderTodayTodos(todos) {
+function renderTodayTasksP117_(tasks) {
   const area = document.getElementById('todayTodoArea');
   if (!area) return;
-  todos = Array.isArray(todos) ? todos : [];
-  if (!todos.length) todos = [{ content: '', done: false }];
-  area.innerHTML = '<div class="today-todo-list" id="todayTodoList">' + todos.map(renderTodayTodoRow_).join('') + '</div>';
+  tasks = (Array.isArray(tasks) ? tasks : []).map(normalizeTodayTaskP117_);
+  if (!tasks.length) tasks = [{ id: 'manual_empty', content: '', done: false, category: '수동', sourceType: 'MANUAL' }];
+  const visibleCount = tasks.filter(getTodayTaskVisibleP117_).length;
+  area.innerHTML = '' +
+    '<div class="today-task-filterbar">' + renderTodayFilterButtonP117_('open', '미완료') + renderTodayFilterButtonP117_('all', '전체') + renderTodayFilterButtonP117_('contact', '컨택') + renderTodayFilterButtonP117_('manual', '수동') + renderTodayFilterButtonP117_('done', '완료') + '</div>' +
+    '<div class="today-task-list" id="todayTodoList">' + tasks.map(renderTodayTodoRow_).join('') + '</div>' +
+    (visibleCount ? '' : '<div class="today-empty-state">해당 분류의 할 일이 없습니다.</div>');
 }
 
+function renderTodayFilterButtonP117_(key, label) {
+  return '<button type="button" class="today-filter-chip ' + (todayTaskFilterP117_ === key ? 'active' : '') + '" onclick="setTodayTaskFilterP117_(\'' + key + '\')">' + esc(label) + '</button>';
+}
+
+function renderTodayTodos(todos) { renderTodayTasksP117_(todos); }
+function renderTodayNextActions(items) { /* P1-17: 컨택 예정은 오늘 할 일 목록에 통합됨 */ }
+
 function renderTodayTodoRow_(todo, idx) {
-  todo = todo || {};
-  return '<div class="today-todo-row">' +
-    '<input type="checkbox" class="todayTodoDone" ' + (todo.done ? 'checked' : '') + '>' +
-    '<textarea class="todayTodoText" placeholder="할 일을 입력하세요.">' + esc(todo.content || '') + '</textarea>' +
-    '<button class="today-todo-remove" onclick="removeTodayTodoRow(this)">×</button>' +
+  todo = normalizeTodayTaskP117_(todo || {});
+  const visible = getTodayTaskVisibleP117_(todo);
+  const isContact = todo.category === '컨택예정' || todo.sourceType === 'CONTACT_NEXT';
+  const rowNo = Number(todo.rowNo) || 0;
+  let actions = '';
+  if (rowNo) {
+    actions += '<button class="secondary" type="button" onclick="openDetail(' + rowNo + ')">상세</button>';
+    actions += '<button class="secondary" type="button" onclick="openContactHistoryModal(' + rowNo + ')">컨택이력</button>';
+    actions += '<button type="button" onclick="openSendForCustomer(' + rowNo + ')">발송</button>';
+  }
+  return '<div class="today-task-row ' + (todo.done ? 'done ' : '') + (!visible ? 'today-task-hidden ' : '') + (isContact ? 'is-contact' : 'is-manual') + '" ' +
+      'data-id="' + escAttrP117_(todo.id) + '" ' +
+      'data-category="' + escAttrP117_(todo.category) + '" ' +
+      'data-source-type="' + escAttrP117_(todo.sourceType) + '" ' +
+      'data-source-id="' + escAttrP117_(todo.sourceId) + '" ' +
+      'data-customer-no="' + escAttrP117_(todo.customerNo) + '" ' +
+      'data-company="' + escAttrP117_(todo.company) + '" ' +
+      'data-row-no="' + escAttrP117_(todo.rowNo) + '" ' +
+      'data-time-text="' + escAttrP117_(todo.timeText) + '" ' +
+      'data-priority="' + escAttrP117_(todo.priority) + '">' +
+    '<label class="today-task-check"><input type="checkbox" class="todayTodoDone" onchange="onTodayTaskDoneChangeP117_(this)" ' + (todo.done ? 'checked' : '') + '><span></span></label>' +
+    '<div class="today-task-body">' +
+      '<div class="today-task-topline">' +
+        '<span class="today-task-badge ' + (isContact ? 'contact' : 'manual') + '">' + esc(todo.category || '수동') + '</span>' +
+        (todo.timeText ? '<span class="today-task-time">' + esc(compactTodayTimeP117_(todo.timeText)) + '</span>' : '') +
+        (todo.company ? '<span class="today-task-company">' + esc(todo.company) + '</span>' : '') +
+      '</div>' +
+      '<textarea class="todayTodoText" placeholder="오늘 처리할 일을 입력하세요." oninput="markTodayTaskDirtyP117_()">' + esc(todo.content || '') + '</textarea>' +
+      (todo.customerNo || todo.author ? '<div class="today-task-meta">' + (todo.customerNo ? '고객번호 ' + esc(todo.customerNo) : '') + (todo.customerNo && todo.author ? ' · ' : '') + (todo.author ? '작성자 ' + esc(todo.author) : '') + '</div>' : '') +
+      (actions ? '<div class="today-task-actions">' + actions + '</div>' : '') +
+    '</div>' +
+    '<button class="today-todo-remove" type="button" onclick="removeTodayTodoRow(this)">×</button>' +
   '</div>';
 }
 
+function escAttrP117_(value) {
+  return String(value || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function compactTodayTimeP117_(value) {
+  const text = String(value || '').trim();
+  const m = text.match(/(\d{1,2}:\d{2})/);
+  if (m) return m[1];
+  return text.replace(/^\d{4}-\d{1,2}-\d{1,2}\s*/, '');
+}
+
+function markTodayTaskDirtyP117_() {
+  renderTodaySummaryV111_(collectTodayTodos_());
+}
+
+function onTodayTaskDoneChangeP117_(checkbox) {
+  const row = checkbox && checkbox.closest ? checkbox.closest('.today-task-row') : null;
+  if (row) row.classList.toggle('done', !!checkbox.checked);
+  const tasks = collectTodayTodos_();
+  todayCurrentData = saveTodayCacheV57_(Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks }));
+  renderTodayTasksP117_(tasks);
+  renderTodaySummaryV111_(tasks);
+  window.clearTimeout(todayAutoSaveTimerP117_);
+  todayAutoSaveTimerP117_ = window.setTimeout(function() { saveTodayTodos({ silent: true, preserveFocus: true }); }, 250);
+}
+
 function addTodayTodoRow() {
-  const list = document.getElementById('todayTodoList');
-  if (!list) return;
-  list.insertAdjacentHTML('beforeend', renderTodayTodoRow_({ content: '', done: false }, 0));
-  const textareas = list.querySelectorAll('.todayTodoText');
-  if (textareas.length) textareas[textareas.length - 1].focus();
+  const tasks = collectTodayTodos_();
+  tasks.unshift({
+    id: 'manual_' + Date.now(),
+    done: false,
+    content: '',
+    category: '수동',
+    sourceType: 'MANUAL',
+    sourceId: '',
+    customerNo: '',
+    company: '',
+    rowNo: '',
+    timeText: '',
+    priority: ''
+  });
+  todayTaskFilterP117_ = 'open';
+  todayCurrentData = Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks });
+  renderTodayTasksP117_(tasks);
+  const first = document.querySelector('#todayTodoList .today-task-row .todayTodoText');
+  if (first) first.focus();
 }
 
 function removeTodayTodoRow(btn) {
-  const row = btn && btn.closest ? btn.closest('.today-todo-row') : null;
+  const row = btn && btn.closest ? btn.closest('.today-task-row') : null;
   if (row) row.remove();
-  const list = document.getElementById('todayTodoList');
-  if (list && !list.querySelector('.today-todo-row')) addTodayTodoRow();
+  const tasks = collectTodayTodos_();
+  todayCurrentData = saveTodayCacheV57_(Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks }));
+  renderTodayTasksP117_(tasks.length ? tasks : []);
+  renderTodaySummaryV111_(tasks);
 }
 
 function collectTodayTodos_() {
-  const rows = Array.from(document.querySelectorAll('#todayTodoList .today-todo-row'));
-  return rows.map(function(row) {
+  const rows = Array.from(document.querySelectorAll('#todayTodoList .today-task-row'));
+  return rows.map(function(row, idx) {
+    const text = row.querySelector('.todayTodoText');
     return {
-      done: !!row.querySelector('.todayTodoDone').checked,
-      content: row.querySelector('.todayTodoText').value || ''
+      id: row.getAttribute('data-id') || ('manual_' + idx),
+      done: !!(row.querySelector('.todayTodoDone') && row.querySelector('.todayTodoDone').checked),
+      content: text ? (text.value || '') : '',
+      category: row.getAttribute('data-category') || '수동',
+      sourceType: row.getAttribute('data-source-type') || 'MANUAL',
+      sourceId: row.getAttribute('data-source-id') || '',
+      customerNo: row.getAttribute('data-customer-no') || '',
+      company: row.getAttribute('data-company') || '',
+      rowNo: row.getAttribute('data-row-no') || '',
+      timeText: row.getAttribute('data-time-text') || '',
+      priority: row.getAttribute('data-priority') || ''
     };
   }).filter(function(item) { return String(item.content || '').trim(); });
 }
 
-function saveTodayTodos() {
-  const todos = collectTodayTodos_();
+function saveTodayTodos(options) {
+  options = options || {};
+  const tasks = collectTodayTodos_();
   const prev = todayCurrentData ? JSON.parse(JSON.stringify(todayCurrentData)) : null;
   const optimistic = saveTodayCacheV57_(Object.assign({}, todayCurrentData || {}, {
     selectedDate: todaySelectedDate,
-    todos: todos,
+    tasks: tasks,
+    todos: tasks,
     nextActions: (todayCurrentData && todayCurrentData.nextActions) || []
   }));
   todayCurrentData = optimistic;
-  renderTodayTodos(todos);
-  renderTodayNextActions(optimistic.nextActions || []);
-  toast('오늘 할 일을 화면에 먼저 반영했습니다. 뒤에서 저장 중입니다.');
+  renderTodaySummaryV111_(tasks);
+  if (!options.preserveFocus && !isTodayTodoEditingV111_()) renderTodayTasksP117_(tasks);
+  if (!options.silent) toast('오늘 할 일을 저장 중입니다.');
 
   google.script.run
     .withSuccessHandler(function(data) {
       data = saveTodayCacheV57_(data || optimistic);
       todayCurrentData = data;
-      if (!isTodayTodoEditingV111_()) {
-        renderTodayTodos((data && data.todos) || []);
-        renderTodayNextActions((data && data.nextActions) || []);
-      }
-      renderTodaySummaryV111_((data && data.todos) || [], (data && data.nextActions) || []);
-      toast('오늘 할 일이 저장되었습니다.');
+      if (!isTodayTodoEditingV111_()) renderTodayDataV57_(data);
+      else renderTodaySummaryV111_((data && data.tasks) || tasks);
+      if (!options.silent) toast('오늘 할 일이 저장되었습니다.');
     })
     .withFailureHandler(function(err) {
       if (prev) {
@@ -262,41 +378,44 @@ function saveTodayTodos() {
       }
       alert('할 일 저장 실패: ' + getErrorMessage_(err));
     })
-    .savePortalTodosForDate({ date: todaySelectedDate, todos: todos });
+    .savePortalTodosForDate({ date: todaySelectedDate, tasks: tasks, todos: tasks });
 }
 
-function renderTodayNextActions(items) {
-  const area = document.getElementById('todayNextActionArea');
-  if (!area) return;
-  items = Array.isArray(items) ? items : [];
-  renderTodaySummaryV111_((todayCurrentData && todayCurrentData.todos) || [], items);
-  if (!items.length) {
-    area.innerHTML = '<div class="today-muted">선택한 날짜의 컨택 예정 액션이 없습니다.</div>';
-    return;
+function isTodayTodoEditingV111_() {
+  const active = document.activeElement;
+  return !!(active && active.closest && active.closest('#todayTodoList'));
+}
+
+function appendTodayTodoTextV111_(content) {
+  const tasks = collectTodayTodos_();
+  const text = String(content || '').trim();
+  if (!text) return;
+  tasks.unshift({ id: 'manual_' + Date.now(), done: false, content: text, category: '수동', sourceType: 'MANUAL' });
+  todayTaskFilterP117_ = 'open';
+  todayCurrentData = Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks });
+  renderTodayTasksP117_(tasks);
+  renderTodaySummaryV111_(tasks);
+  const first = document.querySelector('#todayTodoList .today-task-row .todayTodoText');
+  if (first) first.focus();
+}
+
+function addTodayNextActionToTodoV111_(encoded) {
+  let item = {};
+  try { item = JSON.parse(decodeURIComponent(String(encoded || ''))); } catch (err) { item = {}; }
+  appendTodayTodoTextV111_(buildTodayContactTaskTextP117_(item));
+}
+
+function getTodayNextActionPayloadV111_(item) {
+  try {
+    return encodeURIComponent(JSON.stringify({
+      company: item.company || '',
+      nextAction: item.nextAction || '',
+      nextActionAt: item.nextActionAt || item.timeText || '',
+      content: item.content || ''
+    }));
+  } catch (err) {
+    return '';
   }
-  area.innerHTML = items.map(function(item) {
-    item = item || {};
-    const rowNo = Number(item.rowNo) || 0;
-    const payload = getTodayNextActionPayloadV111_(item);
-    let actions = '<button class="secondary" type="button" onclick="addTodayNextActionToTodoV111_(\'' + payload + '\')">할 일에 추가</button>';
-    if (rowNo) {
-      actions += '<button class="secondary" type="button" onclick="openDetail(' + rowNo + ')">상세</button>';
-      actions += '<button class="secondary" type="button" onclick="openContactHistoryModal(' + rowNo + ')">컨택이력</button>';
-      actions += '<button type="button" onclick="openSendForCustomer(' + rowNo + ')">발송</button>';
-    }
-    return '<div class="today-next-item">' +
-      '<div class="today-next-head">' +
-        '<div>' +
-          '<div class="today-next-title">' + esc(item.company || '-') + '</div>' +
-          '<div class="today-next-meta">' + esc(item.customerNo || '') + (item.author ? ' · ' + esc(item.author) : '') + '</div>' +
-        '</div>' +
-        '<div class="today-next-time">' + esc(item.nextActionAt || '') + '</div>' +
-      '</div>' +
-      '<div class="today-next-action-line"><span class="today-next-chip">다음액션</span>' + esc(item.nextAction || '-') + '</div>' +
-      (item.content ? '<div class="today-next-content">' + esc(item.content) + '</div>' : '') +
-      '<div class="today-next-actions">' + actions + '</div>' +
-    '</div>';
-  }).join('');
 }
 
 function renderTodayCalendar() {

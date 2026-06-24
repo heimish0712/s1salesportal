@@ -81,7 +81,7 @@ const PORTAL_CONFIG = {
   NOTICE_HEADERS: ['공지ID', '작성일시', '작성일자', '작성자', '제목', '내용', '확인자', '삭제여부'],
 
   TODAY_SHEET_NAME: '오늘할일_DB',
-  TODAY_HEADERS: ['할일ID', '일자', '순번', '내용', '완료여부', '작성자', '수정일시', '삭제여부'],
+  TODAY_HEADERS: ['할일ID', '일자', '순번', '내용', '완료여부', '작성자', '수정일시', '삭제여부', '분류', '출처유형', '출처ID', '고객번호', '회사명', '마스터행', '시간', '우선순위'],
 
   SUPPORT_SHEET_NAME: '영업지원요청',
   SUPPORT_HEADER_ROW: 3,

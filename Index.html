@@ -148,18 +148,19 @@
             <div id="todayCalendarArea"></div>
           </div>
           <div>
-            <div class="today-card">
-              <div class="today-card-title" id="todaySelectedLabel">오늘 할 일</div>
+            <div class="today-card today-unified-card">
+              <div class="today-card-headline">
+                <div>
+                  <div class="today-card-title" id="todaySelectedLabel">오늘 할 일</div>
+                  <div class="today-muted">수동 메모와 컨택 예정 액션을 한 목록에서 처리합니다. 완료 체크 시 오늘 할 일 개수에서 제외됩니다.</div>
+                </div>
+                <div class="today-head-actions">
+                  <button class="secondary" onclick="addTodayTodoRow()">+ 할 일 추가</button>
+                  <button onclick="saveTodayTodos()">저장</button>
+                </div>
+              </div>
               <div id="todaySummaryArea" class="today-summary-grid"></div>
               <div id="todayTodoArea"><div class="loading">할 일을 불러오는 중입니다.</div></div>
-              <div class="today-actions">
-                <button class="secondary" onclick="addTodayTodoRow()">할 일 추가</button>
-                <button onclick="saveTodayTodos()">저장</button>
-              </div>
-            </div>
-            <div class="today-card today-next-list">
-              <div class="today-card-title">컨택 예정 / 다음 액션</div>
-              <div id="todayNextActionArea"><div class="today-muted">선택한 날짜의 컨택 예정 액션이 없습니다.</div></div>
             </div>
           </div>
         </div>
