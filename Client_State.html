@@ -563,6 +563,17 @@ function setCustomerFavoriteMapFromServer_(map) {
   customerFavoriteLastLoadedAtV60 = Date.now();
 }
 
+function refreshAllVisibleCustomerFavoriteStarsP207_() {
+  const buttons = Array.prototype.slice.call(document.querySelectorAll('.customer-favorite-star[data-favorite-key]'));
+  const seen = {};
+  buttons.forEach(function(btn) {
+    const key = btn.getAttribute('data-favorite-key') || '';
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    try { if (typeof refreshCustomerFavoriteStarButtonsP207_ === 'function') refreshCustomerFavoriteStarButtonsP207_(key); } catch (err) {}
+  });
+}
+
 function loadCustomerFavoriteMap_(options) {
   options = options || {};
   if (customerFavoriteLoadingV60 && !options.force) return;
@@ -574,8 +585,9 @@ function loadCustomerFavoriteMap_(options) {
     .withSuccessHandler(function(res) {
       customerFavoriteLoadingV60 = false;
       if (res && res.ok) setCustomerFavoriteMapFromServer_(res.map || {});
-      try { repaintCustomerResultsIfVisible_(); } catch (err) {}
-      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+      // P2-7: 즐겨찾기 map 로딩은 고객 목록 전체를 다시 그리지 않고 별표만 갱신합니다.
+      try { refreshAllVisibleCustomerFavoriteStarsP207_(); } catch (err) {}
+      try { if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_(); } catch (err) {}
     })
     .withFailureHandler(function(err) {
       customerFavoriteLoadingV60 = false;
@@ -697,14 +709,14 @@ function sendCustomerFavoriteQueuedP204_(key, attempt) {
       if (res && res.ok) {
         delete customerFavoritePushPayloadsP204[key];
         commitFavoriteStateOptimistic_(item.mutation, null);
-        try { repaintCustomerResultsIfVisible_(); } catch (err) {}
-        try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+        try { if (typeof refreshCustomerFavoriteStarButtonsP207_ === 'function') refreshCustomerFavoriteStarButtonsP207_(key); } catch (err) {}
+        try { if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_(); } catch (err) {}
         return;
       }
       rollbackFavoriteStateOptimistic_(item.mutation, item.previousFavorite);
       delete customerFavoritePushPayloadsP204[key];
-      try { repaintCustomerResultsIfVisible_(); } catch (err) {}
-      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+      try { if (typeof refreshCustomerFavoriteStarButtonsP207_ === 'function') refreshCustomerFavoriteStarButtonsP207_(key); } catch (err) {}
+      try { if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_(); } catch (err) {}
       toast('즐겨찾기 변경을 저장하지 못했습니다. 잠시 후 다시 눌러주세요.');
     })
     .withFailureHandler(function(err) {
@@ -721,8 +733,8 @@ function sendCustomerFavoriteQueuedP204_(key, attempt) {
       }
       rollbackFavoriteStateOptimistic_(item.mutation, item.previousFavorite);
       delete customerFavoritePushPayloadsP204[key];
-      try { repaintCustomerResultsIfVisible_(); } catch (renderErr) {}
-      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (renderErr2) {}
+      try { if (typeof refreshCustomerFavoriteStarButtonsP207_ === 'function') refreshCustomerFavoriteStarButtonsP207_(key); } catch (renderErr) {}
+      try { if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_(); } catch (renderErr2) {}
       toast('즐겨찾기 변경이 지연되었습니다. 잠시 후 다시 눌러주세요.');
     })
     .setPortalCustomerFavoriteStateP204(item.payload);

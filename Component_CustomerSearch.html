@@ -785,11 +785,48 @@ function renderCustomerFavoriteCell_(row) {
   row = row || {};
   const active = isCustomerFavorite_(row);
   const rowNo = Number(row.rowNo) || 0;
+  const favoriteKey = getFavoriteCustomerKey_(row);
   const pending = typeof isCustomerFavoritePending_ === 'function' && isCustomerFavoritePending_(row);
   const label = pending ? '즐겨찾기 저장 대기 중' : (active ? '즐겨찾기 해제' : '즐겨찾기 추가');
   return '<td class="customer-favorite-cell" title="' + escAttr(label) + '">' +
-    '<button type="button" class="customer-favorite-star ' + (active ? 'active' : '') + (pending ? ' pending' : '') + '" ' + (pending ? 'aria-busy="true" ' : '') + 'onclick="event.stopPropagation(); toggleCustomerFavoriteFromList(' + rowNo + ')">' + (active ? '★' : '☆') + '</button>' +
+    '<button type="button" class="customer-favorite-star ' + (active ? 'active' : '') + (pending ? ' pending' : '') + '" ' +
+      'data-favorite-key="' + escAttr(favoriteKey) + '" data-row-no="' + escAttr(rowNo) + '" ' +
+      (pending ? 'aria-busy="true" ' : 'aria-busy="false" ') +
+      'title="' + escAttr(label) + '" onclick="event.stopPropagation(); toggleCustomerFavoriteFromList(' + rowNo + ')">' + (active ? '★' : '☆') + '</button>' +
   '</td>';
+}
+
+function refreshCustomerFavoriteStarButtonsP207_(keyOrRow) {
+  const key = typeof keyOrRow === 'string' ? keyOrRow : getFavoriteCustomerKey_(keyOrRow || {});
+  if (!key) return;
+  const buttons = Array.prototype.slice.call(document.querySelectorAll('.customer-favorite-star[data-favorite-key]')).filter(function(btn) {
+    return String(btn.getAttribute('data-favorite-key') || '') === String(key);
+  });
+  buttons.forEach(function(btn) {
+    if (typeof cleanupCustomerFavoritePendingV62_ === 'function') cleanupCustomerFavoritePendingV62_();
+    const pendingItem = customerFavoritePendingMapV62 && customerFavoritePendingMapV62[key];
+    const pending = !!pendingItem;
+    const active = pendingItem ? !!pendingItem.favorite : !!(customerFavoriteMapV60 && customerFavoriteMapV60[key]);
+    const label = pending ? '즐겨찾기 저장 대기 중' : (active ? '즐겨찾기 해제' : '즐겨찾기 추가');
+    btn.classList.toggle('active', !!active);
+    btn.classList.toggle('pending', !!pending);
+    btn.setAttribute('aria-busy', pending ? 'true' : 'false');
+    btn.setAttribute('title', label);
+    const cell = btn.closest('.customer-favorite-cell');
+    if (cell) cell.setAttribute('title', label);
+    btn.textContent = active ? '★' : '☆';
+  });
+}
+
+function isCustomerFavoritePageVisibleP207_() {
+  const el = document.getElementById('customerFavoritesSection');
+  return !!(el && el.classList.contains('active'));
+}
+
+function refreshFavoritePageIfVisibleP207_() {
+  if (isCustomerFavoritePageVisibleP207_()) {
+    try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+  }
 }
 
 function toggleCustomerFavoriteFromList(rowNo) {
@@ -801,8 +838,11 @@ function toggleCustomerFavoriteFromList(rowNo) {
   const nextFavorite = !wasFavorite;
   const favoriteMutation = patchFavoriteStateOptimistic_(row, nextFavorite);
 
-  repaintCustomerResultsIfVisible_();
-  try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+  // P2-7: 고객 목록은 즐겨찾기 클릭만으로 전체 재렌더링하지 않습니다.
+  // 전체 목록을 다시 그리면 정렬/페이지 위치가 순간적으로 재계산되어 행 순서가 튀는 문제가 생깁니다.
+  // 별표 버튼만 즉시 갱신하고, 즐겨찾기 전용 화면이 열려 있을 때만 그 화면을 갱신합니다.
+  try { refreshCustomerFavoriteStarButtonsP207_(favoriteMutation && favoriteMutation.key ? favoriteMutation.key : row); } catch (err) {}
+  refreshFavoritePageIfVisibleP207_();
 
   // P2-4: 연속 클릭은 화면에서 즉시 반영하고, 마지막 상태만 지연 저장합니다.
   if (typeof scheduleCustomerFavoritePushP204_ === 'function') {
@@ -817,8 +857,8 @@ function toggleCustomerFavoriteFromList(rowNo) {
     })
     .withFailureHandler(function(err) {
       rollbackFavoriteStateOptimistic_(favoriteMutation, wasFavorite);
-      repaintCustomerResultsIfVisible_();
-      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (renderErr) {}
+      try { refreshCustomerFavoriteStarButtonsP207_(favoriteMutation && favoriteMutation.key ? favoriteMutation.key : row); } catch (btnErr) {}
+      refreshFavoritePageIfVisibleP207_();
       toast('즐겨찾기 변경이 지연되었습니다. 잠시 후 다시 눌러주세요.');
     })
     .setPortalCustomerFavorite({
