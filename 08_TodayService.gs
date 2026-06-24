@@ -18,6 +18,7 @@ function getPortalTodayData(dateText) {
     todos: tasks,
     nextActions: nextActions,
     tagOptions: getPortalTodayTagOptions_(),
+    hiddenTags: getPortalTodayHiddenTags_(),
     actionOptions: PORTAL_NEXT_ACTION_OPTIONS
   };
 }
@@ -274,13 +275,40 @@ function getPortalTodosForDate_(selectedDate) {
     .sort(function(a, b) { return (a.order || 0) - (b.order || 0); });
 }
 
+const PORTAL_TODAY_HIDDEN_TAGS_PREF_KEY_P123 = 'todayHiddenTags';
+
+function getPortalTodayHiddenTags_() {
+  try {
+    const perm = getPortalCurrentPermission_ ? getPortalCurrentPermission_() : null;
+    const email = String((perm && perm.email) || getPortalActiveUserEmail_() || '').trim().toLowerCase();
+    if (!email || typeof ensurePortalUserPrefSheetP121_ !== 'function' || typeof readPortalUserPrefMapP121_ !== 'function') return [];
+    const map = readPortalUserPrefMapP121_(ensurePortalUserPrefSheetP121_(), email);
+    return normalizePortalTodayTags_(map[PORTAL_TODAY_HIDDEN_TAGS_PREF_KEY_P123] || '');
+  } catch (err) {
+    return [];
+  }
+}
+
+function savePortalTodayHiddenTags(tags) {
+  const hidden = normalizePortalTodayTags_(tags || '');
+  const perm = getPortalCurrentPermission_ ? getPortalCurrentPermission_() : null;
+  const email = String((perm && perm.email) || getPortalActiveUserEmail_() || '').trim().toLowerCase();
+  if (!email) throw new Error('현재 접속자 이메일을 확인하지 못해 태그 설정을 저장할 수 없습니다.');
+  const displayName = (perm && (perm.displayName || perm.name)) || email || '웹앱사용자';
+  if (typeof ensurePortalUserPrefSheetP121_ === 'function' && typeof upsertPortalUserPrefP121_ === 'function') {
+    upsertPortalUserPrefP121_(ensurePortalUserPrefSheetP121_(), email, displayName, PORTAL_TODAY_HIDDEN_TAGS_PREF_KEY_P123, hidden.join(', '));
+  }
+  return { ok: true, hiddenTags: hidden, tagOptions: getPortalTodayTagOptions_() };
+}
+
 function getPortalTodayTagOptions_() {
   const defaults = Array.isArray(PORTAL_CONFIG.TODAY_DEFAULT_TAGS) ? PORTAL_CONFIG.TODAY_DEFAULT_TAGS : [];
+  const hidden = getPortalTodayHiddenTags_().reduce(function(acc, tag) { acc[tag] = true; return acc; }, {});
   const seen = {};
   const tags = [];
   function add(v) {
     v = String(v || '').replace(/^#+/, '').trim();
-    if (!v || seen[v]) return;
+    if (!v || seen[v] || hidden[v]) return;
     seen[v] = true;
     tags.push(v);
   }

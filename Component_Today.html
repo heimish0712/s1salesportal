@@ -6,6 +6,10 @@ let todayHasLocalDraftP120_ = false;
 let todayLastLocalEditAtP120_ = 0;
 let todayPendingServerDataP120_ = null;
 let todaySaveSeqP120_ = 0;
+let todayHiddenTagsP123_ = [];
+let todayCustomerLinkTargetRowP123_ = null;
+let todayCustomerLinkCandidatesP123_ = [];
+const TODAY_DEFAULT_TAGS_P123_ = ['전화','메일','견적','컨택','계약','서류','영업지원','재확인','긴급','내부처리'];
 
 function isTodaySectionActiveV57_() {
   const section = document.getElementById('todaySection');
@@ -43,12 +47,14 @@ function saveTodayCacheV57_(data) {
 
 function normalizeTodayDataP117_(data) {
   data = data || {};
+  todayHiddenTagsP123_ = normalizeTodayTagsP118_(data.hiddenTags || todayHiddenTagsP123_ || []);
   const tasks = Array.isArray(data.tasks) ? data.tasks : normalizeTodayLegacyTasksP117_(data.todos || [], data.nextActions || []);
   data.tasks = tasks.map(normalizeTodayTaskP117_);
   data.todos = data.tasks;
   data.nextActions = Array.isArray(data.nextActions) ? data.nextActions : [];
   todayTagOptionsP118_ = mergeTodayTagOptionsP118_(data.tagOptions || todayTagOptionsP118_ || [], data.tasks);
   data.tagOptions = todayTagOptionsP118_;
+  data.hiddenTags = todayHiddenTagsP123_;
   return data;
 }
 
@@ -100,19 +106,20 @@ function normalizeTodayTaskP117_(task) {
     createdAt: createdAt,
     dueAt: toTodayLocalDateTimeValueP118_(task.dueAt || task.timeText || ''),
     completedAt: toTodayLocalDateTimeValueP118_(task.completedAt || ''),
-    tags: normalizeTodayTagsP118_(task.tags),
+    tags: filterTodayHiddenTagsP123_(normalizeTodayTagsP118_(task.tags)),
     nextAction: String(task.nextAction || '').trim(),
     rawContent: String(task.rawContent || '').trim()
   };
 }
 
 function mergeTodayTagOptionsP118_(options, tasks) {
-  const base = ['전화','메일','견적','컨택','계약','서류','영업지원','재확인','긴급','내부처리'];
+  const base = TODAY_DEFAULT_TAGS_P123_;
+  const hidden = todayHiddenTagsP123_.reduce(function(acc, tag) { acc[tag] = true; return acc; }, {});
   const seen = {};
   const result = [];
   function add(v) {
     v = String(v || '').replace(/^#+/, '').trim();
-    if (!v || seen[v]) return;
+    if (!v || seen[v] || hidden[v]) return;
     seen[v] = true;
     result.push(v);
   }
@@ -120,6 +127,17 @@ function mergeTodayTagOptionsP118_(options, tasks) {
   (Array.isArray(options) ? options : []).forEach(add);
   (Array.isArray(tasks) ? tasks : []).forEach(function(t) { normalizeTodayTagsP118_(t && t.tags).forEach(add); });
   return result.slice(0, 40);
+}
+
+function filterTodayHiddenTagsP123_(tags) {
+  tags = normalizeTodayTagsP118_(tags);
+  const hidden = todayHiddenTagsP123_.reduce(function(acc, tag) { acc[tag] = true; return acc; }, {});
+  return tags.filter(function(tag) { return !hidden[tag]; });
+}
+
+function isTodayDefaultTagP123_(tag) {
+  tag = String(tag || '').trim();
+  return TODAY_DEFAULT_TAGS_P123_.indexOf(tag) >= 0;
 }
 
 function normalizeTodayTagsP118_(value) {
@@ -282,18 +300,34 @@ function renderTodayTasksP117_(tasks) {
   tasks = (Array.isArray(tasks) ? tasks : []).map(normalizeTodayTaskP117_);
   if (!tasks.length) tasks = [createTodayBlankTaskP118_()];
   todayTagOptionsP118_ = mergeTodayTagOptionsP118_(todayTagOptionsP118_, tasks);
+  renderTodaySideFiltersP123_(tasks);
   const visibleCount = tasks.filter(getTodayTaskVisibleP117_).length;
   area.innerHTML = '' +
-    '<div class="today-workbench-p122">' +
-      '<div class="today-filterbar-wrap-p122">' +
-        '<div class="today-filter-title-p122"><span>빠른 조회</span><em>' + esc(getTodayFilterLabelP122_()) + '</em></div>' +
-        '<div class="today-task-filterbar">' + renderTodayFilterButtonP117_('open', '미완료', countTodayTasksForFilterP122_(tasks, 'open')) + renderTodayFilterButtonP117_('all', '전체', countTodayTasksForFilterP122_(tasks, 'all')) + renderTodayFilterButtonP117_('done', '완료', countTodayTasksForFilterP122_(tasks, 'done')) + renderTodayTagFilterButtonsP118_() + '</div>' +
-      '</div>' +
-      '<div class="today-list-shell-p122">' +
-        '<div class="today-list-head-p122"><span>완료</span><span>태그 / 고객</span><span>작성</span><span>할 일</span><span>처리내용</span><span>예정/완료시간</span><span></span></div>' +
+    '<div class="today-workbench-p122 today-workbench-p123">' +
+      '<div class="today-list-shell-p122 today-list-shell-p123">' +
         '<div class="today-task-list" id="todayTodoList">' + tasks.map(renderTodayTodoRow_).join('') + '</div>' +
-        (visibleCount ? '' : '<div class="today-empty-state"><b>해당 조건의 할 일이 없습니다.</b><span>다른 태그를 누르거나, + 할 일/다음액션 추가를 눌러 새 작업을 등록하세요.</span></div>') +
+        (visibleCount ? '' : '<div class="today-empty-state"><b>해당 조건의 할 일이 없습니다.</b><span>왼쪽 빠른 조회에서 다른 조건을 누르거나, + 할 일 추가로 새 작업을 등록하세요.</span></div>') +
       '</div>' +
+    '</div>';
+}
+
+function renderTodaySideFiltersP123_(tasks) {
+  const area = document.getElementById('todayTagFilterArea');
+  if (!area) return;
+  tasks = (Array.isArray(tasks) ? tasks : []).map(normalizeTodayTaskP117_);
+  const tags = mergeTodayTagOptionsP118_(todayTagOptionsP118_, tasks).slice(0, 30);
+  const counts = buildTodayTagCountMapP122_(tasks);
+  const statusHtml = renderTodayFilterButtonP117_('open', '미완료', countTodayTasksForFilterP122_(tasks, 'open')) +
+    renderTodayFilterButtonP117_('all', '전체', countTodayTasksForFilterP122_(tasks, 'all')) +
+    renderTodayFilterButtonP117_('done', '완료', countTodayTasksForFilterP122_(tasks, 'done'));
+  const tagHtml = tags.map(function(tag) { return renderTodaySideTagChipP123_(tag, counts[tag] || 0); }).join('');
+  area.innerHTML = '' +
+    '<div class="today-side-filter-p123">' +
+      '<div class="today-side-filter-title-p123">빠른 조회</div>' +
+      '<div class="today-side-filter-group-p123">' + statusHtml + '</div>' +
+      '<div class="today-side-filter-title-p123 small">태그</div>' +
+      '<div class="today-side-filter-group-p123 today-side-tag-group-p123">' + (tagHtml || '<span class="today-side-empty-p123">사용 중인 태그가 없습니다.</span>') + '</div>' +
+      '<div class="today-side-filter-help-p123">직접 만든 태그는 × 버튼으로 숨김/삭제할 수 있습니다.</div>' +
     '</div>';
 }
 
@@ -302,6 +336,16 @@ function renderTodayFilterButtonP117_(key, label, count) {
   const badge = (typeof count === 'number') ? '<span class="today-filter-count-p122">' + count + '</span>' : '';
   return '<button type="button" class="today-filter-chip' + active + '" onclick="setTodayTaskFilterP117_(\'' + escJsP118_(key) + '\')"><span>' + esc(label) + '</span>' + badge + '</button>';
 }
+
+function renderTodaySideTagChipP123_(tag, count) {
+  const active = todayTaskFilterP117_ === ('tag:' + tag) ? ' active' : '';
+  const removable = !isTodayDefaultTagP123_(tag);
+  return '<span class="today-side-tag-wrap-p123' + active + '">' +
+    '<button type="button" class="today-filter-chip today-side-tag-filter-p123' + active + '" onclick="setTodayTaskFilterP117_(\'tag:' + escJsP118_(tag) + '\')"><span>' + esc(tag) + '</span><span class="today-filter-count-p122">' + Number(count || 0) + '</span></button>' +
+    (removable ? '<button type="button" class="today-tag-delete-p123" title="태그 삭제" onclick="deleteTodayTagOptionP123_(\'' + escJsP118_(tag) + '\')">×</button>' : '') +
+  '</span>';
+}
+
 
 function renderTodayTagFilterButtonsP118_() {
   const tasks = (todayCurrentData && Array.isArray(todayCurrentData.tasks)) ? todayCurrentData.tasks.map(normalizeTodayTaskP117_) : [];
@@ -368,54 +412,54 @@ function renderTodayTodoRow_(todo, idx) {
   const visible = getTodayTaskVisibleP117_(todo);
   const rowNo = Number(todo.rowNo) || 0;
   const dueClass = getTodayDueStateClassP122_(todo);
-  let actions = '';
-  if (rowNo) {
-    actions += '<button class="secondary" type="button" onclick="openDetail(' + rowNo + ')">상세</button>';
-    actions += '<button type="button" onclick="openSendForCustomer(' + rowNo + ')">발송</button>';
-  }
   const tagHtml = renderTodaySelectedTagsP118_(todo.tags) + renderTodayTagSelectP119_(todo.tags);
-  const createdTime = formatTodayTimeOnlyP119_(todo.createdAt || todayNowLocalDateTimeP118_()) || '--:--';
-  const customerLine = (todo.company || todo.customerNo || todo.author || actions) ?
-    '<div class="today-customer-line-p122">' +
-      (todo.company ? '<span class="today-task-company">' + esc(todo.company) + '</span>' : '') +
-      (todo.customerNo ? '<span class="today-task-meta-inline">' + esc(todo.customerNo) + '</span>' : '') +
-      (todo.author ? '<span class="today-task-meta-inline">' + esc(todo.author) + '</span>' : '') +
-      (actions ? '<span class="today-task-actions today-task-actions-inline">' + actions + '</span>' : '') +
-    '</div>' : '';
-  return '<div class="today-task-row today-task-row-compact today-task-row-p122 ' + (todo.done ? 'done ' : '') + dueClass + (!visible ? 'today-task-hidden ' : '') + '" ' +
+  const customerLabel = (rowNo || todo.customerNo || todo.company)
+    ? ('연동고객: ' + (todo.company || todo.customerNo || ('행 ' + rowNo)))
+    : '고객연동';
+  return '<div class="today-task-row today-task-row-compact today-task-row-p122 today-task-row-p123 ' + (todo.done ? 'done ' : '') + dueClass + (!visible ? 'today-task-hidden ' : '') + '" ' +
       'data-id="' + escAttrP117_(todo.id) + '" data-category="' + escAttrP117_(todo.category) + '" data-source-type="' + escAttrP117_(todo.sourceType) + '" data-source-id="' + escAttrP117_(todo.sourceId) + '" ' +
       'data-customer-no="' + escAttrP117_(todo.customerNo) + '" data-company="' + escAttrP117_(todo.company) + '" data-row-no="' + escAttrP117_(todo.rowNo) + '" data-time-text="' + escAttrP117_(todo.timeText) + '" data-priority="' + escAttrP117_(todo.priority) + '">' +
     '<label class="today-task-check"><input type="checkbox" class="todayTodoDone" onchange="onTodayTaskDoneChangeP117_(this)" ' + (todo.done ? 'checked' : '') + '><span></span></label>' +
     '<div class="today-task-body">' +
-      '<div class="today-task-topline today-task-topline-p119 today-task-topline-p122">' +
+      '<div class="today-task-topline today-task-topline-p119 today-task-topline-p122 today-task-topline-p123">' +
         '<div class="today-tag-box today-tag-box-inline" data-tags="' + escAttrP117_(todo.tags.join(',')) + '">' + tagHtml + '</div>' +
-        customerLine +
+        '<button type="button" class="today-customer-link-btn-p123 ' + ((rowNo || todo.customerNo || todo.company) ? 'linked' : '') + '" onclick="handleTodayCustomerLinkClickP123_(this)">' + esc(customerLabel) + '</button>' +
       '</div>' +
-      '<div class="today-task-line-p119 today-task-line-p122">' +
-        '<label class="today-created-wrap"><span>작성</span><input class="todayCreatedTime" type="text" value="' + escAttrP117_(createdTime) + '" disabled><input class="todayCreatedAt" type="hidden" value="' + escAttrP117_(todo.createdAt || todayNowLocalDateTimeP118_()) + '"></label>' +
-        '<label class="today-content-wrap"><span>할 일</span><input class="todayTodoText" placeholder="예: 14시 전 견적 재발송" value="' + escAttrP117_(todo.content || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
+      '<div class="today-task-line-p119 today-task-line-p122 today-task-line-p123">' +
+        '<input class="todayCreatedAt" type="hidden" value="' + escAttrP117_(todo.createdAt || todayNowLocalDateTimeP118_()) + '">' +
+        '<label class="today-content-wrap"><span>할 일</span><input class="todayTodoText" placeholder="예: 범먹기" value="' + escAttrP117_(todo.content || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
         '<label class="today-detail-wrap"><span>처리</span><input class="todayTodoDetail" placeholder="처리내용" value="' + escAttrP117_(todo.detail || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
-        '<label class="today-due-wrap ' + (todo.done ? 'hidden' : '') + '"><span>예정</span><input class="todayDueAt" type="datetime-local" value="' + escAttrP117_(todo.dueAt || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
-        '<label class="today-completed-wrap ' + (todo.done ? '' : 'hidden') + '"><span>완료</span><input class="todayCompletedAt" type="datetime-local" value="' + escAttrP117_(todo.completedAt || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
+        '<label class="today-due-wrap ' + (todo.done ? 'hidden' : '') + '"><span>예정</span>' + renderTodayDateTimePickerP123_('todayDueAt', todo.dueAt || '', '미정') + '</label>' +
+        '<label class="today-completed-wrap ' + (todo.done ? '' : 'hidden') + '"><span>완료</span>' + renderTodayDateTimePickerP123_('todayCompletedAt', todo.completedAt || '', '미정') + '</label>' +
       '</div>' +
     '</div>' +
     '<button class="today-todo-remove" type="button" title="삭제" onclick="removeTodayTodoRow(this)">×</button>' +
   '</div>';
 }
 
+function renderTodayDateTimePickerP123_(className, value, emptyLabel) {
+  const display = formatTodayDateTimeDisplayP123_(value, emptyLabel || '미정');
+  return '<div class="today-datetime-shell-p123">' +
+    '<button type="button" class="today-datetime-display-p123 ' + (value ? 'has-value' : 'empty') + '" onclick="openTodayDateTimePickerP123_(this)">' + esc(display) + '</button>' +
+    '<input class="' + escAttrP117_(className) + ' todayDateTimeInputP123" type="datetime-local" value="' + escAttrP117_(value || '') + '" onchange="onTodayDateTimeValueChangeP123_(this)" oninput="onTodayDateTimeValueChangeP123_(this)">' +
+    '<button type="button" class="today-datetime-clear-p123" title="시간 비우기" onclick="clearTodayDateTimeP123_(this)">×</button>' +
+  '</div>';
+}
+
 
 function renderTodaySelectedTagsP118_(tags) {
-  tags = normalizeTodayTagsP118_(tags);
+  tags = filterTodayHiddenTagsP123_(normalizeTodayTagsP118_(tags));
   const selected = tags.map(function(tag) { return '<button type="button" class="today-tag-chip selected" title="클릭하면 태그 해제" onclick="toggleTodayRowTagP118_(this, \'' + escJsP118_(tag) + '\')">' + esc(tag) + '</button>'; }).join('');
-  return '<div class="today-selected-tags">' + (selected || '<span class="today-tag-placeholder">태그 선택</span>') + '</div>';
+  return '<div class="today-selected-tags">' + (selected || '') + '</div>';
 }
 
 function renderTodayTagSelectP119_(selectedTags) {
-  selectedTags = normalizeTodayTagsP118_(selectedTags);
+  selectedTags = filterTodayHiddenTagsP123_(normalizeTodayTagsP118_(selectedTags));
   const opts = mergeTodayTagOptionsP118_(todayTagOptionsP118_, (todayCurrentData && todayCurrentData.tasks) || []);
   const options = opts.map(function(tag) { return '<option value="' + escAttrP117_(tag) + '">' + esc(tag) + '</option>'; }).join('');
   return '<div class="today-tag-select-wrap"><select class="todayTagSelect" onchange="addTodayTagFromSelectP119_(this)"><option value="">태그 선택</option>' + options + '</select><input class="todayNewTagInput" placeholder="새 태그" onkeydown="if(event.key===\'Enter\'){event.preventDefault(); addTodayCustomTagP118_(this);}"><button type="button" class="today-tag-add" onclick="addTodayCustomTagP118_(this.previousElementSibling)">추가</button></div>';
 }
+
 
 function renderTodayTagPaletteP118_() {
   return renderTodayTagSelectP119_([]);
@@ -436,6 +480,7 @@ function toggleTodayRowTagP118_(btn, tag) {
     if (selected) selected.outerHTML = renderTodaySelectedTagsP118_(current);
   }
   markTodayTaskDirtyP117_();
+  renderTodaySideFiltersP123_(collectTodayTodos_());
 }
 
 function addTodayTagFromSelectP119_(select) {
@@ -450,10 +495,13 @@ function addTodayCustomTagP118_(input) {
   if (!input) return;
   const tag = String(input.value || '').replace(/^#+/, '').trim();
   if (!tag) return;
+  todayHiddenTagsP123_ = todayHiddenTagsP123_.filter(function(v) { return v !== tag; });
   if (todayTagOptionsP118_.indexOf(tag) < 0) todayTagOptionsP118_.push(tag);
+  todayTagOptionsP118_ = mergeTodayTagOptionsP118_(todayTagOptionsP118_, collectTodayTodos_());
   const fake = input.closest('.today-task-row') ? input : null;
   input.value = '';
   if (fake) toggleTodayRowTagP118_(fake, tag);
+  renderTodaySideFiltersP123_(collectTodayTodos_());
 }
 
 function markTodayTaskDirtyP117_() {
@@ -461,6 +509,226 @@ function markTodayTaskDirtyP117_() {
   const tasks = collectTodayTodos_();
   todayCurrentData = Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks, tagOptions: todayTagOptionsP118_ });
   renderTodaySummaryV111_(tasks);
+  renderTodaySideFiltersP123_(tasks);
+}
+
+function formatTodayDateTimeDisplayP123_(value, emptyLabel) {
+  const v = toTodayLocalDateTimeValueP118_(value || '');
+  if (!v) return emptyLabel || '미정';
+  return v.slice(5, 7) + '.' + v.slice(8, 10) + ' ' + v.slice(11, 16);
+}
+
+function openTodayDateTimePickerP123_(btn) {
+  const shell = btn && btn.closest ? btn.closest('.today-datetime-shell-p123') : null;
+  const input = shell ? shell.querySelector('.todayDateTimeInputP123') : null;
+  if (!input) return;
+  try { if (input.showPicker) input.showPicker(); else input.click(); } catch (err) { try { input.focus(); input.click(); } catch (e) {} }
+}
+
+function onTodayDateTimeValueChangeP123_(input) {
+  const shell = input && input.closest ? input.closest('.today-datetime-shell-p123') : null;
+  if (shell) {
+    const btn = shell.querySelector('.today-datetime-display-p123');
+    if (btn) {
+      btn.textContent = formatTodayDateTimeDisplayP123_(input.value || '', '미정');
+      btn.classList.toggle('has-value', !!input.value);
+      btn.classList.toggle('empty', !input.value);
+    }
+  }
+  markTodayTaskDirtyP117_();
+}
+
+function clearTodayDateTimeP123_(btn) {
+  const shell = btn && btn.closest ? btn.closest('.today-datetime-shell-p123') : null;
+  const input = shell ? shell.querySelector('.todayDateTimeInputP123') : null;
+  if (!input) return;
+  input.value = '';
+  onTodayDateTimeValueChangeP123_(input);
+}
+
+function updateTodayRowDateTimeDisplaysP123_(row) {
+  if (!row) return;
+  Array.from(row.querySelectorAll('.todayDateTimeInputP123')).forEach(function(input) {
+    const shell = input.closest('.today-datetime-shell-p123');
+    const btn = shell ? shell.querySelector('.today-datetime-display-p123') : null;
+    if (btn) {
+      btn.textContent = formatTodayDateTimeDisplayP123_(input.value || '', '미정');
+      btn.classList.toggle('has-value', !!input.value);
+      btn.classList.toggle('empty', !input.value);
+    }
+  });
+}
+
+function deleteTodayTagOptionP123_(tag) {
+  tag = String(tag || '').replace(/^#+/, '').trim();
+  if (!tag) return;
+  if (isTodayDefaultTagP123_(tag)) {
+    toast('기본 태그는 삭제하지 않고 숨김 없이 유지합니다.');
+    return;
+  }
+  if (!confirm('태그 [' + tag + ']를 삭제할까요?\n현재 화면의 할 일에서도 이 태그가 제거됩니다.')) return;
+  if (todayHiddenTagsP123_.indexOf(tag) < 0) todayHiddenTagsP123_.push(tag);
+  todayTagOptionsP118_ = todayTagOptionsP118_.filter(function(v) { return v !== tag; });
+  Array.from(document.querySelectorAll('#todayTodoList .today-task-row')).forEach(function(row) {
+    const box = row.querySelector('.today-tag-box');
+    const tags = filterTodayHiddenTagsP123_(normalizeTodayTagsP118_(box ? box.getAttribute('data-tags') : ''));
+    if (box) {
+      box.setAttribute('data-tags', tags.join(','));
+      const selected = box.querySelector('.today-selected-tags');
+      if (selected) selected.outerHTML = renderTodaySelectedTagsP118_(tags);
+    }
+  });
+  const tasks = collectTodayTodos_();
+  todayCurrentData = Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks, tagOptions: todayTagOptionsP118_, hiddenTags: todayHiddenTagsP123_ });
+  renderTodaySideFiltersP123_(tasks);
+  renderTodaySummaryV111_(tasks);
+  touchTodayLocalDraftP120_();
+  try {
+    google.script.run.withFailureHandler(function(err) { console.warn('태그 삭제 설정 저장 실패', err); }).savePortalTodayHiddenTags(todayHiddenTagsP123_);
+  } catch (err) {}
+  window.clearTimeout(todayAutoSaveTimerP117_);
+  todayAutoSaveTimerP117_ = window.setTimeout(function() { saveTodayTodos({ silent: true, preserveFocus: true }); }, 500);
+}
+
+function handleTodayCustomerLinkClickP123_(btn) {
+  const row = btn && btn.closest ? btn.closest('.today-task-row') : null;
+  if (!row) return;
+  const rowNo = Number(row.getAttribute('data-row-no') || 0) || 0;
+  const customerNo = row.getAttribute('data-customer-no') || '';
+  const company = row.getAttribute('data-company') || '';
+  if (rowNo || customerNo || company) {
+    openTodayLinkedCustomerP123_(row);
+    return;
+  }
+  openTodayCustomerLinkPopupP123_(row);
+}
+
+function openTodayLinkedCustomerP123_(row) {
+  const rowNo = Number(row.getAttribute('data-row-no') || 0) || 0;
+  const customerNo = row.getAttribute('data-customer-no') || '';
+  const company = row.getAttribute('data-company') || '';
+  if (typeof pendingSupportCustomerOpenV64 !== 'undefined') pendingSupportCustomerOpenV64 = { customerNo: customerNo, customerName: company };
+  switchPage('customers', true);
+  const keyword = document.getElementById('keyword');
+  if (keyword) keyword.value = customerNo || company || String(rowNo || '');
+  if (typeof customerExpandedRowNo !== 'undefined') customerExpandedRowNo = null;
+  searchCustomerPage(0);
+}
+
+function openTodayCustomerLinkPopupP123_(row) {
+  todayCustomerLinkTargetRowP123_ = row;
+  closeTodayCustomerLinkPopupP123_();
+  const overlay = document.createElement('div');
+  overlay.id = 'todayCustomerLinkOverlayP123';
+  overlay.className = 'today-customer-link-overlay-p123';
+  overlay.innerHTML = '' +
+    '<div class="today-customer-link-modal-p123">' +
+      '<div class="today-customer-link-head-p123"><b>고객 연동</b><button type="button" onclick="closeTodayCustomerLinkPopupP123_()">×</button></div>' +
+      '<div class="today-customer-link-desc-p123">고객번호나 회사명으로 검색해서 이 할 일과 연결합니다.</div>' +
+      '<div class="today-customer-link-search-p123"><input id="todayCustomerLinkKeywordP123" placeholder="고객번호 또는 회사명"><button type="button" onclick="searchTodayCustomerLinkPopupP123_()">검색</button></div>' +
+      '<div id="todayCustomerLinkResultsP123" class="today-customer-link-results-p123"><div class="today-customer-link-empty-p123">검색어를 입력하세요.</div></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  const input = document.getElementById('todayCustomerLinkKeywordP123');
+  if (input) {
+    const text = row.querySelector('.todayTodoText');
+    input.value = (text && text.value ? text.value : '').replace(/[\[\]]/g, ' ').trim().slice(0, 30);
+    input.focus();
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') searchTodayCustomerLinkPopupP123_(); });
+  }
+}
+
+function closeTodayCustomerLinkPopupP123_() {
+  const old = document.getElementById('todayCustomerLinkOverlayP123');
+  if (old) old.remove();
+}
+
+function searchTodayCustomerLinkPopupP123_() {
+  const input = document.getElementById('todayCustomerLinkKeywordP123');
+  const result = document.getElementById('todayCustomerLinkResultsP123');
+  const keyword = String((input && input.value) || '').trim();
+  if (!result) return;
+  if (!keyword) { result.innerHTML = '<div class="today-customer-link-empty-p123">검색어를 입력하세요.</div>'; return; }
+  const local = findTodayCustomerCandidatesLocalP123_(keyword).slice(0, 10);
+  if (local.length) renderTodayCustomerLinkResultsP123_(local, 'local');
+  else result.innerHTML = '<div class="today-customer-link-empty-p123">고객을 검색하는 중입니다...</div>';
+  try {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        const rows = (res && Array.isArray(res.rows)) ? res.rows : [];
+        renderTodayCustomerLinkResultsP123_(mergeTodayCustomerCandidatesP123_(local, rows).slice(0, 10), 'server');
+      })
+      .withFailureHandler(function(err) {
+        if (!local.length) result.innerHTML = '<div class="today-customer-link-empty-p123 error">검색 실패: ' + esc(getErrorMessage_(err)) + '</div>';
+      })
+      .searchCustomersPaged(keyword, 0, 10, (typeof customerSortModeV67 !== 'undefined' ? customerSortModeV67 : ''), (typeof getCustomerScopeForRequestP04_ === 'function' ? getCustomerScopeForRequestP04_() : 'OWN'));
+  } catch (err) {
+    if (!local.length) result.innerHTML = '<div class="today-customer-link-empty-p123 error">검색 기능을 불러오지 못했습니다.</div>';
+  }
+}
+
+function findTodayCustomerCandidatesLocalP123_(keyword) {
+  keyword = String(keyword || '').replace(/\s+/g, '').toLowerCase();
+  const rows = [];
+  function addRows(list) { (Array.isArray(list) ? list : []).forEach(function(r) { if (r) rows.push(r); }); }
+  if (typeof lastCustomerResultResponse !== 'undefined' && lastCustomerResultResponse && Array.isArray(lastCustomerResultResponse.rows)) addRows(lastCustomerResultResponse.rows);
+  const pageCache = (typeof customerPageMemoryCache !== 'undefined' && customerPageMemoryCache) ? customerPageMemoryCache : {};
+  Object.keys(pageCache).forEach(function(k) { const res = pageCache[k]; if (res && Array.isArray(res.rows)) addRows(res.rows); });
+  if (typeof customerSearchIndexState !== 'undefined' && customerSearchIndexState && Array.isArray(customerSearchIndexState.rows)) addRows(customerSearchIndexState.rows);
+  const seen = {};
+  return rows.filter(function(r) {
+    const key = String(r.rowNo || '') + '|' + String(r.customerNo || '');
+    if (seen[key]) return false;
+    seen[key] = true;
+    const hay = [r.customerNo, r.company, r.address, r.phone, r.manager, r.salesRep].join(' ').replace(/\s+/g, '').toLowerCase();
+    return hay.indexOf(keyword) >= 0;
+  });
+}
+
+function mergeTodayCustomerCandidatesP123_(a, b) {
+  const seen = {};
+  const out = [];
+  (a || []).concat(b || []).forEach(function(r) {
+    const key = String(r.rowNo || '') + '|' + String(r.customerNo || '') + '|' + String(r.company || '');
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(r);
+  });
+  return out;
+}
+
+function renderTodayCustomerLinkResultsP123_(rows) {
+  const result = document.getElementById('todayCustomerLinkResultsP123');
+  if (!result) return;
+  todayCustomerLinkCandidatesP123_ = Array.isArray(rows) ? rows : [];
+  if (!todayCustomerLinkCandidatesP123_.length) {
+    result.innerHTML = '<div class="today-customer-link-empty-p123">검색 결과가 없습니다.</div>';
+    return;
+  }
+  result.innerHTML = todayCustomerLinkCandidatesP123_.map(function(r, idx) {
+    return '<button type="button" class="today-customer-candidate-p123" onclick="selectTodayCustomerLinkCandidateP123_(' + idx + ')">' +
+      '<b>' + esc(r.company || '회사명 없음') + '</b>' +
+      '<span>고객번호 ' + esc(r.customerNo || '-') + ' · 담당 ' + esc(r.salesRep || r.manager || '-') + '</span>' +
+    '</button>';
+  }).join('');
+}
+
+function selectTodayCustomerLinkCandidateP123_(idx) {
+  const row = todayCustomerLinkTargetRowP123_;
+  const r = todayCustomerLinkCandidatesP123_[Number(idx) || 0];
+  if (!row || !r) return;
+  row.setAttribute('data-row-no', String(r.rowNo || ''));
+  row.setAttribute('data-customer-no', String(r.customerNo || ''));
+  row.setAttribute('data-company', String(r.company || ''));
+  const btn = row.querySelector('.today-customer-link-btn-p123');
+  if (btn) {
+    btn.textContent = '연동고객: ' + (r.company || r.customerNo || '고객');
+    btn.classList.add('linked');
+  }
+  closeTodayCustomerLinkPopupP123_();
+  markTodayTaskDirtyP117_();
+  window.clearTimeout(todayAutoSaveTimerP117_);
+  todayAutoSaveTimerP117_ = window.setTimeout(function() { saveTodayTodos({ silent: true, preserveFocus: true }); }, 500);
 }
 
 function onTodayTaskDoneChangeP117_(checkbox) {
@@ -475,6 +743,7 @@ function onTodayTaskDoneChangeP117_(checkbox) {
   const completed = row.querySelector('.todayCompletedAt');
   if (done && completed && !completed.value) completed.value = todayNowLocalDateTimeP118_();
   if (!done && completed) completed.value = '';
+  updateTodayRowDateTimeDisplaysP123_(row);
   row.classList.remove('today-task-overdue-p122', 'today-task-soon-p122');
   if (!done) {
     const dueState = getTodayDueStateClassP122_(collectTodayTaskFromRowP120_(row));
@@ -558,7 +827,7 @@ function saveTodayTodos(options) {
       if (prev) { saveTodayCacheV57_(prev); todayCurrentData = prev; renderTodayDataV57_(prev, { forceRender: true }); }
       alert('할 일 저장 실패: ' + getErrorMessage_(err));
     })
-    .savePortalTodosForDate({ date: todaySelectedDate, tasks: tasks, todos: tasks });
+    .savePortalTodosForDate({ date: todaySelectedDate, tasks: tasks, todos: tasks, hiddenTags: todayHiddenTagsP123_ });
 }
 
 function isTodayTodoEditingV111_() {
@@ -598,7 +867,7 @@ function collectTodayTaskFromRowP120_(row) {
   const due = row.querySelector('.todayDueAt');
   const completed = row.querySelector('.todayCompletedAt');
   const created = row.querySelector('.todayCreatedAt');
-  const tags = normalizeTodayTagsP118_(row.querySelector('.today-tag-box') ? row.querySelector('.today-tag-box').getAttribute('data-tags') : '');
+  const tags = filterTodayHiddenTagsP123_(normalizeTodayTagsP118_(row.querySelector('.today-tag-box') ? row.querySelector('.today-tag-box').getAttribute('data-tags') : ''));
   return {
     id: row.getAttribute('data-id') || '',
     done: done,
