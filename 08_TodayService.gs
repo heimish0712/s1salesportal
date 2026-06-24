@@ -1,8 +1,9 @@
 /***************************************
  * S1 Sales Portal - 08_TodayService.gs
- * 오늘 할 일 통합형 개편
- * - 수동 할 일 + 컨택 예정/다음액션을 하나의 '오늘 할 일'로 통합
- * - 완료 체크 시 오늘 할 일 카운트에서 제외
+ * 오늘 할 일 태그형 개편
+ * - 수동/컨택 예정 액션을 하나의 할 일 목록으로 통합
+ * - 사용자 정의 해시태그 다중 적용
+ * - 작성시간/처리내용/완료예정시간/완료시간 관리
  ***************************************/
 
 function getPortalTodayData(dateText) {
@@ -16,6 +17,7 @@ function getPortalTodayData(dateText) {
     tasks: tasks,
     todos: tasks,
     nextActions: nextActions,
+    tagOptions: getPortalTodayTagOptions_(),
     actionOptions: PORTAL_NEXT_ACTION_OPTIONS
   };
 }
@@ -28,6 +30,11 @@ function savePortalTodosForDate(payload) {
   const now = new Date();
   const user = getCurrentUserLabel_();
   const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
+
+  const existingById = getPortalTodosForDate_(selectedDate).reduce(function(acc, item) {
+    if (item && item.id) acc[String(item.id)] = item;
+    return acc;
+  }, {});
 
   const lastRow = sheet.getLastRow();
   if (lastRow >= 2) {
@@ -45,16 +52,24 @@ function savePortalTodosForDate(payload) {
       item = item || {};
       const content = String(item.content || '').trim();
       if (!content) return null;
+      const id = String(item.id || '').trim() || Utilities.getUuid().slice(0, 8);
+      const prev = existingById[id] || {};
       const sourceType = String(item.sourceType || '').trim() || 'MANUAL';
       const sourceId = String(item.sourceId || '').trim();
       const category = String(item.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '컨택예정' : '수동');
+      const done = !!item.done;
+      const createdAt = parsePortalTodayDateTime_(item.createdAt) || parsePortalTodayDateTime_(prev.createdAt) || now;
+      const completedAt = done
+        ? (parsePortalTodayDateTime_(item.completedAt) || parsePortalTodayDateTime_(prev.completedAt) || now)
+        : null;
+      const dueAt = done ? '' : (String(item.dueAt || item.timeText || '').trim());
       return [
-        String(item.id || '').trim() || Utilities.getUuid().slice(0, 8),
+        id,
         selectedDate,
         idx + 1,
         content,
-        item.done ? 'Y' : '',
-        String(item.author || '').trim() || user,
+        done ? 'Y' : '',
+        String(item.author || '').trim() || String(prev.author || '').trim() || user,
         now,
         '',
         category,
@@ -64,7 +79,12 @@ function savePortalTodosForDate(payload) {
         String(item.company || '').trim(),
         String(item.rowNo || '').trim(),
         String(item.timeText || item.nextActionAt || '').trim(),
-        String(item.priority || '').trim()
+        String(item.priority || '').trim(),
+        createdAt,
+        normalizePortalTodayTags_(item.tags).join(', '),
+        String(item.detail || '').trim(),
+        dueAt,
+        completedAt || ''
       ];
     })
     .filter(Boolean);
@@ -97,62 +117,43 @@ function buildPortalTodayUnifiedTasks_(storedTodos, nextActions, selectedDate) {
     const sourceId = String(todo.sourceId || '').trim();
     if (sourceType && sourceType !== 'MANUAL' && sourceId) {
       sourceTodoMap[sourceType + '|' + sourceId] = todo;
-    } else {
-      result.push(normalizePortalTodayTask_(todo, selectedDate));
     }
+    result.push(normalizePortalTodayTask_(todo, selectedDate));
   });
 
   nextActions.forEach(function(action) {
     const sourceId = String(action.sourceId || action.historyId || '').trim() || [action.customerNo, action.rowNo, action.nextActionAt, action.nextAction].join('|');
     const sourceKey = 'CONTACT_NEXT|' + sourceId;
-    const persisted = sourceTodoMap[sourceKey];
-    const defaultContent = buildPortalTodayContactTaskText_(action);
-    if (persisted) {
-      const merged = Object.assign({}, persisted, {
-        category: persisted.category || '컨택예정',
-        sourceType: 'CONTACT_NEXT',
-        sourceId: sourceId,
-        customerNo: action.customerNo || persisted.customerNo || '',
-        company: action.company || persisted.company || '',
-        rowNo: action.rowNo || persisted.rowNo || '',
-        timeText: action.nextActionAt || persisted.timeText || '',
-        nextAction: action.nextAction || '',
-        rawContent: action.content || ''
-      });
-      if (!String(merged.content || '').trim()) merged.content = defaultContent;
-      result.push(normalizePortalTodayTask_(merged, selectedDate));
-    } else {
-      result.push(normalizePortalTodayTask_({
-        id: 'contact_' + Utilities.base64EncodeWebSafe(sourceId).slice(0, 16),
-        date: selectedDate,
-        order: 9000 + result.length,
-        content: defaultContent,
-        done: false,
-        author: action.author || '',
-        category: '컨택예정',
-        sourceType: 'CONTACT_NEXT',
-        sourceId: sourceId,
-        customerNo: action.customerNo || '',
-        company: action.company || '',
-        rowNo: action.rowNo || '',
-        timeText: action.nextActionAt || '',
-        priority: '오늘',
-        nextAction: action.nextAction || '',
-        rawContent: action.content || ''
-      }, selectedDate));
-    }
+    if (sourceTodoMap[sourceKey]) return;
+    result.push(normalizePortalTodayTask_({
+      id: 'contact_' + Utilities.base64EncodeWebSafe(sourceId).slice(0, 16),
+      date: selectedDate,
+      order: 9000 + result.length,
+      content: buildPortalTodayContactTaskText_(action),
+      done: false,
+      author: action.author || '',
+      category: '컨택예정',
+      sourceType: 'CONTACT_NEXT',
+      sourceId: sourceId,
+      customerNo: action.customerNo || '',
+      company: action.company || '',
+      rowNo: action.rowNo || '',
+      timeText: action.nextActionAt || '',
+      dueAt: action.nextActionAt || '',
+      priority: '오늘',
+      tags: ['컨택', '고객'],
+      nextAction: action.nextAction || '',
+      rawContent: action.content || ''
+    }, selectedDate));
   });
 
   result.sort(function(a, b) {
     const ad = a.done ? 1 : 0;
     const bd = b.done ? 1 : 0;
     if (ad !== bd) return ad - bd;
-    const at = String(a.timeText || '99:99');
-    const bt = String(b.timeText || '99:99');
-    const ac = a.category === '컨택예정' ? 0 : 1;
-    const bc = b.category === '컨택예정' ? 0 : 1;
+    const at = String(a.dueAt || a.timeText || '99:99');
+    const bt = String(b.dueAt || b.timeText || '99:99');
     if (at !== bt) return at.localeCompare(bt);
-    if (ac !== bc) return ac - bc;
     return (Number(a.order) || 0) - (Number(b.order) || 0);
   });
 
@@ -162,7 +163,8 @@ function buildPortalTodayUnifiedTasks_(storedTodos, nextActions, selectedDate) {
 function normalizePortalTodayTask_(task, selectedDate) {
   task = task || {};
   const sourceType = String(task.sourceType || '').trim() || 'MANUAL';
-  const sourceId = String(task.sourceId || '').trim();
+  const createdAt = task.createdAt || task.updatedAt || new Date();
+  const tags = normalizePortalTodayTags_(task.tags);
   return {
     id: String(task.id || '').trim() || Utilities.getUuid().slice(0, 8),
     date: normalizePortalTodoDate_(task.date || selectedDate || new Date()),
@@ -170,16 +172,21 @@ function normalizePortalTodayTask_(task, selectedDate) {
     content: String(task.content || '').trim(),
     done: !!task.done,
     author: String(task.author || '').trim(),
-    updatedAt: String(task.updatedAt || '').trim(),
+    updatedAt: formatDateTimeText_(task.updatedAt || ''),
     deleted: String(task.deleted || '').trim(),
     category: String(task.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '컨택예정' : '수동'),
     sourceType: sourceType,
-    sourceId: sourceId,
+    sourceId: String(task.sourceId || '').trim(),
     customerNo: String(task.customerNo || '').trim(),
     company: String(task.company || '').trim(),
     rowNo: String(task.rowNo || '').trim(),
     timeText: String(task.timeText || task.nextActionAt || '').trim(),
     priority: String(task.priority || '').trim(),
+    tags: tags,
+    detail: String(task.detail || '').trim(),
+    dueAt: formatPortalTodayInputDateTime_(task.dueAt || ''),
+    completedAt: formatPortalTodayInputDateTime_(task.completedAt || ''),
+    createdAt: formatPortalTodayInputDateTime_(createdAt),
     nextAction: String(task.nextAction || '').trim(),
     rawContent: String(task.rawContent || '').trim()
   };
@@ -238,7 +245,12 @@ function getPortalTodosForDate_(selectedDate) {
         company: String(row[map['회사명']] || '').trim(),
         rowNo: String(row[map['마스터행']] || '').trim(),
         timeText: String(row[map['시간']] || '').trim(),
-        priority: String(row[map['우선순위']] || '').trim()
+        priority: String(row[map['우선순위']] || '').trim(),
+        createdAt: formatPortalTodayInputDateTime_(row[map['작성일시']] || row[map['수정일시']] || ''),
+        tags: normalizePortalTodayTags_(row[map['태그']]),
+        detail: String(row[map['처리내용']] || '').trim(),
+        dueAt: formatPortalTodayInputDateTime_(row[map['완료예정시간']] || ''),
+        completedAt: formatPortalTodayInputDateTime_(row[map['완료시간']] || '')
       };
       if (!item.category) item.category = item.sourceType === 'CONTACT_NEXT' ? '컨택예정' : '수동';
       return item;
@@ -247,6 +259,64 @@ function getPortalTodosForDate_(selectedDate) {
       return item.date === selectedDate && item.deleted.toUpperCase() !== 'Y' && item.content;
     })
     .sort(function(a, b) { return (a.order || 0) - (b.order || 0); });
+}
+
+function getPortalTodayTagOptions_() {
+  const defaults = Array.isArray(PORTAL_CONFIG.TODAY_DEFAULT_TAGS) ? PORTAL_CONFIG.TODAY_DEFAULT_TAGS : [];
+  const seen = {};
+  const tags = [];
+  function add(v) {
+    v = String(v || '').replace(/^#+/, '').trim();
+    if (!v || seen[v]) return;
+    seen[v] = true;
+    tags.push(v);
+  }
+  defaults.forEach(add);
+  try {
+    const sheet = ensurePortalTodaySheet_();
+    const lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      const lastCol = Math.max(sheet.getLastColumn(), PORTAL_CONFIG.TODAY_HEADERS.length);
+      const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+      const idx = headers.indexOf('태그');
+      if (idx >= 0) {
+        const vals = sheet.getRange(2, idx + 1, lastRow - 1, 1).getDisplayValues();
+        vals.forEach(function(r) { normalizePortalTodayTags_(r[0]).forEach(add); });
+      }
+    }
+  } catch (err) {}
+  return tags.slice(0, 30);
+}
+
+function normalizePortalTodayTags_(value) {
+  let arr = [];
+  if (Array.isArray(value)) arr = value;
+  else arr = String(value || '').split(/[#,，,;；\s]+/);
+  const seen = {};
+  return arr.map(function(v) { return String(v || '').replace(/^#+/, '').trim(); })
+    .filter(function(v) { if (!v || seen[v]) return false; seen[v] = true; return true; });
+}
+
+function parsePortalTodayDateTime_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) return value;
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const local = text.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (local) return new Date(Number(local[1]), Number(local[2]) - 1, Number(local[3]), Number(local[4]), Number(local[5]));
+  const dot = text.match(/(\d{2,4})[.\/-](\d{1,2})[.\/-](\d{1,2})\s+(\d{1,2}):(\d{2})/);
+  if (dot) {
+    const y = String(dot[1]).length === 2 ? 2000 + Number(dot[1]) : Number(dot[1]);
+    return new Date(y, Number(dot[2]) - 1, Number(dot[3]), Number(dot[4]), Number(dot[5]));
+  }
+  const d = new Date(text);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatPortalTodayInputDateTime_(value) {
+  const d = parsePortalTodayDateTime_(value);
+  if (!d) return '';
+  const pad = function(n) { return String(n).padStart(2, '0'); };
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
 function getContactNextActionsForDate_(selectedDate) {
