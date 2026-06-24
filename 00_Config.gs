@@ -83,7 +83,7 @@ const PORTAL_CONFIG = {
   TODAY_SHEET_NAME: '오늘할일_DB',
   TODAY_HEADERS: ['할일ID', '일자', '순번', '내용', '완료여부', '작성자', '수정일시', '삭제여부', '분류', '출처유형', '출처ID', '고객번호', '회사명', '마스터행', '시간', '우선순위', '작성일시', '태그', '처리내용', '완료예정시간', '완료시간'],
 
-  TODAY_DEFAULT_TAGS: ['전화', '메일', '견적', '계약', '서류', '영업지원', '재확인', '긴급', '내부처리'],
+  TODAY_DEFAULT_TAGS: ['전화', '메일', '견적', '컨택', '계약', '서류', '영업지원', '재확인', '긴급', '내부처리'],
   SUPPORT_SHEET_NAME: '영업지원요청',
   SUPPORT_HEADER_ROW: 3,
   SUPPORT_DATA_START_ROW: 4,
@@ -150,6 +150,7 @@ const PORTAL_CONFIG = {
     '특이사항',
     '다음액션',
     '다음액션일시',
+    '다음액션태그',
     '마스터메모반영'
   ],
   CONTACT_HISTORY_MAX_PER_CUSTOMER: 30

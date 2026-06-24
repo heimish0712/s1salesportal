@@ -17,6 +17,8 @@ function addContactHistory(payload) {
   const nextAction = String(payload.nextAction || '').trim();
   const nextActionAt = String(payload.nextActionAt || '').trim();
   const tag = String(payload.tag || payload.tags || '').trim();
+  const nextActionTags = (typeof normalizePortalTodayTags_ === 'function') ? normalizePortalTodayTags_(payload.nextActionTags || payload.todoTags || '') : String(payload.nextActionTags || payload.todoTags || '').split(',').map(function(v){ return String(v || '').trim(); }).filter(Boolean);
+  const nextActionTagText = nextActionTags.join(', ');
 
   if (!roundNo) throw new Error('몇 차 컨택인지 선택하세요.');
   if (!method) throw new Error('연락수단을 선택하세요.');
@@ -34,7 +36,8 @@ function addContactHistory(payload) {
 
   if (nextAction) {
     const nextActionText = nextActionAt ? (formatMemoDateTime_(nextActionAt) + ' ' + nextAction) : nextAction;
-    masterLogText += '\n[다음액션] ' + nextActionText + '(' + author + ')';
+    const nextActionTagPart = nextActionTagText ? (' [' + nextActionTagText + ']') : '';
+    masterLogText += '\n[다음액션] ' + nextActionText + nextActionTagPart + '(' + author + ')';
   }
 
   const updatedMemo = appendToMasterMemo_(masterSheet, rowNo, masterLogText);
@@ -53,6 +56,7 @@ function addContactHistory(payload) {
     note: '',
     nextAction,
     nextActionAt,
+    nextActionTags: nextActionTagText,
     masterApplied: 'Y'
   });
 
@@ -74,7 +78,7 @@ function addContactHistory(payload) {
       customerNo: customerNo,
       company: company,
       summary: '[' + roundNo + '차][' + method + '] ' + content,
-      detail: { tag: tag, nextAction: nextAction, nextActionAt: nextActionAt, historyId: historyId }
+      detail: { tag: tag, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText, historyId: historyId }
     });
   } catch (err) {}
 
@@ -232,6 +236,7 @@ function appendHistoryRecord_(ss, record) {
     '특이사항': record.note || '',
     '다음액션': record.nextAction || '',
     '다음액션일시': record.nextActionAt ? formatMemoDateTime_(record.nextActionAt) : '',
+    '다음액션태그': record.nextActionTags || '',
     '마스터메모반영': record.masterApplied || 'N'
   };
 
@@ -291,6 +296,7 @@ function getContactHistoryByCustomer_(customerNo, rowNo) {
         note: cellByHeader_(row, map, '특이사항'),
         nextAction: cellByHeader_(row, map, '다음액션'),
         nextActionAt: cellByHeader_(row, map, '다음액션일시') || oldNextDate,
+        nextActionTags: cellByHeader_(row, map, '다음액션태그'),
         masterApplied: cellByHeader_(row, map, '마스터메모반영')
       };
     })

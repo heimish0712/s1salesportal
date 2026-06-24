@@ -152,10 +152,10 @@
               <div class="today-card-headline">
                 <div>
                   <div class="today-card-title" id="todaySelectedLabel">오늘 할 일</div>
-                  <div class="today-muted">해시태그로 분류하고, 완료예정/처리내용/완료시간까지 한 카드에서 관리합니다.</div>
+                  <div class="today-muted">태그로 빠르게 분류하고, 작성시간·할 일·처리내용·완료예정시간을 한 줄에서 관리합니다.</div>
                 </div>
                 <div class="today-head-actions">
-                  <button class="secondary" onclick="addTodayTodoRow()">+ 할 일 추가</button>
+                  <button class="secondary" onclick="addTodayTodoRow()">+ 할 일/다음액션 추가</button>
                   <button onclick="saveTodayTodos()">저장</button>
                 </div>
               </div>
@@ -258,6 +258,7 @@
           <div class="contact-form-item">
             <div class="contact-form-label">다음 액션 <span class="portal-guide-help" title="후속 전화, 자료 발송, 재확인 등 다음에 해야 할 일을 선택합니다.">?</span></div>
             <select id="contactNextActionSelect"></select>
+            <div class="contact-next-tag-panel" id="contactNextActionTagPanel"></div>
           </div>
           <div class="contact-form-item">
             <div class="contact-form-label">다음 액션 월일시간</div>

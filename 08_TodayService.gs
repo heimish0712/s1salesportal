@@ -56,7 +56,7 @@ function savePortalTodosForDate(payload) {
       const prev = existingById[id] || {};
       const sourceType = String(item.sourceType || '').trim() || 'MANUAL';
       const sourceId = String(item.sourceId || '').trim();
-      const category = String(item.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '컨택예정' : '수동');
+      const category = String(item.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '다음액션' : '할일');
       const done = !!item.done;
       const createdAt = parsePortalTodayDateTime_(item.createdAt) || parsePortalTodayDateTime_(prev.createdAt) || now;
       const completedAt = done
@@ -141,7 +141,7 @@ function buildPortalTodayUnifiedTasks_(storedTodos, nextActions, selectedDate) {
       timeText: action.nextActionAt || '',
       dueAt: action.nextActionAt || '',
       priority: '오늘',
-      tags: ['컨택', '고객'],
+      tags: normalizePortalNextActionTags_(action.nextActionTags || action.nextAction || ''),
       nextAction: action.nextAction || '',
       rawContent: action.content || ''
     }, selectedDate));
@@ -174,7 +174,7 @@ function normalizePortalTodayTask_(task, selectedDate) {
     author: String(task.author || '').trim(),
     updatedAt: formatDateTimeText_(task.updatedAt || ''),
     deleted: String(task.deleted || '').trim(),
-    category: String(task.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '컨택예정' : '수동'),
+    category: String(task.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '다음액션' : '할일'),
     sourceType: sourceType,
     sourceId: String(task.sourceId || '').trim(),
     customerNo: String(task.customerNo || '').trim(),
@@ -190,6 +190,19 @@ function normalizePortalTodayTask_(task, selectedDate) {
     nextAction: String(task.nextAction || '').trim(),
     rawContent: String(task.rawContent || '').trim()
   };
+}
+
+function normalizePortalNextActionTags_(value) {
+  const tags = normalizePortalTodayTags_(value);
+  const text = String(value || '').trim();
+  function add(tag) { if (tag && tags.indexOf(tag) < 0) tags.push(tag); }
+  add('컨택');
+  if (/전화|통화|콜|연락/.test(text)) add('전화');
+  if (/메일|자료|발송|양식/.test(text)) add('메일');
+  if (/견적/.test(text)) add('견적');
+  if (/계약|서류/.test(text)) add('계약');
+  if (/재확인|확인|보류/.test(text)) add('재확인');
+  return tags;
 }
 
 function buildPortalTodayContactTaskText_(action) {
@@ -252,7 +265,7 @@ function getPortalTodosForDate_(selectedDate) {
         dueAt: formatPortalTodayInputDateTime_(row[map['완료예정시간']] || ''),
         completedAt: formatPortalTodayInputDateTime_(row[map['완료시간']] || '')
       };
-      if (!item.category) item.category = item.sourceType === 'CONTACT_NEXT' ? '컨택예정' : '수동';
+      if (!item.category) item.category = item.sourceType === 'CONTACT_NEXT' ? '다음액션' : '할일';
       return item;
     })
     .filter(function(item) {
@@ -358,7 +371,8 @@ function getContactNextActionsForDate_(selectedDate) {
         nextActionAt: nextAt,
         nextDate: nextDate,
         content: cellByHeader_(row, map, '컨택내용'),
-        author: cellByHeader_(row, map, '작성자')
+        author: cellByHeader_(row, map, '작성자'),
+        nextActionTags: cellByHeader_(row, map, '다음액션태그')
       };
     })
     .filter(function(item) {

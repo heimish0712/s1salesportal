@@ -2,6 +2,7 @@
 // v57 FIX + PATCH B: 상세 모달 비동기 보강 응답이 사용자의 정보수정 상태를 되돌리지 않도록 요청 세대를 추적합니다.
 let customerDetailModalRequestSeq = 0;
 let contactSelectedTagsP11 = [];
+let contactNextActionTagsP119 = [];
 
 function openNewCustomer() {
   document.getElementById('modalBackdrop').style.display = 'flex';
@@ -980,7 +981,9 @@ function openContactHistoryModal(rowNo, customerNo) {
   fillSelectOptions_(document.getElementById('contactMethodSelect'), ['', '전화', '문자', '메일', '방문', '팩스', '기타'], function(v){ return v || '연락수단 선택'; });
   fillSelectOptions_(document.getElementById('contactNextActionSelect'), ['', '전화하기', '자료 발송', '견적서 발송', '재확인', '방문/미팅', '계약서류 요청', '보류 확인', '기타'], function(v){ return v || '다음 액션 선택'; });
   contactSelectedTagsP11 = [];
+  contactNextActionTagsP119 = [];
   renderContactQuickTagsP11_();
+  renderContactNextActionTagsP119_();
 
   document.getElementById('contactAtInput').value = toLocalDateTimeInputValue(new Date());
   document.getElementById('contactNextAtInput').value = '';
@@ -998,6 +1001,7 @@ function closeContactHistoryModal() {
   if (backdrop) backdrop.style.display = 'none';
   contactHistoryTargetRowNo = 0;
   contactSelectedTagsP11 = [];
+  contactNextActionTagsP119 = [];
 }
 
 function normalizeContactAtForSaveP12_() {
@@ -1024,6 +1028,8 @@ function saveContactHistoryFromModal() {
   const nextActionAt = document.getElementById('contactNextAtInput').value;
   const selectedTags = (contactSelectedTagsP11 || []).filter(function(v){ return String(v || '').trim(); });
   const contactTagText = selectedTags.join(', ');
+  const nextActionTags = normalizeTodayLikeTagsP119_(contactNextActionTagsP119 || []);
+  const nextActionTagText = nextActionTags.join(', ');
   if (!String(content || '').trim() && contactTagText) content = contactTagText;
   const nextAction = [nextActionBase, nextMemo].filter(function(v){ return String(v || '').trim(); }).join(' - ');
 
@@ -1056,9 +1062,58 @@ function saveContactHistoryFromModal() {
       if (btn) { btn.disabled = false; btn.textContent = '저장'; }
       alert('컨택이력 저장 실패: ' + getErrorMessage_(err));
     })
-    .addContactHistory({ rowNo: rowNo, customerNo: normalizeCustomerNoForKey_(((getCustomerDetailCache_(rowNo, currentDetailCustomerNo) || currentDetail || {}).customerNo) || currentDetailCustomerNo), roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, author: author, nextAction: nextAction, nextActionAt: nextActionAt });
+    .addContactHistory({ rowNo: rowNo, customerNo: normalizeCustomerNoForKey_(((getCustomerDetailCache_(rowNo, currentDetailCustomerNo) || currentDetail || {}).customerNo) || currentDetailCustomerNo), roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, author: author, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText });
 }
 
+
+function getTodayDefaultTagListP119_() {
+  return ['전화', '메일', '견적', '컨택', '계약', '서류', '영업지원', '재확인', '긴급', '내부처리'];
+}
+
+function normalizeTodayLikeTagsP119_(value) {
+  let arr = [];
+  if (Array.isArray(value)) arr = value;
+  else arr = String(value || '').split(/[#,，,;；\s]+/);
+  const seen = {};
+  return arr.map(function(v) { return String(v || '').replace(/^#+/, '').trim(); })
+    .filter(function(v) { if (!v || seen[v]) return false; seen[v] = true; return true; });
+}
+
+function renderContactNextActionTagsP119_() {
+  const panel = document.getElementById('contactNextActionTagPanel');
+  if (!panel) return;
+  const selected = normalizeTodayLikeTagsP119_(contactNextActionTagsP119 || []);
+  const selectedHtml = selected.length
+    ? selected.map(function(tag) { return '<button type="button" class="contact-next-tag selected" onclick="toggleContactNextActionTagP119_(\'' + escJsP119_(tag) + '\')">' + esc(tag) + '</button>'; }).join('')
+    : '<span class="contact-next-tag-placeholder">다음액션 태그 선택</span>';
+  const options = getTodayDefaultTagListP119_().map(function(tag) {
+    return '<button type="button" class="contact-next-tag" onclick="toggleContactNextActionTagP119_(\'' + escJsP119_(tag) + '\')">' + esc(tag) + '</button>';
+  }).join('');
+  panel.innerHTML = '<div class="contact-next-selected">' + selectedHtml + '</div><div class="contact-next-options">' + options + '<input id="contactNextCustomTagInput" placeholder="새 태그" onkeydown="if(event.key===\'Enter\'){event.preventDefault(); addContactNextCustomTagP119_();}"><button type="button" onclick="addContactNextCustomTagP119_()">추가</button></div>';
+}
+
+function toggleContactNextActionTagP119_(tag) {
+  tag = String(tag || '').replace(/^#+/, '').trim();
+  if (!tag) return;
+  const tags = normalizeTodayLikeTagsP119_(contactNextActionTagsP119 || []);
+  const idx = tags.indexOf(tag);
+  if (idx >= 0) tags.splice(idx, 1); else tags.push(tag);
+  contactNextActionTagsP119 = tags;
+  renderContactNextActionTagsP119_();
+}
+
+function addContactNextCustomTagP119_() {
+  const input = document.getElementById('contactNextCustomTagInput');
+  const tag = input ? String(input.value || '').replace(/^#+/, '').trim() : '';
+  if (!tag) return;
+  if (input) input.value = '';
+  const tags = normalizeTodayLikeTagsP119_(contactNextActionTagsP119 || []);
+  if (tags.indexOf(tag) < 0) tags.push(tag);
+  contactNextActionTagsP119 = tags;
+  renderContactNextActionTagsP119_();
+}
+
+function escJsP119_(value) { return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n'); }
 
 function getContactQuickTagListP11_() {
   return [
