@@ -438,6 +438,87 @@ function isCustomerFavorite_(row) {
   return !!(customerFavoriteMapV60 && customerFavoriteMapV60[key]);
 }
 
+function isCustomerFavoritePending_(rowOrKey) {
+  const key = typeof rowOrKey === 'string' ? rowOrKey : getFavoriteCustomerKey_(rowOrKey || {});
+  if (!key) return false;
+  cleanupCustomerFavoritePendingV62_();
+  return !!(customerFavoritePendingMapV62 && customerFavoritePendingMapV62[key]);
+}
+
+function getCustomerFavoritePendingDesired_(rowOrKey) {
+  const key = typeof rowOrKey === 'string' ? rowOrKey : getFavoriteCustomerKey_(rowOrKey || {});
+  if (!key) return null;
+  cleanupCustomerFavoritePendingV62_();
+  const item = customerFavoritePendingMapV62 && customerFavoritePendingMapV62[key];
+  return item ? !!item.favorite : null;
+}
+
+function isTransientPortalWriteError_(err) {
+  const msg = getErrorMessage_(err);
+  return /LOCK|잠금|다른 작업 처리 중|Service invoked too many times|Exceeded maximum execution|timed out|timeout/i.test(msg);
+}
+
+function isPortalUserEditingCriticalInputP201_() {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = String(el.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+let portalDataVersionWatcherTimerP201 = null;
+let portalLastDataVersionP201 = { customerIndexVersion: '', masterVersion: '' };
+let portalDataRefreshPendingP201 = false;
+
+function startPortalDataVersionWatcherP201_() {
+  if (portalDataVersionWatcherTimerP201) return;
+  portalDataVersionWatcherTimerP201 = setInterval(checkPortalDataVersionP201_, 30000);
+  setTimeout(checkPortalDataVersionP201_, 5000);
+}
+
+function checkPortalDataVersionP201_() {
+  if (typeof google === 'undefined' || !google.script || !google.script.run) return;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.ok) return;
+      const nextIndexVersion = String(res.customerIndexVersion || '');
+      const nextMasterVersion = String(res.masterVersion || '');
+      const hadVersion = !!(portalLastDataVersionP201.customerIndexVersion || portalLastDataVersionP201.masterVersion);
+      const changed = hadVersion && (
+        (nextIndexVersion && nextIndexVersion !== portalLastDataVersionP201.customerIndexVersion) ||
+        (nextMasterVersion && nextMasterVersion !== portalLastDataVersionP201.masterVersion)
+      );
+      portalLastDataVersionP201.customerIndexVersion = nextIndexVersion || portalLastDataVersionP201.customerIndexVersion;
+      portalLastDataVersionP201.masterVersion = nextMasterVersion || portalLastDataVersionP201.masterVersion;
+      if (!changed) return;
+      handlePortalExternalDataChangedP201_(res);
+    })
+    .withFailureHandler(function(err) { console.warn('데이터 버전 확인 실패', err); })
+    .getPortalClientDataVersionP201();
+}
+
+function handlePortalExternalDataChangedP201_(meta) {
+  const customerVisible = !!(document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active'));
+  const favoriteVisible = !!(document.getElementById('customerFavoritesSection') && document.getElementById('customerFavoritesSection').classList.contains('active'));
+  if (isPortalUserEditingCriticalInputP201_()) {
+    portalDataRefreshPendingP201 = true;
+    try { toast('마스터시트 변경이 감지되었습니다. 입력이 끝나면 새로고침해 주세요.'); } catch (err) {}
+    return;
+  }
+  portalDataRefreshPendingP201 = false;
+  try { customerPageMemoryCache = {}; } catch (err) {}
+  try { sessionStorage && Object.keys(sessionStorage).forEach(function(k) { if (String(k).indexOf('portalCustomerPage:') === 0) sessionStorage.removeItem(k); }); } catch (err) {}
+  try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true }); } catch (err) {}
+  if (favoriteVisible) {
+    try { loadCustomerFavoriteMap_({ silent: true, force: true }); } catch (err) {}
+    try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+  }
+  if (customerVisible) {
+    try { setTimeout(function() { searchCustomerPage(customerSearchState && customerSearchState.page || 0); }, 700); } catch (err) {}
+  }
+}
+
 function setCustomerFavoriteMapFromServer_(map) {
   // PATCH O-FIX2:
   // 서버 응답은 언제나 현재 탭의 최신 클릭보다 늦을 수 있습니다.

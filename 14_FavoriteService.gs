@@ -88,6 +88,11 @@ function getPortalFavoriteCustomers() {
 }
 
 function togglePortalCustomerFavorite(payload) {
+  // 하위 호환용: 기존 클라이언트 호출도 명시 상태 저장 함수로 처리합니다.
+  return setPortalCustomerFavorite(payload || {});
+}
+
+function setPortalCustomerFavorite(payload) {
   payload = payload || {};
   const user = getPortalFavoriteUser_();
   const customerNo = String(payload.customerNo || '').trim();
@@ -97,31 +102,31 @@ function togglePortalCustomerFavorite(payload) {
   const key = makePortalFavoriteCustomerKey_(customerNo, rowNo);
   if (!key) throw new Error('즐겨찾기할 고객번호 또는 행 정보가 없습니다.');
 
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
+  const writeResult = withPortalScriptLockP201_('favorite-set', function() {
     const sheet = ensurePortalFavoriteSheet_();
     const now = new Date();
     const nowText = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
     const lastRow = sheet.getLastRow();
-    let matchedRow = 0;
+    const matches = [];
 
     if (lastRow >= 2) {
-      const values = sheet.getRange(2, 1, lastRow - 1, PORTAL_FAVORITE_HEADERS.length).getDisplayValues();
+      const width = Math.max(PORTAL_FAVORITE_HEADERS.length, sheet.getLastColumn());
+      const values = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
       for (let i = 0; i < values.length; i++) {
         const rUser = String(values[i][1] || '').trim();
         const rCustomerNo = String(values[i][3] || '').trim();
         const rRowNo = Number(values[i][4]) || 0;
         if (rUser === user.key && makePortalFavoriteCustomerKey_(rCustomerNo, rRowNo) === key) {
-          matchedRow = i + 2;
-          break;
+          matches.push({ row: i + 2, deleted: String(values[i][7] || '').trim().toUpperCase() === 'Y' });
         }
       }
     }
 
+    let action = 'noop';
     if (favorite) {
-      if (matchedRow) {
-        sheet.getRange(matchedRow, 2, 1, 8).setValues([[
+      const primary = matches.length ? matches[0].row : 0;
+      if (primary) {
+        sheet.getRange(primary, 2, 1, 8).setValues([[
           user.key,
           user.label,
           customerNo,
@@ -131,6 +136,7 @@ function togglePortalCustomerFavorite(payload) {
           '',
           ''
         ]]);
+        action = matches[0].deleted ? 'restore' : 'keep-on';
       } else {
         sheet.appendRow([
           Utilities.getUuid().slice(0, 10),
@@ -143,15 +149,27 @@ function togglePortalCustomerFavorite(payload) {
           '',
           ''
         ]);
+        action = 'add';
       }
-    } else if (matchedRow) {
-      sheet.getRange(matchedRow, 8).setValue('Y');
-      sheet.getRange(matchedRow, 9).setValue(nowText);
+      // 같은 사용자/고객 중복 row는 첫 row만 살리고 나머지는 삭제 처리합니다.
+      matches.slice(1).forEach(function(m) {
+        sheet.getRange(m.row, 8).setValue('Y');
+        sheet.getRange(m.row, 9).setValue(nowText);
+      });
+    } else {
+      if (matches.length) {
+        matches.forEach(function(m) {
+          sheet.getRange(m.row, 8).setValue('Y');
+          sheet.getRange(m.row, 9).setValue(nowText);
+        });
+        action = 'off';
+      } else {
+        action = 'keep-off';
+      }
     }
     SpreadsheetApp.flush();
-  } finally {
-    try { lock.releaseLock(); } catch (err) {}
-  }
+    return { action: action, matched: matches.length };
+  }, { attempts: 5, waitMs: 500, sleepBaseMs: 180 });
 
   try {
     appendPortalActivityLog_({
@@ -161,13 +179,21 @@ function togglePortalCustomerFavorite(payload) {
       customerNo: customerNo,
       company: company,
       summary: favorite ? '즐겨찾기 추가' : '즐겨찾기 해제',
-      detail: { favorite: favorite }
+      detail: { favorite: favorite, action: writeResult && writeResult.action }
     });
   } catch (err) {}
 
   const mapRes = getPortalCustomerFavoriteMap();
   const listRes = getPortalFavoriteCustomers();
-  return { ok: true, favorite: favorite, customerNo: customerNo, rowNo: rowNo, map: mapRes.map || {}, favorites: listRes.rows || [] };
+  return {
+    ok: true,
+    favorite: favorite,
+    customerNo: customerNo,
+    rowNo: rowNo,
+    map: mapRes.map || {},
+    favorites: listRes.rows || [],
+    action: writeResult && writeResult.action
+  };
 }
 
 function ensurePortalFavoriteSheet_() {

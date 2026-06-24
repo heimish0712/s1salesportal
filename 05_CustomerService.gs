@@ -27,7 +27,8 @@ function getCustomerSearchIndexHeadersK2_() {
     '마지막발송',
     '발송일시',
     '상세Lite여부',
-    '마스터원본버전'
+    '마스터원본버전',
+    '최종수정자'
   ];
   const seen = {};
   const result = [];
@@ -478,6 +479,8 @@ function getCustomerSearchIndexRows_() {
       sentAt: cellByIndexHeader_(row, map, '발송일시'),
       indexLite: cellByIndexHeader_(row, map, '상세Lite여부'),
       masterVersion: cellByIndexHeader_(row, map, '마스터원본버전'),
+      masterUpdatedAt: cellByIndexHeader_(row, map, '원본수정시각'),
+      masterEditor: cellByIndexHeader_(row, map, '최종수정자'),
       __source: 'index',
       __summary: true,
       __lite: true,
@@ -801,6 +804,9 @@ function buildCustomerSearchIndexRow_(obj, now) {
   const specialTerms = getCustomerIndexObjectValueK2_(obj, 'specialTerms');
   const lastSent = getCustomerIndexObjectValueK2_(obj, 'lastSent');
   const sentAt = getCustomerIndexObjectValueK2_(obj, 'sentAt');
+  const masterUpdatedAt = getCustomerIndexObjectValueK2_(obj, ['수정일시', '최종수정일시', '수정 시각']);
+  const masterVersion = getCustomerIndexObjectValueK2_(obj, ['수정버전', '마스터수정버전']);
+  const masterEditor = getCustomerIndexObjectValueK2_(obj, ['최종수정자', '수정자']);
 
   // v35 FIX: 검색문자열에는 메모/작성자 로그를 넣지 않습니다.
   // PATCH K-2: 상세 lite 필드 중 검색에 실질적으로 필요한 값은 searchText에 포함합니다.
@@ -825,7 +831,7 @@ function buildCustomerSearchIndexRow_(obj, now) {
     '메모요약': memo,
     '주소': address,
     '검색문자열': searchText,
-    '원본수정시각': '',
+    '원본수정시각': masterUpdatedAt || '',
     '인덱스갱신시각': ts,
     '마스터시트 최초등록일': firstRegisteredAt,
     '지역구분': region,
@@ -842,7 +848,8 @@ function buildCustomerSearchIndexRow_(obj, now) {
     '마지막발송': lastSent,
     '발송일시': sentAt,
     '상세Lite여부': 'Y',
-    '마스터원본버전': ts
+    '마스터원본버전': masterVersion || masterUpdatedAt || ts,
+    '최종수정자': masterEditor || ''
   };
   return getCustomerSearchIndexHeadersK2_().map(function(h) { return rowMap[h] == null ? '' : rowMap[h]; });
 }

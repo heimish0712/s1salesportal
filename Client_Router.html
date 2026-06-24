@@ -19,6 +19,9 @@ window.onload = function() {
   setTimeout(function() {
     try { preloadTodayPageV57_({ silent: true }); } catch (err) { console.warn('오늘 할 일 프리로드 실패', err); }
   }, 1100);
+  setTimeout(function() {
+    try { startPortalDataVersionWatcherP201_(); } catch (err) { console.warn('데이터 버전 감시 시작 실패', err); }
+  }, 1600);
   // v31 FIX 유지: 고객 상세 검색 메뉴 진입 시 searchCustomerPage(0)가 실행됩니다.
   // v46: notice 전체 목록은 공지사항 메뉴 진입 시에만 조회합니다.
 };
