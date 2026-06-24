@@ -498,15 +498,44 @@ function checkPortalDataVersionP201_() {
     .getPortalClientDataVersionP201();
 }
 
+function showPortalDataRefreshBannerP202_() {
+  const el = document.getElementById('portalDataRefreshBannerP202');
+  if (el) el.style.display = 'flex';
+}
+function hidePortalDataRefreshBannerP202_() {
+  const el = document.getElementById('portalDataRefreshBannerP202');
+  if (el) el.style.display = 'none';
+}
+function applyPendingPortalDataRefreshP202_() {
+  portalDataRefreshPendingP201 = false;
+  hidePortalDataRefreshBannerP202_();
+  try { customerPageMemoryCache = {}; } catch (err) {}
+  try { sessionStorage && Object.keys(sessionStorage).forEach(function(k) { if (String(k).indexOf('portalCustomerPage:') === 0) sessionStorage.removeItem(k); }); } catch (err) {}
+  try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true }); } catch (err) {}
+  try {
+    if (document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active')) {
+      if (typeof searchCustomerPage === 'function') searchCustomerPage(customerSearchState && customerSearchState.page || 0);
+    }
+  } catch (err) {}
+  try {
+    if (document.getElementById('customerFavoritesSection') && document.getElementById('customerFavoritesSection').classList.contains('active')) {
+      loadCustomerFavoriteMap_({ silent: true, force: true });
+      if (typeof renderFavoritePage === 'function') renderFavoritePage();
+    }
+  } catch (err) {}
+}
+
 function handlePortalExternalDataChangedP201_(meta) {
   const customerVisible = !!(document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active'));
   const favoriteVisible = !!(document.getElementById('customerFavoritesSection') && document.getElementById('customerFavoritesSection').classList.contains('active'));
   if (isPortalUserEditingCriticalInputP201_()) {
     portalDataRefreshPendingP201 = true;
-    try { toast('마스터시트 변경이 감지되었습니다. 입력이 끝나면 새로고침해 주세요.'); } catch (err) {}
+    showPortalDataRefreshBannerP202_();
+    try { toast('마스터시트 변경이 감지되었습니다. 입력 중인 내용은 유지됩니다.'); } catch (err) {}
     return;
   }
   portalDataRefreshPendingP201 = false;
+  hidePortalDataRefreshBannerP202_();
   try { customerPageMemoryCache = {}; } catch (err) {}
   try { sessionStorage && Object.keys(sessionStorage).forEach(function(k) { if (String(k).indexOf('portalCustomerPage:') === 0) sessionStorage.removeItem(k); }); } catch (err) {}
   try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true }); } catch (err) {}

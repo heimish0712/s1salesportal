@@ -1007,7 +1007,9 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
   const ts = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
   setByHeader('인덱스갱신시각', ts);
   setByHeader('상세Lite여부', 'Y');
-  setByHeader('마스터원본버전', ts);
+  setByHeader('원본수정시각', values.__metaUpdatedAt || getH('원본수정시각'));
+  setByHeader('마스터원본버전', values.__metaMasterVersion || ts);
+  setByHeader('최종수정자', values.__metaEditor || getH('최종수정자'));
 
   indexSheet.getRange(targetRow, 1, 1, width).setValues([row]);
   const touched = touchCustomerSearchIndexVersion_(now);
@@ -1097,6 +1099,9 @@ function getCustomerSearchIndexVersion_() {
   const lastCol = Math.max(sheet.getLastColumn(), getCustomerSearchIndexHeadersK2_().length);
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
   const updatedCol = headers.indexOf('인덱스갱신시각') + 1;
+  const masterUpdatedCol = headers.indexOf('원본수정시각') + 1;
+  const masterVersionCol = headers.indexOf('마스터원본버전') + 1;
+  const masterEditorCol = headers.indexOf('최종수정자') + 1;
   if (!updatedCol) return '';
   const values = sheet.getRange(2, updatedCol, lastRow - 1, 1).getDisplayValues();
   let maxText = '';
@@ -1114,6 +1119,85 @@ function buildMasterRowObjectFromValues_(headerMap, rowValues) {
     obj[header] = rowValues[headerMap[header] - 1] || '';
   });
   return obj;
+}
+
+function getPortalCustomerMasterMetaP202_(sheet, rowNo, headerMap) {
+  headerMap = headerMap || getHeaderMap_(sheet);
+  const colUpdatedAt = findFirstExistingHeaderCol_(headerMap, ['수정일시', '최종수정일시', '수정 시각']);
+  const colVersion = findFirstExistingHeaderCol_(headerMap, ['수정버전', '마스터수정버전']);
+  const colEditor = findFirstExistingHeaderCol_(headerMap, ['최종수정자', '수정자']);
+  return {
+    updatedAt: colUpdatedAt ? String(sheet.getRange(rowNo, colUpdatedAt).getDisplayValue() || '').trim() : '',
+    version: colVersion ? String(sheet.getRange(rowNo, colVersion).getDisplayValue() || '').trim() : '',
+    editor: colEditor ? String(sheet.getRange(rowNo, colEditor).getDisplayValue() || '').trim() : ''
+  };
+}
+
+function getPortalBaseMasterVersionFromPayloadP202_(payload) {
+  payload = payload || {};
+  return String(payload.baseMasterVersion || payload.masterVersion || payload.__masterVersion || payload.expectedMasterVersion || '').trim();
+}
+
+function makePortalStaleCustomerErrorP202_(currentMeta, baseVersion) {
+  const msg = '다른 사용자가 이 고객 정보를 먼저 수정했습니다. 최신 내용을 다시 불러온 뒤 저장해 주세요.';
+  const err = new Error(msg);
+  err.code = 'PORTAL_STALE_CUSTOMER_VERSION';
+  err.currentMasterVersion = currentMeta && currentMeta.version || '';
+  err.currentMasterUpdatedAt = currentMeta && currentMeta.updatedAt || '';
+  err.baseMasterVersion = baseVersion || '';
+  return err;
+}
+
+function assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload) {
+  const baseVersion = getPortalBaseMasterVersionFromPayloadP202_(payload);
+  const currentMeta = getPortalCustomerMasterMetaP202_(sheet, rowNo);
+  // 기존 데이터/구버전 클라이언트/수정버전 미기록 행은 우선 허용합니다.
+  // 한 번 저장되면 수정버전이 기록되고 이후부터 충돌 검사가 작동합니다.
+  if (baseVersion && currentMeta.version && baseVersion !== currentMeta.version) {
+    throw makePortalStaleCustomerErrorP202_(currentMeta, baseVersion);
+  }
+  return currentMeta;
+}
+
+function bumpPortalCustomerMasterMetaP202_(sheet, rowNo, reason) {
+  const headerMap = getHeaderMap_(sheet);
+  const updatedAtCol = ensureMasterColumn_(sheet, headerMap, '수정일시');
+  const versionCol = ensureMasterColumn_(sheet, getHeaderMap_(sheet), '수정버전');
+  const editorCol = ensureMasterColumn_(sheet, getHeaderMap_(sheet), '최종수정자');
+  const now = new Date();
+  const nowText = (typeof getPortalNowTextP201_ === 'function')
+    ? getPortalNowTextP201_(now)
+    : Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  const version = ((typeof getPortalVersionTextP201_ === 'function')
+    ? getPortalVersionTextP201_(now)
+    : Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMddHHmmssSSS')) + '-' + rowNo;
+  let editor = '';
+  try { editor = String(Session.getActiveUser().getEmail() || '').trim(); } catch (err) {}
+  if (!editor) editor = 'webapp';
+  sheet.getRange(rowNo, updatedAtCol).setValue(nowText);
+  sheet.getRange(rowNo, versionCol).setValue(version);
+  sheet.getRange(rowNo, editorCol).setValue(editor);
+  try {
+    if (typeof markPortalMasterDataChangedP201_ === 'function') {
+      markPortalMasterDataChangedP201_(String(reason || 'webapp-customer-save') + ' row=' + rowNo);
+    }
+  } catch (err) {}
+  return { updatedAt: nowText, version: version, editor: editor };
+}
+
+function addPortalCustomerMetaToDetailP202_(detail, obj, rowNo) {
+  detail = detail || {};
+  obj = obj || {};
+  const updatedAt = getCustomerIndexObjectValueK2_(obj, ['수정일시', '최종수정일시', '수정 시각']);
+  const version = getCustomerIndexObjectValueK2_(obj, ['수정버전', '마스터수정버전']);
+  const editor = getCustomerIndexObjectValueK2_(obj, ['최종수정자', '수정자']);
+  detail.masterUpdatedAt = updatedAt || '';
+  detail.masterVersion = version || '';
+  detail.masterEditor = editor || '';
+  detail.__masterUpdatedAt = updatedAt || '';
+  detail.__masterVersion = version || '';
+  detail.__masterEditor = editor || '';
+  return detail;
 }
 
 function getCustomerDetail(rowNo) {
@@ -1200,6 +1284,7 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     __masterBacked: true,
     __loadedAt: new Date().toISOString()
   };
+  addPortalCustomerMetaToDetailP202_(detail, obj, rowNo);
   return detail;
 }
 
@@ -1224,7 +1309,33 @@ function buildQuoteCalcDefaults_(obj) {
   return vals;
 }
 
+
+function runPortalCustomerWriteLockedP202_(label, callback) {
+  if (typeof withPortalScriptLockP201_ === 'function') {
+    return withPortalScriptLockP201_(label, callback, { attempts: 4, waitMs: 700, sleepBaseMs: 180 });
+  }
+  return callback();
+}
+
 function saveCustomerDetail(payload) {
+  return runPortalCustomerWriteLockedP202_('customer-detail-save', function() {
+    return saveCustomerDetailCoreP202_(payload);
+  });
+}
+
+function saveCustomerDetailFast(payload) {
+  return runPortalCustomerWriteLockedP202_('customer-detail-fast-save', function() {
+    return saveCustomerDetailFastCoreP202_(payload);
+  });
+}
+
+function saveCustomerMemoFast(rowNoOrPayload, memo) {
+  return runPortalCustomerWriteLockedP202_('customer-memo-save', function() {
+    return saveCustomerMemoFastCoreP202_(rowNoOrPayload, memo);
+  });
+}
+
+function saveCustomerDetailCoreP202_(payload) {
   payload = payload || {};
   const target = assertCustomerTarget_(payload, '고객 상세정보 저장', { readObject: false });
   assertPortalCanAccessCustomerTarget_(target, '고객 상세정보 저장');
@@ -1233,6 +1344,7 @@ function saveCustomerDetail(payload) {
   let values = payload.values || {};
   values = normalizePortalCustomerLocationValues_(values);
   const sheet = target.sheet;
+  assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload);
   values = preparePortalContractValuesForSaveP112_(values, { sheet: sheet, rowNo: rowNo, requireFull: false });
 
   const allDefs = [].concat(PORTAL_DETAIL_FIELDS.basic || [], PORTAL_DETAIL_FIELDS.contract || []);
@@ -1254,7 +1366,9 @@ function saveCustomerDetail(payload) {
   });
 
   let indexUpdate = null;
+  let masterMetaP202 = null;
   if (changed.length) {
+    masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, '고객상세저장');
     SpreadsheetApp.flush();
     try { indexUpdate = updateCustomerSearchIndexRow_(rowNo); } catch (err) { Logger.log('검색인덱스 행 갱신 실패: ' + (err && err.stack || err)); }
     try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V27'); } catch (err) {}
@@ -1281,12 +1395,15 @@ function saveCustomerDetail(payload) {
     customerNo: customerNo,
     changedFields: changed,
     indexUpdate: indexUpdate,
+    masterVersion: masterMetaP202 && masterMetaP202.version || '',
+    masterUpdatedAt: masterMetaP202 && masterMetaP202.updatedAt || '',
+    masterEditor: masterMetaP202 && masterMetaP202.editor || '',
     message: changed.length ? ('상세정보 저장 완료: ' + changed.join(', ')) : '변경된 값이 없습니다.',
     detail: getCustomerDetail(rowNo)
   };
 }
 
-function saveCustomerDetailFast(payload) {
+function saveCustomerDetailFastCoreP202_(payload) {
   // v45: 저장 후 상세 전체 재조회 금지. 변경된 필드만 쓰고 결과만 반환합니다.
   // v56 PATCH A: customerNo를 기준키로 우선 검증하고, rowNo는 보조 위치값으로만 사용합니다.
   // PATCH D: 셀별 get/set 반복을 줄이고, 검색인덱스는 마스터 재조회 없이 patch 갱신합니다.
@@ -1299,6 +1416,7 @@ function saveCustomerDetailFast(payload) {
   let values = payload.values || {};
   values = normalizePortalCustomerLocationValues_(values);
   const sheet = target.sheet;
+  assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload);
   values = preparePortalContractValuesForSaveP112_(values, { sheet: sheet, rowNo: rowNo, requireFull: false });
 
   const allDefs = [].concat(PORTAL_DETAIL_FIELDS.basic || [], PORTAL_DETAIL_FIELDS.contract || []);
@@ -1369,14 +1487,21 @@ function saveCustomerDetailFast(payload) {
   }
 
   let indexUpdate = null;
+  let masterMetaP202 = null;
   const shouldRefreshMaster = shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys);
   let refreshedDetail = null;
   if (changedTargets.length) {
+    masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, '고객빠른저장');
     SpreadsheetApp.flush();
+    const indexPatchValuesP202 = Object.assign({}, appliedValues, {
+      __metaMasterVersion: masterMetaP202.version,
+      __metaUpdatedAt: masterMetaP202.updatedAt,
+      __metaEditor: masterMetaP202.editor
+    });
     try {
       indexUpdate = shouldRefreshMaster
         ? updateCustomerSearchIndexRow_(rowNo)
-        : updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, appliedValues);
+        : updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, indexPatchValuesP202);
     } catch (err) {
       Logger.log('검색인덱스 갱신 실패: ' + (err && err.stack || err));
     }
@@ -1409,6 +1534,9 @@ function saveCustomerDetailFast(payload) {
     values: appliedValues,
     changedValues: changedValues,
     indexUpdate: indexUpdate,
+    masterVersion: masterMetaP202 && masterMetaP202.version || '',
+    masterUpdatedAt: masterMetaP202 && masterMetaP202.updatedAt || '',
+    masterEditor: masterMetaP202 && masterMetaP202.editor || '',
     savedAt: new Date().toISOString(),
     fastPatch: !shouldRefreshMaster,
     detail: refreshedDetail,
@@ -1417,7 +1545,7 @@ function saveCustomerDetailFast(payload) {
   };
 }
 
-function saveCustomerMemoFast(rowNoOrPayload, memo) {
+function saveCustomerMemoFastCoreP202_(rowNoOrPayload, memo) {
   // v45: 메모 한 칸만 저장. 상세 재조회/전체 인덱스 재생성 금지.
   // v56 PATCH A: 기존 saveCustomerMemoFast(rowNo, memo)도 호환하되, 신규 호출은 {customerNo,rowNo,memo}를 권장합니다.
   const payload = (rowNoOrPayload && typeof rowNoOrPayload === 'object')
@@ -1428,14 +1556,16 @@ function saveCustomerMemoFast(rowNoOrPayload, memo) {
   const targetRowNo = target.rowNo;
   const customerNo = target.customerNo;
   const sheet = target.sheet;
+  assertPortalCustomerVersionFreshP202_(sheet, targetRowNo, payload);
 
   const headerMap = getHeaderMap_(sheet);
   const memoCol = findMasterFieldCol_(headerMap, 'memo') || ensureMasterFieldColumn_(sheet, headerMap, 'memo');
   const nextMemo = String(payload.memo == null ? '' : payload.memo);
   sheet.getRange(targetRowNo, memoCol).setValue(nextMemo);
+  const masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, targetRowNo, '고객메모저장');
 
   let indexUpdate = null;
-  try { indexUpdate = updateCustomerSearchIndexMemoFast_(targetRowNo, nextMemo); } catch (err) { Logger.log('검색인덱스 메모 경량 갱신 실패: ' + (err && err.stack || err)); }
+  try { indexUpdate = updateCustomerSearchIndexMemoFast_(targetRowNo, nextMemo, masterMetaP202); } catch (err) { Logger.log('검색인덱스 메모 경량 갱신 실패: ' + (err && err.stack || err)); }
   try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V27'); } catch (err) {}
   try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
 
@@ -1457,12 +1587,15 @@ function saveCustomerMemoFast(rowNoOrPayload, memo) {
     customerNo: customerNo,
     memo: nextMemo,
     indexUpdate: indexUpdate,
+    masterVersion: masterMetaP202 && masterMetaP202.version || '',
+    masterUpdatedAt: masterMetaP202 && masterMetaP202.updatedAt || '',
+    masterEditor: masterMetaP202 && masterMetaP202.editor || '',
     savedAt: new Date().toISOString(),
     message: '메모 저장 완료'
   };
 }
 
-function updateCustomerSearchIndexMemoFast_(rowNo, memoValue) {
+function updateCustomerSearchIndexMemoFast_(rowNo, memoValue, meta) {
   rowNo = Number(rowNo) || 0;
   if (!rowNo || rowNo < PORTAL_CONFIG.DATA_START_ROW) return { ok: false, reason: 'invalid rowNo' };
 
@@ -1474,7 +1607,11 @@ function updateCustomerSearchIndexMemoFast_(rowNo, memoValue) {
   const rowNoCol = headers.indexOf('rowNo') + 1;
   const memoCol = headers.indexOf('메모요약') + 1;
   const updatedCol = headers.indexOf('인덱스갱신시각') + 1;
+  const masterUpdatedCol = headers.indexOf('원본수정시각') + 1;
+  const masterVersionCol = headers.indexOf('마스터원본버전') + 1;
+  const masterEditorCol = headers.indexOf('최종수정자') + 1;
   if (!rowNoCol || !memoCol) return { ok: false, reason: 'missing index headers' };
+  meta = meta || {};
 
   const rowNoValues = indexSheet.getRange(2, rowNoCol, lastRow - 1, 1).getDisplayValues();
   let targetRow = 0;
@@ -1487,6 +1624,9 @@ function updateCustomerSearchIndexMemoFast_(rowNo, memoValue) {
   const ts = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
   indexSheet.getRange(targetRow, memoCol).setValue(shortenTextForIndex_(memoValue, PORTAL_CONFIG.CUSTOMER_INDEX_MEMO_MAX_LENGTH || 350));
   if (updatedCol) indexSheet.getRange(targetRow, updatedCol).setValue(ts);
+  if (masterUpdatedCol && meta.updatedAt) indexSheet.getRange(targetRow, masterUpdatedCol).setValue(meta.updatedAt);
+  if (masterVersionCol && meta.version) indexSheet.getRange(targetRow, masterVersionCol).setValue(meta.version);
+  if (masterEditorCol && meta.editor) indexSheet.getRange(targetRow, masterEditorCol).setValue(meta.editor);
 
   const touched = touchCustomerSearchIndexVersion_(now);
   return { ok: true, rowNo: rowNo, indexRow: targetRow, version: touched.version, builtAt: touched.builtAt };

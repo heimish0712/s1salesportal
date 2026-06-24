@@ -610,6 +610,58 @@ function clearCustomerInlineEditingFlag_() {
   if (document.body && document.body.classList) document.body.classList.remove('portal-user-editing');
 }
 
+function getBaseMasterVersionForCustomerSaveP202_(rowNo, customerNo) {
+  rowNo = Number(rowNo) || 0;
+  const cno = normalizeCustomerNoForKey_(customerNo || '');
+  const detail = getCustomerDetailCache_(rowNo, cno) || (currentDetail && Number(currentDetail.rowNo) === rowNo ? currentDetail : null);
+  if (detail) return String(detail.__masterVersion || detail.masterVersion || '').trim();
+  const row = findCustomerRowSummary_(rowNo, cno) || findCustomerRowSummaryByRowNo_(rowNo) || {};
+  return String(row.masterVersion || row.__masterVersion || '').trim();
+}
+
+function isCustomerStaleSaveErrorP202_(err) {
+  const msg = getErrorMessage_(err);
+  return /PORTAL_STALE_CUSTOMER_VERSION|다른 사용자가.*먼저 수정|최신 내용을 다시 불러온 뒤 저장/i.test(msg);
+}
+
+function makeCustomerSavePayloadP202_(rowNo, customerNo, values) {
+  return {
+    rowNo: Number(rowNo) || 0,
+    customerNo: normalizeCustomerNoForKey_(customerNo || ''),
+    values: values || {},
+    baseMasterVersion: getBaseMasterVersionForCustomerSaveP202_(rowNo, customerNo)
+  };
+}
+
+function applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res) {
+  if (!res) return;
+  const meta = {
+    masterVersion: res.masterVersion || (res.detail && (res.detail.__masterVersion || res.detail.masterVersion)) || '',
+    masterUpdatedAt: res.masterUpdatedAt || (res.detail && (res.detail.__masterUpdatedAt || res.detail.masterUpdatedAt)) || '',
+    masterEditor: res.masterEditor || (res.detail && (res.detail.__masterEditor || res.detail.masterEditor)) || ''
+  };
+  if (!meta.masterVersion && !meta.masterUpdatedAt && !meta.masterEditor) return;
+  patchCustomerSearchIndexAndPagesK1_({ rowNo: rowNo, customerNo: customerNo }, meta, { source: 'masterMeta', remember: true });
+  const detail = getCustomerDetailCache_(rowNo, customerNo) || (currentDetail && Number(currentDetail.rowNo) === Number(rowNo) ? currentDetail : null);
+  if (detail) {
+    if (meta.masterVersion) detail.__masterVersion = detail.masterVersion = meta.masterVersion;
+    if (meta.masterUpdatedAt) detail.__masterUpdatedAt = detail.masterUpdatedAt = meta.masterUpdatedAt;
+    if (meta.masterEditor) detail.__masterEditor = detail.masterEditor = meta.masterEditor;
+    setCustomerDetailCache_(detail, { force: true, source: 'saveMeta', allowIndexPatch: false, skipStorage: false });
+  }
+}
+
+function handleCustomerStaleSaveFailureP202_(rowNo, customerNo, err, rollback, key) {
+  if (rollback) applyCustomerInlinePatchOptimistic_(rowNo, rollback);
+  if (key) refreshCustomerInlineCellDisplay_(rowNo, key);
+  toast('다른 사용자가 먼저 수정했습니다. 최신 내용을 다시 불러옵니다.');
+  fetchCustomerDetailFromServer_(rowNo, function(detail) {
+    setCustomerDetailCache_(detail, { force: true, source: 'master', allowIndexPatch: true, allowStorageWrite: true });
+    if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+    if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
+  }, function(){}, { customerNo: customerNo });
+}
+
 function commitCustomerInlineEdit_(inputId, options) {
   options = options || {};
   const editor = document.getElementById(inputId);
@@ -650,6 +702,7 @@ function commitCustomerInlineEdit_(inputId, options) {
 
   const runner = google.script.run
     .withSuccessHandler(function(res) {
+      applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
       if (key === 'memo' && res && Object.prototype.hasOwnProperty.call(res, 'memo')) {
         applyCustomerInlinePatchOptimistic_(rowNo, { memo: res.memo });
       } else if (res && res.values) {
@@ -662,17 +715,21 @@ function commitCustomerInlineEdit_(inputId, options) {
       refreshCustomerInlineCellDisplay_(rowNo, key);
     })
     .withFailureHandler(function(err) {
+      if (isCustomerStaleSaveErrorP202_(err)) {
+        handleCustomerStaleSaveFailureP202_(rowNo, customerNo, err, rollback, key);
+        return;
+      }
       applyCustomerInlinePatchOptimistic_(rowNo, rollback);
       refreshCustomerInlineCellDisplay_(rowNo, key);
       alert('목록 즉시수정 저장 실패: ' + getErrorMessage_(err));
     });
 
   if (key === 'memo') {
-    runner.saveCustomerMemoFast({ rowNo: rowNo, customerNo: customerNo, memo: nextValue });
+    runner.saveCustomerMemoFast({ rowNo: rowNo, customerNo: customerNo, memo: nextValue, baseMasterVersion: getBaseMasterVersionForCustomerSaveP202_(rowNo, customerNo) });
   } else {
     const values = {};
     values[key] = nextValue;
-    runner.saveCustomerDetailFast({ rowNo: rowNo, customerNo: customerNo, values: values });
+    runner.saveCustomerDetailFast(makeCustomerSavePayloadP202_(rowNo, customerNo, values));
   }
 }
 
@@ -1286,17 +1343,25 @@ function saveExpandedCustomerMemo(rowNo) {
   google.script.run
     .withSuccessHandler(function(res) {
       if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res);
       applyCustomerMemoOptimistic_(rowNo, memoValue);
       toast('메모가 마스터시트에 저장되었습니다.');
     })
     .withFailureHandler(function(err) {
       if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      if (isCustomerStaleSaveErrorP202_(err)) {
+        if (prevDetail) setCustomerDetailCache_(prevDetail); else applyCustomerMemoOptimistic_(rowNo, prevMemo);
+        updateCustomerRowMemoInCaches_(rowNo, prevMemo);
+        renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+        handleCustomerStaleSaveFailureP202_(rowNo, targetCustomerNo, err, null, 'memo');
+        return;
+      }
       if (prevDetail) setCustomerDetailCache_(prevDetail); else applyCustomerMemoOptimistic_(rowNo, prevMemo);
       updateCustomerRowMemoInCaches_(rowNo, prevMemo);
       renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
       alert('메모 저장 실패: ' + getErrorMessage_(err));
     })
-    .saveCustomerMemoFast({ rowNo: rowNo, customerNo: targetCustomerNo, memo: memoValue });
+    .saveCustomerMemoFast({ rowNo: rowNo, customerNo: targetCustomerNo, memo: memoValue, baseMasterVersion: getBaseMasterVersionForCustomerSaveP202_(rowNo, targetCustomerNo) });
 }
 
 function resetExpandedCustomerMemo(rowNo) {
@@ -2172,7 +2237,13 @@ function normalizeCustomerPatchForIndexK1_(target, patchValues) {
     discountRate: 'discountRate',
     specialTerms: 'specialTerms',
     lastSent: 'lastSent',
-    sentAt: 'sentAt'
+    sentAt: 'sentAt',
+    masterVersion: 'masterVersion',
+    masterUpdatedAt: 'masterUpdatedAt',
+    masterEditor: 'masterEditor',
+    __masterVersion: 'masterVersion',
+    __masterUpdatedAt: 'masterUpdatedAt',
+    __masterEditor: 'masterEditor'
   };
 
   Object.keys(patchValues || {}).forEach(function(key) {
@@ -2468,7 +2539,12 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     __source: 'index',
     __masterBacked: false,
     __indexUpdatedAt: row.indexUpdatedAt || '',
+    masterVersion: row.masterVersion || '',
+    masterUpdatedAt: row.masterUpdatedAt || '',
+    masterEditor: row.masterEditor || '',
     __masterVersion: row.masterVersion || '',
+    __masterUpdatedAt: row.masterUpdatedAt || '',
+    __masterEditor: row.masterEditor || '',
     __loadedAt: new Date().toISOString()
   };
   detail.detailFields = buildDetailFieldsFromFlatDetail_(detail);
@@ -2828,7 +2904,10 @@ function updateCustomerSearchIndexRowFromDetail_(detail, options) {
     discountRate: detail.discountRate || fieldVal(detail, 'contract', 'discountRate') || '',
     specialTerms: detail.specialTerms || fieldVal(detail, 'contract', 'specialTerms') || '',
     lastSent: detail.lastSent || '',
-    sentAt: detail.sentAt || ''
+    sentAt: detail.sentAt || '',
+    masterVersion: detail.__masterVersion || detail.masterVersion || '',
+    masterUpdatedAt: detail.__masterUpdatedAt || detail.masterUpdatedAt || '',
+    masterEditor: detail.__masterEditor || detail.masterEditor || ''
   };
   patch.finalQuote = detail.finalQuote || fieldVal(detail, 'contract', 'finalQuote') || '';
   patchCustomerSearchIndexAndPagesK1_(patch, patch, { source: options.source || detail.__source || 'master', forceSaveIndex: true });
