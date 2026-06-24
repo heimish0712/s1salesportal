@@ -3864,7 +3864,22 @@ body.portal-font-zoom-active .font-scale-control {
 }
 
 
-.customer-favorite-star.pending,
+.customer-favorite-star.pending {
+  opacity: 1;
+  cursor: pointer;
+  filter: none;
+  position: relative;
+}
+.customer-favorite-star.pending::after {
+  content: '';
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #2563eb;
+}
 .customer-favorite-star:disabled {
   opacity: 0.55;
   cursor: wait;
@@ -3902,4 +3917,29 @@ body.portal-font-zoom-active .font-scale-control {
   background: #dbeafe;
   color: #1e40af;
 }
+</style>
+
+<style>
+/* P2-3 오늘 할 일 행 단위 저장 상태 표시 */
+.today-task-row.is-saving-p203 {
+  box-shadow: inset 3px 0 0 #93c5fd;
+}
+.today-task-row.is-saved-p203 {
+  box-shadow: inset 3px 0 0 #86efac;
+}
+.today-task-row.is-error-p203 {
+  box-shadow: inset 3px 0 0 #f87171;
+  background: #fff7f7;
+}
+.today-row-save-state-p203 {
+  min-width: 48px;
+  text-align: right;
+  font-size: 11px;
+  color: #64748b;
+  white-space: nowrap;
+  align-self: center;
+}
+.today-task-row.is-saving-p203 .today-row-save-state-p203 { color: #2563eb; }
+.today-task-row.is-saved-p203 .today-row-save-state-p203 { color: #16a34a; }
+.today-task-row.is-error-p203 .today-row-save-state-p203 { color: #dc2626; font-weight: 700; }
 </style>

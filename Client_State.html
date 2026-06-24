@@ -63,6 +63,12 @@ let customerFavoritePendingMapV62 = {};
 let customerFavoriteMutationSeqV62 = 0;
 const CUSTOMER_FAVORITE_PENDING_TTL_MS_V62 = 30000;
 
+// P2-4: 즐겨찾기는 빠른 UI 상태입니다.
+// 사용자가 연속 클릭하면 화면은 즉시 바꾸고, 마지막 상태만 잠깐 뒤 고객즐겨찾기_DB에 저장합니다.
+let customerFavoritePushTimersP204 = {};
+let customerFavoritePushPayloadsP204 = {};
+const CUSTOMER_FAVORITE_PUSH_DELAY_MS_P204 = 650;
+
 
 // v31: 검색인덱스_DB + 상세 원본행 프리패치 캐시
 let customerSearchIndexState = { ready: false, loading: false, version: '', builtAt: '', rows: [], loadedAt: 0, source: '' };
@@ -643,6 +649,83 @@ function rollbackFavoriteStateOptimistic_(mutation, previousFavorite) {
 
   customerFavoriteLoadedV60 = true;
   customerFavoriteLastLoadedAtV60 = Date.now();
+}
+
+function scheduleCustomerFavoritePushP204_(row, favorite, mutation, previousFavorite) {
+  row = row || {};
+  if (!mutation || !mutation.key) return;
+  const key = mutation.key;
+  const payload = {
+    rowNo: Number(row.rowNo) || 0,
+    customerNo: row.customerNo || '',
+    company: row.company || '',
+    favorite: !!favorite,
+    clientMutationId: mutation.mutationId
+  };
+
+  customerFavoritePushPayloadsP204[key] = {
+    payload: payload,
+    mutation: mutation,
+    previousFavorite: !!previousFavorite,
+    queuedAt: Date.now()
+  };
+
+  if (customerFavoritePushTimersP204[key]) clearTimeout(customerFavoritePushTimersP204[key]);
+  customerFavoritePushTimersP204[key] = setTimeout(function() {
+    sendCustomerFavoriteQueuedP204_(key, 1);
+  }, CUSTOMER_FAVORITE_PUSH_DELAY_MS_P204);
+}
+
+function sendCustomerFavoriteQueuedP204_(key, attempt) {
+  const item = customerFavoritePushPayloadsP204 && customerFavoritePushPayloadsP204[key];
+  if (!item || !item.mutation || !item.payload) return;
+  const currentPending = customerFavoritePendingMapV62 && customerFavoritePendingMapV62[key];
+  if (!currentPending || Number(currentPending.mutationId) !== Number(item.mutation.mutationId)) {
+    delete customerFavoritePushPayloadsP204[key];
+    return;
+  }
+
+  item.sending = true;
+  item.lastAttemptAt = Date.now();
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      const latestPending = customerFavoritePendingMapV62 && customerFavoritePendingMapV62[key];
+      if (!latestPending || Number(latestPending.mutationId) !== Number(item.mutation.mutationId)) {
+        return;
+      }
+      if (res && res.ok) {
+        delete customerFavoritePushPayloadsP204[key];
+        commitFavoriteStateOptimistic_(item.mutation, null);
+        try { repaintCustomerResultsIfVisible_(); } catch (err) {}
+        try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+        return;
+      }
+      rollbackFavoriteStateOptimistic_(item.mutation, item.previousFavorite);
+      delete customerFavoritePushPayloadsP204[key];
+      try { repaintCustomerResultsIfVisible_(); } catch (err) {}
+      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+      toast('즐겨찾기 변경을 저장하지 못했습니다. 잠시 후 다시 눌러주세요.');
+    })
+    .withFailureHandler(function(err) {
+      const latestPending = customerFavoritePendingMapV62 && customerFavoritePendingMapV62[key];
+      if (!latestPending || Number(latestPending.mutationId) !== Number(item.mutation.mutationId)) {
+        return;
+      }
+      if (typeof isTransientPortalWriteError_ === 'function' && isTransientPortalWriteError_(err) && attempt < 3) {
+        const delay = attempt === 1 ? 450 : 1100;
+        customerFavoritePushTimersP204[key] = setTimeout(function() {
+          sendCustomerFavoriteQueuedP204_(key, attempt + 1);
+        }, delay);
+        return;
+      }
+      rollbackFavoriteStateOptimistic_(item.mutation, item.previousFavorite);
+      delete customerFavoritePushPayloadsP204[key];
+      try { repaintCustomerResultsIfVisible_(); } catch (renderErr) {}
+      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (renderErr2) {}
+      toast('즐겨찾기 변경이 지연되었습니다. 잠시 후 다시 눌러주세요.');
+    })
+    .setPortalCustomerFavoriteStateP204(item.payload);
 }
 
 

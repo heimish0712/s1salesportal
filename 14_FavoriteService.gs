@@ -93,7 +93,58 @@ function togglePortalCustomerFavorite(payload) {
 }
 
 function setPortalCustomerFavorite(payload) {
+  // 기존 호출 호환용. P2-4 이후 클라이언트는 아래 lightweight 함수를 사용합니다.
+  const result = writePortalCustomerFavoriteStateP204_(payload || {}, { lockLabel: 'favorite-set' });
+
+  try {
+    appendPortalActivityLog_({
+      actionType: '즐겨찾기',
+      screen: '고객 즐겨찾기',
+      rowNo: result.rowNo,
+      customerNo: result.customerNo,
+      company: result.company,
+      summary: result.favorite ? '즐겨찾기 추가' : '즐겨찾기 해제',
+      detail: { favorite: result.favorite, action: result.action }
+    });
+  } catch (err) {}
+
+  const mapRes = getPortalCustomerFavoriteMap();
+  const listRes = getPortalFavoriteCustomers();
+  return {
+    ok: true,
+    favorite: result.favorite,
+    customerNo: result.customerNo,
+    rowNo: result.rowNo,
+    map: mapRes.map || {},
+    favorites: listRes.rows || [],
+    action: result.action
+  };
+}
+
+/**
+ * P2-4: 즐겨찾기 빠른 저장 전용.
+ * - 화면은 이미 optimistic 처리했으므로 map/favorite list 전체를 다시 만들지 않습니다.
+ * - 고객즐겨찾기_DB만 멱등 upsert/delete 처리합니다.
+ */
+function setPortalCustomerFavoriteStateP204(payload) {
+  const result = writePortalCustomerFavoriteStateP204_(payload || {}, { lockLabel: 'favorite-state-p204' });
+  try {
+    appendPortalActivityLog_({
+      actionType: '즐겨찾기',
+      screen: '고객 즐겨찾기',
+      rowNo: result.rowNo,
+      customerNo: result.customerNo,
+      company: result.company,
+      summary: result.favorite ? '즐겨찾기 추가' : '즐겨찾기 해제',
+      detail: { favorite: result.favorite, action: result.action, mode: 'lightweight' }
+    });
+  } catch (err) {}
+  return result;
+}
+
+function writePortalCustomerFavoriteStateP204_(payload, options) {
   payload = payload || {};
+  options = options || {};
   const user = getPortalFavoriteUser_();
   const customerNo = String(payload.customerNo || '').trim();
   const rowNo = Number(payload.rowNo) || 0;
@@ -102,7 +153,7 @@ function setPortalCustomerFavorite(payload) {
   const key = makePortalFavoriteCustomerKey_(customerNo, rowNo);
   if (!key) throw new Error('즐겨찾기할 고객번호 또는 행 정보가 없습니다.');
 
-  const writeResult = withPortalScriptLockP201_('favorite-set', function() {
+  const writeResult = withPortalScriptLockP201_(options.lockLabel || 'favorite-state', function() {
     const sheet = ensurePortalFavoriteSheet_();
     const now = new Date();
     const nowText = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
@@ -151,7 +202,6 @@ function setPortalCustomerFavorite(payload) {
         ]);
         action = 'add';
       }
-      // 같은 사용자/고객 중복 row는 첫 row만 살리고 나머지는 삭제 처리합니다.
       matches.slice(1).forEach(function(m) {
         sheet.getRange(m.row, 8).setValue('Y');
         sheet.getRange(m.row, 9).setValue(nowText);
@@ -168,31 +218,18 @@ function setPortalCustomerFavorite(payload) {
       }
     }
     SpreadsheetApp.flush();
-    return { action: action, matched: matches.length };
-  }, { attempts: 5, waitMs: 500, sleepBaseMs: 180 });
+    return { action: action, matched: matches.length, savedAt: nowText };
+  }, { attempts: 4, waitMs: 350, sleepBaseMs: 120 });
 
-  try {
-    appendPortalActivityLog_({
-      actionType: '즐겨찾기',
-      screen: '고객 즐겨찾기',
-      rowNo: rowNo,
-      customerNo: customerNo,
-      company: company,
-      summary: favorite ? '즐겨찾기 추가' : '즐겨찾기 해제',
-      detail: { favorite: favorite, action: writeResult && writeResult.action }
-    });
-  } catch (err) {}
-
-  const mapRes = getPortalCustomerFavoriteMap();
-  const listRes = getPortalFavoriteCustomers();
   return {
     ok: true,
     favorite: favorite,
     customerNo: customerNo,
     rowNo: rowNo,
-    map: mapRes.map || {},
-    favorites: listRes.rows || [],
-    action: writeResult && writeResult.action
+    company: company,
+    key: key,
+    action: writeResult && writeResult.action,
+    savedAt: writeResult && writeResult.savedAt
   };
 }
 

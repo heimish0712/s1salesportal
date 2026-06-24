@@ -754,9 +754,9 @@ function renderCustomerFavoriteCell_(row) {
   const active = isCustomerFavorite_(row);
   const rowNo = Number(row.rowNo) || 0;
   const pending = typeof isCustomerFavoritePending_ === 'function' && isCustomerFavoritePending_(row);
-  const label = pending ? '즐겨찾기 처리 중' : (active ? '즐겨찾기 해제' : '즐겨찾기 추가');
+  const label = pending ? '즐겨찾기 저장 대기 중' : (active ? '즐겨찾기 해제' : '즐겨찾기 추가');
   return '<td class="customer-favorite-cell" title="' + escAttr(label) + '">' +
-    '<button type="button" class="customer-favorite-star ' + (active ? 'active' : '') + (pending ? ' pending' : '') + '" ' + (pending ? 'disabled ' : '') + 'onclick="event.stopPropagation(); toggleCustomerFavoriteFromList(' + rowNo + ')">' + (active ? '★' : '☆') + '</button>' +
+    '<button type="button" class="customer-favorite-star ' + (active ? 'active' : '') + (pending ? ' pending' : '') + '" ' + (pending ? 'aria-busy="true" ' : '') + 'onclick="event.stopPropagation(); toggleCustomerFavoriteFromList(' + rowNo + ')">' + (active ? '★' : '☆') + '</button>' +
   '</td>';
 }
 
@@ -765,12 +765,6 @@ function toggleCustomerFavoriteFromList(rowNo) {
   const row = findCustomerRowSummaryByRowNo_(rowNo) || {};
   if (!rowNo && !row.customerNo) return;
 
-  const favKey = getFavoriteCustomerKey_(row);
-  if (favKey && typeof isCustomerFavoritePending_ === 'function' && isCustomerFavoritePending_(favKey)) {
-    toast('즐겨찾기 변경을 처리 중입니다. 잠시만 기다려 주세요.');
-    return;
-  }
-
   const wasFavorite = isCustomerFavorite_(row);
   const nextFavorite = !wasFavorite;
   const favoriteMutation = patchFavoriteStateOptimistic_(row, nextFavorite);
@@ -778,38 +772,29 @@ function toggleCustomerFavoriteFromList(rowNo) {
   repaintCustomerResultsIfVisible_();
   try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
 
-  const payload = {
-    rowNo: rowNo,
-    customerNo: row.customerNo || '',
-    company: row.company || '',
-    favorite: nextFavorite
-  };
-
-  function runAttempt(attempt) {
-    google.script.run
-      .withSuccessHandler(function(res) {
-        if (res && res.ok) {
-          commitFavoriteStateOptimistic_(favoriteMutation, res.map || customerFavoriteMapV60 || {});
-          if (Array.isArray(res.favorites)) customerFavoriteRowsV60 = res.favorites;
-          repaintCustomerResultsIfVisible_();
-          try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
-          toast(nextFavorite ? '즐겨찾기에 추가했습니다.' : '즐겨찾기에서 해제했습니다.');
-        }
-      })
-      .withFailureHandler(function(err) {
-        if (typeof isTransientPortalWriteError_ === 'function' && isTransientPortalWriteError_(err) && attempt < 3) {
-          setTimeout(function() { runAttempt(attempt + 1); }, attempt === 1 ? 450 : 1100);
-          return;
-        }
-        rollbackFavoriteStateOptimistic_(favoriteMutation, wasFavorite);
-        repaintCustomerResultsIfVisible_();
-        try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (renderErr) {}
-        toast('즐겨찾기 변경이 지연되었습니다. 잠시 후 다시 눌러주세요.');
-      })
-      .setPortalCustomerFavorite(payload);
+  // P2-4: 연속 클릭은 화면에서 즉시 반영하고, 마지막 상태만 지연 저장합니다.
+  if (typeof scheduleCustomerFavoritePushP204_ === 'function') {
+    scheduleCustomerFavoritePushP204_(row, nextFavorite, favoriteMutation, wasFavorite);
+    return;
   }
 
-  runAttempt(1);
+  // 하위 호환 fallback
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.ok) commitFavoriteStateOptimistic_(favoriteMutation, res.map || customerFavoriteMapV60 || {});
+    })
+    .withFailureHandler(function(err) {
+      rollbackFavoriteStateOptimistic_(favoriteMutation, wasFavorite);
+      repaintCustomerResultsIfVisible_();
+      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (renderErr) {}
+      toast('즐겨찾기 변경이 지연되었습니다. 잠시 후 다시 눌러주세요.');
+    })
+    .setPortalCustomerFavorite({
+      rowNo: rowNo,
+      customerNo: row.customerNo || '',
+      company: row.company || '',
+      favorite: nextFavorite
+    });
 }
 
 

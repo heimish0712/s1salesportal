@@ -125,8 +125,14 @@ function onMasterSheetEditSyncP201(e) {
     try { editor = String(Session.getActiveUser().getEmail() || '').trim(); } catch (err) {}
     if (!editor) editor = 'sheet-edit';
 
-    const targetRows = [];
-    for (let r = Math.max(PORTAL_CONFIG.DATA_START_ROW, rowStart); r <= rowEnd; r++) targetRows.push(r);
+    const candidateRows = [];
+    for (let r = Math.max(PORTAL_CONFIG.DATA_START_ROW, rowStart); r <= rowEnd; r++) candidateRows.push(r);
+
+    // P2-4: 빈 행에는 수정일시/수정버전/최종수정자를 찍지 않습니다.
+    // 대량 행 추가, 빈 영역 붙여넣기, 필터/드롭다운 조작 시 빈 행 전체에 메타가 찍히는 문제 방지.
+    const targetRows = filterMeaningfulMasterRowsForMetaP204_(sheet, candidateRows, getHeaderMap_(sheet));
+    if (!targetRows.length) return false;
+
     targetRows.forEach(function(r, idx) {
       const version = versionBase + '-' + r + '-' + idx;
       sheet.getRange(r, updatedAtCol).setValue(nowText);
@@ -145,6 +151,88 @@ function onMasterSheetEditSyncP201(e) {
     markPortalMasterDataChangedP201_('마스터시트 직접수정 rows=' + targetRows.join(','));
     return true;
   }, { attempts: 3, waitMs: 500, sleepBaseMs: 150 });
+}
+
+
+function filterMeaningfulMasterRowsForMetaP204_(sheet, rowNumbers, headerMap) {
+  rowNumbers = (rowNumbers || []).map(function(v) { return Number(v) || 0; })
+    .filter(function(v) { return v >= PORTAL_CONFIG.DATA_START_ROW; });
+  if (!rowNumbers.length) return [];
+
+  headerMap = headerMap || getHeaderMap_(sheet);
+  const lastCol = sheet.getLastColumn();
+  const minRow = Math.min.apply(null, rowNumbers);
+  const maxRow = Math.max.apply(null, rowNumbers);
+  const displayRows = sheet.getRange(minRow, 1, maxRow - minRow + 1, lastCol).getDisplayValues();
+
+  const importantHeaders = [
+    '고객번호', '회사명', '건물명', '현재 영업 진행 상황', '영업담당자', '견적담당',
+    '고객사 담당자', '담당자', '대표전화', '전화번호', '직통번호', '이메일',
+    '주소', '상세주소', '고객사 상세 주소', '메모', '최종 견적가', '최종견적가'
+  ];
+  const metaHeaders = PORTAL_MASTER_META_HEADERS_P201.concat(['원본수정시각', '마스터원본버전']);
+  const importantCols = [];
+  importantHeaders.forEach(function(h) {
+    const col = findFirstExistingHeaderCol_(headerMap, [h]);
+    if (col && importantCols.indexOf(col) < 0) importantCols.push(col);
+  });
+
+  const metaCols = metaHeaders.map(function(h) { return findFirstExistingHeaderCol_(headerMap, [h]); }).filter(Boolean);
+
+  return rowNumbers.filter(function(rowNo) {
+    const values = displayRows[rowNo - minRow] || [];
+    if (!values.length) return false;
+
+    // 고객번호/회사명 등 핵심 헤더 중 하나라도 값이 있으면 실데이터 행으로 봅니다.
+    for (let i = 0; i < importantCols.length; i++) {
+      const v = String(values[importantCols[i] - 1] || '').trim();
+      if (v) return true;
+    }
+
+    // 혹시 헤더명이 달라져도, 메타 컬럼을 제외한 실제 행 데이터가 하나라도 있으면 허용합니다.
+    // 단순 드롭다운/수식 공란 행은 displayValue가 비어 있으므로 여기서 걸러집니다.
+    for (let c = 1; c <= values.length; c++) {
+      if (metaCols.indexOf(c) >= 0) continue;
+      const v = String(values[c - 1] || '').trim();
+      if (v) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * P2-4: 이미 잘못 찍힌 빈 행의 관리용 메타 값을 정리하는 수동 실행 함수.
+ * Apps Script에서 필요 시 1회 실행하세요.
+ */
+function clearBlankMasterMetaRowsP204() {
+  const sheet = getMasterSheet_();
+  const headerMap = getHeaderMap_(sheet);
+  const updatedAtCol = findFirstExistingHeaderCol_(headerMap, ['수정일시']);
+  const versionCol = findFirstExistingHeaderCol_(headerMap, ['수정버전']);
+  const editorCol = findFirstExistingHeaderCol_(headerMap, ['최종수정자']);
+  const metaCols = [updatedAtCol, versionCol, editorCol].filter(Boolean);
+  if (!metaCols.length) return { ok: true, cleared: 0, message: '관리용 헤더가 없습니다.' };
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < PORTAL_CONFIG.DATA_START_ROW) return { ok: true, cleared: 0 };
+  const rows = [];
+  for (let r = PORTAL_CONFIG.DATA_START_ROW; r <= lastRow; r++) rows.push(r);
+  const meaningful = {};
+  filterMeaningfulMasterRowsForMetaP204_(sheet, rows, headerMap).forEach(function(r) { meaningful[r] = true; });
+
+  let cleared = 0;
+  rows.forEach(function(r) {
+    if (meaningful[r]) return;
+    let hasMeta = false;
+    metaCols.forEach(function(c) {
+      if (String(sheet.getRange(r, c).getDisplayValue() || '').trim()) hasMeta = true;
+    });
+    if (!hasMeta) return;
+    metaCols.forEach(function(c) { sheet.getRange(r, c).clearContent(); });
+    cleared++;
+  });
+  SpreadsheetApp.flush();
+  return { ok: true, cleared: cleared };
 }
 
 function syncEditedMasterRowsOnceP201(rowNumbers) {
