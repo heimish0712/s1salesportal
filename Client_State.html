@@ -630,10 +630,14 @@ function applyPortalPermissionToUi_() {
 
   const noticeActions = document.querySelector('.notice-actions');
   if (noticeActions) noticeActions.style.display = (p && (p.canWriteNotice || p.canDeleteNotice)) ? '' : 'none';
-  const noticeWriteBtn = document.querySelector('.notice-actions .btn-blue');
+  const noticeWriteBtn = document.getElementById('noticeWriteBtn');
   if (noticeWriteBtn) noticeWriteBtn.style.display = (p && p.canWriteNotice) ? '' : 'none';
   const noticeDeleteBtn = document.getElementById('noticeDeleteBtn');
   if (noticeDeleteBtn) noticeDeleteBtn.style.display = (p && p.canDeleteNotice) ? '' : 'none';
+  if (!(p && p.canDeleteNotice) && typeof noticeDeleteMode !== 'undefined') {
+    noticeDeleteMode = false;
+    document.body.classList.remove('notice-delete-active');
+  }
 
   const completeBtn = document.getElementById('supportCompleteNowBtn');
   if (completeBtn) completeBtn.style.display = (p && p.canCompleteSupport) ? '' : 'none';

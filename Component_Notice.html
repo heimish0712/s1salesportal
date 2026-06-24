@@ -9,6 +9,7 @@ function loadHomeNoticeList() {
 }
 
 function loadNoticeTable() {
+  try { applyPortalPermissionToUi_(); } catch (err) {}
   google.script.run
     .withSuccessHandler(renderNoticeTable)
     .withFailureHandler(showGlobalError)
@@ -36,6 +37,7 @@ function renderHomeNoticeList(notices) {
 }
 
 function renderNoticeTable(notices) {
+  try { applyPortalPermissionToUi_(); } catch (err) {}
   const target = document.getElementById('noticeTableArea');
   if (!target) return;
   notices = Array.isArray(notices) ? notices : [];
@@ -163,10 +165,11 @@ function saveNoticeFromModal() {
     content: document.getElementById('noticeWriteContent').value
   };
   google.script.run
-    .withSuccessHandler(() => {
+    .withSuccessHandler((res) => {
       closeNoticeWriteModal();
       toast('공지사항을 저장했습니다.');
-      loadNoticeTable();
+      if (res && Array.isArray(res.notices)) renderNoticeTable(res.notices);
+      else loadNoticeTable();
       loadHomeNoticeList();
     })
     .withFailureHandler(showGlobalError)
@@ -196,8 +199,9 @@ function handleNoticeDeleteButton() {
       noticeDeleteMode = false;
       document.body.classList.remove('notice-delete-active');
       document.getElementById('noticeDeleteBtn').textContent = '삭제하기';
-      toast((res && res.deletedCount || ids.length) + '건 삭제했습니다.');
-      loadNoticeTable();
+      toast((res && (res.deletedCount || res.deleted) || ids.length) + '건 삭제했습니다.');
+      if (res && Array.isArray(res.notices)) renderNoticeTable(res.notices);
+      else loadNoticeTable();
       loadHomeNoticeList();
     })
     .withFailureHandler(showGlobalError)

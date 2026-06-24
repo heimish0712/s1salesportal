@@ -5,6 +5,22 @@
 
 function getPortalNotices(limit) {
   limit = Math.max(0, Number(limit) || 0);
+  const active = getPortalNoticeActiveListCachedP16_();
+  return limit ? active.slice(0, limit) : active;
+}
+
+function getPortalNoticeActiveListCachedP16_() {
+  const cache = CacheService.getScriptCache();
+  const key = 'S1_PORTAL_NOTICE_ACTIVE_LIST_P16';
+
+  try {
+    const cached = cache.get(key);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (err) {}
+
   const rows = readPortalNoticeRows_();
   const active = rows
     .filter(item => String(item.deleted || '').toUpperCase() !== 'Y')
@@ -18,7 +34,13 @@ function getPortalNotices(limit) {
       delete copy.createdAtValue;
       return copy;
     });
-  return limit ? active.slice(0, limit) : active;
+
+  try { cache.put(key, JSON.stringify(active), 60); } catch (err) {}
+  return active;
+}
+
+function clearPortalNoticeCacheP16_() {
+  try { CacheService.getScriptCache().remove('S1_PORTAL_NOTICE_ACTIVE_LIST_P16'); } catch (err) {}
 }
 
 function getPortalNoticeDetail(noticeId) {
@@ -61,6 +83,7 @@ function savePortalNotice(payload) {
   ]);
 
   SpreadsheetApp.flush();
+  clearPortalNoticeCacheP16_();
   try {
     appendPortalActivityLog_({
       actionType: '공지사항',
@@ -95,6 +118,7 @@ function deletePortalNotices(ids) {
   });
 
   SpreadsheetApp.flush();
+  clearPortalNoticeCacheP16_();
   try {
     appendPortalActivityLog_({
       actionType: '공지사항',
@@ -126,6 +150,7 @@ function confirmPortalNotice(noticeId) {
       const next = exists ? current : (current ? current + '\n' + nextItem : nextItem);
       sheet.getRange(i + 2, 7).setValue(next);
       SpreadsheetApp.flush();
+      clearPortalNoticeCacheP16_();
       return { ok: true, notice: getPortalNoticeDetail(id) };
     }
   }
@@ -194,6 +219,7 @@ function seedDefaultPortalNotices_(sheet) {
   ];
   sheet.getRange(2, 1, rows.length, PORTAL_CONFIG.NOTICE_HEADERS.length).setValues(rows);
   SpreadsheetApp.flush();
+  clearPortalNoticeCacheP16_();
 }
 
 function parsePortalDateOnly_(value) {
