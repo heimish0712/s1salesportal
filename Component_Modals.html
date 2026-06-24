@@ -1,0 +1,42 @@
+<script>
+function renderTempMemoPanel() {
+  return '<div class="temp-panel" id="tempMemoPanel"><div class="section-title" style="font-size:17px;margin-bottom:12px;">임시메모 추가</div><div class="form-row"><input id="tempMemoAt" type="datetime-local"><input disabled value="마스터시트 메모에는 반영하지 않음"></div><textarea id="tempMemoText" placeholder="임시로 남길 메모를 입력하세요."></textarea><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;"><button id="saveTempBtn" onclick="saveTempMemo()">임시메모 저장</button><button class="secondary" onclick="toggleTempMemoPanel(false)">취소</button></div></div>';
+}
+function toggleTempMemoPanel(force) {
+  const panel = document.getElementById('tempMemoPanel');
+  if (!panel) return;
+  const show = typeof force === 'boolean' ? force : !panel.classList.contains('active');
+  panel.classList.toggle('active', show);
+  if (show) { setTempMemoDefaultTime(); setTimeout(() => tempMemoText.focus(), 60); panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }
+}
+function setTempMemoDefaultTime(){ const el = document.getElementById('tempMemoAt'); if(el && !el.value) el.value = toLocalDateTimeInputValue(new Date()); }
+function saveTempMemo() {
+  if(!currentDetail||!currentDetail.rowNo)return;
+  const memoAt=tempMemoAt.value||''; const memo=tempMemoText.value||'';
+  if(!memoAt)return toast('임시메모 날짜/시간을 입력하세요.');
+  if(!memo.trim()){toast('임시메모 내용을 입력하세요.'); tempMemoText.focus(); return;}
+  saveTempBtn.disabled=true; saveTempBtn.textContent='저장 중...';
+  google.script.run.withSuccessHandler(function(){ toast('임시메모가 저장되었습니다.'); fetchCustomerDetailFromServer_(currentDetail.rowNo, function(detail){ renderDetail(detail); }, function(){}, { customerNo: normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo) }); }).withFailureHandler(function(err){ saveTempBtn.disabled=false; saveTempBtn.textContent='임시메모 저장'; showModalError(err); }).addTempMemo({rowNo:currentDetail.rowNo,customerNo:normalizeCustomerNoForKey_(currentDetail.customerNo||currentDetailCustomerNo),memoAt:memoAt,memo:memo});
+}
+
+function renderTimeline(logs) {
+  if(!logs||!logs.length)return '<div class="timeline"><div class="timeline-item"><div class="timeline-memo" style="color:#667085;">아직 이력이 없습니다.</div></div></div>';
+  let html='<div class="timeline">';
+  logs.forEach(function(item){
+    const recordType=item.recordType||'이력';
+    const typeClass=recordType.indexOf('임시')>=0?'orange':(recordType.indexOf('상태')>=0?'blue':'green');
+    html+='<div class="timeline-item"><div class="timeline-meta"><span>'+esc(item.createdAt||'-')+'</span><span>'+esc(item.author||'-')+'</span><span class="pill '+typeClass+'">'+esc(recordType)+'</span>';
+    if(item.roundNo)html+='<span class="pill">'+esc(item.roundNo)+'</span>';
+    if(item.method)html+='<span class="pill">'+esc(item.method)+'</span>';
+    if(item.status)html+='<span class="pill">'+esc(item.status)+'</span>';
+    if(item.masterApplied)html+='<span>마스터반영: '+esc(item.masterApplied)+'</span>';
+    html+='</div><div class="timeline-memo">'+esc(item.content||'')+'</div>';
+    if(item.note)html+='<div class="timeline-memo" style="color:#667085;margin-top:4px;">'+esc(item.note)+'</div>';
+    if(item.nextAction)html+='<div class="timeline-memo" style="color:#174ea6;margin-top:4px;">다음액션: '+esc(item.nextActionAt?(item.nextActionAt+' · '+item.nextAction):item.nextAction)+'</div>';
+    html+='</div>';
+  });
+  html+='</div>'; return html;
+}
+
+function toLocalDateTimeInputValue(date){ const pad=n=>String(n).padStart(2,'0'); return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+'T'+pad(date.getHours())+':'+pad(date.getMinutes()); }
+</script>

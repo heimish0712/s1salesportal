@@ -1,0 +1,153 @@
+<script>
+function closeModal(){ modalBackdrop.style.display='none'; modalActionFooter.style.display='none'; registrationMode=false; savedRegistrationMode=false; registrationApplied=false; registrationCalcResult=null; }
+function toast(msg, options){
+  options = options || {};
+  const text = String(msg == null ? '' : msg);
+  if (shouldSuppressToastWhileEditing_(text, options)) return;
+
+  const el = toastEl();
+  if (!el) return;
+
+  // 알림은 순수 표시 요소입니다. focus/selection/activeElement에는 절대 개입하지 않습니다.
+  el.removeAttribute('role');
+  el.removeAttribute('aria-live');
+  el.setAttribute('aria-hidden', 'true');
+  el.setAttribute('tabindex', '-1');
+  try { el.inert = true; } catch (err) {}
+
+  el.textContent = text;
+  el.style.display = 'block';
+
+  clearTimeout(window.__portalToastTimer);
+  window.__portalToastTimer = setTimeout(function(){
+    el.style.display = 'none';
+  }, Number(options.duration || 1800));
+}
+
+function shouldSuppressToastWhileEditing_(msg, options){
+  if (options && options.force) return false;
+  if (options && options.silent) return true;
+  if (!isPortalUserEditingNow_()) return false;
+
+  // 입력 도중 표시할 필요가 낮은 저장/반영/완료 안내는 아예 띄우지 않습니다.
+  // 오류·실패·필수입력 안내는 작업 방해 가능성이 있어도 사용자 확인이 필요하므로 유지합니다.
+  const text = String(msg || '');
+  const isLowPriorityNotice = /(저장|반영|완료|불러왔습니다|추가했습니다|해제했습니다)/.test(text);
+  const isImportantNotice = /(오류|실패|경고|필수|입력|선택|찾지 못|못했습니다|확인)/.test(text);
+  return isLowPriorityNotice && !isImportantNotice;
+}
+
+function isPortalUserEditingNow_(){
+  const active = document.activeElement;
+  if (active && active !== document.body && isEditableFocusTarget_(active)) return true;
+  if (window.customerInlineEditActive && window.customerInlineEditActive.inputId && document.getElementById(window.customerInlineEditActive.inputId)) return true;
+  return !!(document.body && document.body.classList && document.body.classList.contains('portal-user-editing'));
+}
+
+function isEditableFocusTarget_(el){
+  if (!el) return false;
+  const tag = String(el.tagName || '').toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el.isContentEditable;
+}
+function toastEl(){ return document.getElementById('toast'); }
+function showSearchError(err){ const msg=err&&err.message?err.message:String(err||'알 수 없는 오류'); resultArea.innerHTML='<div class="loading" style="color:#b42318;">오류: '+esc(msg)+'</div>'; }
+function clearModalErrorBox(){ const old=document.querySelector('.modal-error-box'); if(old) old.remove(); }
+function showModalError(err){
+  const msg=err&&err.message?err.message:String(err||'알 수 없는 오류');
+  const old=document.querySelector('.modal-error-box');
+  if(old) old.remove();
+  const box=document.createElement('div');
+  box.className='section-card modal-error-box';
+  box.style.marginTop='16px';
+  box.style.color='#b42318';
+  box.style.borderColor='#fecdca';
+  box.style.background='#fffbfa';
+  box.textContent='오류: '+msg;
+  modalBody.appendChild(box);
+  toast('오류가 발생했습니다. 입력값은 유지됩니다.');
+}
+function showGlobalError(err){ toast(err&&err.message?err.message:String(err||'오류가 발생했습니다.')); }
+function disp(value){ const text=String(value==null?'':value).trim(); return text?text:'-'; }
+function escAttr(value){ return esc(value).replace(/`/g,'&#096;'); }
+function esc(value){ return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
+function formatDateInput_(date) {
+  date = date instanceof Date ? date : new Date(date);
+  const pad = n => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+}
+function parseDateInput_(dateStr) {
+  const m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date();
+}
+// PATCH P1-5: 표 헤더 클릭 정렬 공통 유틸
+function normalizePortalSortTextP15_(value) {
+  return String(value == null ? '' : value).replace(/\u00a0/g, ' ').trim();
+}
+
+function parsePortalSortNumberP15_(value) {
+  const raw = normalizePortalSortTextP15_(value).replace(/[^0-9.\-]/g, '');
+  if (!raw || raw === '-' || raw === '.' || raw === '-.') return NaN;
+  return Number(raw);
+}
+
+function parsePortalSortDateP15_(value) {
+  const text = normalizePortalSortTextP15_(value);
+  if (!text) return NaN;
+  let m = text.match(/(20\d{2}|\d{2})[.\-\/]\s*(\d{1,2})[.\-\/]\s*(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (m) {
+    let y = Number(m[1]);
+    if (y < 100) y += 2000;
+    const d = new Date(y, Number(m[2]) - 1, Number(m[3]), Number(m[4] || 0), Number(m[5] || 0), 0, 0);
+    const t = d.getTime();
+    return isNaN(t) ? NaN : t;
+  }
+  const fallback = Date.parse(text);
+  return isNaN(fallback) ? NaN : fallback;
+}
+
+function comparePortalSortValuesP15_(a, b, dir) {
+  dir = String(dir || 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  const sign = dir === 'desc' ? -1 : 1;
+  const av = normalizePortalSortTextP15_(a);
+  const bv = normalizePortalSortTextP15_(b);
+  const am = !av || av === '-';
+  const bm = !bv || bv === '-';
+  if (am && bm) return 0;
+  if (am) return 1;
+  if (bm) return -1;
+
+  const an = parsePortalSortNumberP15_(av);
+  const bn = parsePortalSortNumberP15_(bv);
+  if (!isNaN(an) && !isNaN(bn) && an !== bn) return (an < bn ? -1 : 1) * sign;
+
+  const ad = parsePortalSortDateP15_(av);
+  const bd = parsePortalSortDateP15_(bv);
+  if (!isNaN(ad) && !isNaN(bd) && ad !== bd) return (ad < bd ? -1 : 1) * sign;
+
+  const cmp = av.localeCompare(bv, 'ko', { numeric: true, sensitivity: 'base' });
+  return cmp * sign;
+}
+
+function sortPortalRowsByKeyP15_(rows, key, dir) {
+  rows = Array.isArray(rows) ? rows.slice() : [];
+  key = String(key || '').trim();
+  if (!key) return rows;
+  return rows.map(function(row, idx) { return { row: row, idx: idx }; }).sort(function(a, b) {
+    const cmp = comparePortalSortValuesP15_(a.row && a.row[key], b.row && b.row[key], dir);
+    return cmp || (a.idx - b.idx);
+  }).map(function(item) { return item.row; });
+}
+
+function getPortalSortArrowP15_(activeKey, activeDir, key) {
+  if (String(activeKey || '') !== String(key || '')) return '';
+  return String(activeDir || 'asc').toLowerCase() === 'desc' ? ' ▼' : ' ▲';
+}
+
+function makePortalSortableThP15_(label, key, activeKey, activeDir, handlerName, styleText) {
+  const arrow = getPortalSortArrowP15_(activeKey, activeDir, key);
+  return '<th class="portal-sortable-th" ' + (styleText ? 'style="' + escAttr(styleText) + '" ' : '') +
+    'title="클릭하면 오름차순, 한 번 더 클릭하면 내림차순 정렬" onclick="' + escAttr(handlerName) + '(\'' + escAttr(key) + '\')">' +
+    esc(label || key) + '<span class="portal-sort-arrow">' + esc(arrow) + '</span></th>';
+}
+
+</script>

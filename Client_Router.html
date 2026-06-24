@@ -1,0 +1,136 @@
+<script>
+window.onload = function() {
+  try { loadPortalSettings_({ silent: true }); } catch (err) { console.warn('설정_DB 로딩 시작 실패', err); }
+  try { loadPortalCurrentPermission_({ silent: true }); } catch (err) { console.warn('권한_DB 로딩 시작 실패', err); }
+  // v46: HOME은 즉시 표시합니다. 무거운 대시보드 갱신/공지 전체 조회는 화면을 막지 않습니다.
+  switchPage('home', true);
+  setTimeout(function() {
+    initializeCustomerSearchIndex({ silent: true, useLocalFirst: true });
+  }, 250);
+  // PATCH L: 사용자가 메뉴를 누르기 전에 가벼운 업무 화면 데이터를 백그라운드로 준비합니다.
+  // HOME 최초 표시를 막지 않도록 시간차를 두고 시작합니다.
+  setTimeout(function() {
+    try { loadCustomerFavoriteMap_({ silent: true }); } catch (err) { console.warn('고객 즐겨찾기 프리로드 실패', err); }
+  }, 520);
+  setTimeout(function() {
+    try { preloadSupportPageV57_({ silent: true }); } catch (err) { console.warn('영업지원 요청 프리로드 실패', err); }
+  }, 700);
+  setTimeout(function() {
+    try { preloadTodayPageV57_({ silent: true }); } catch (err) { console.warn('오늘 할 일 프리로드 실패', err); }
+  }, 1100);
+  // v31 FIX 유지: 고객 상세 검색 메뉴 진입 시 searchCustomerPage(0)가 실행됩니다.
+  // v46: notice 전체 목록은 공지사항 메뉴 진입 시에만 조회합니다.
+};
+const keywordInput = document.getElementById('keyword');
+if (keywordInput) keywordInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') search(); });
+
+function toggleSidebar() {
+  document.body.classList.toggle('sidebar-collapsed');
+  const btn = document.getElementById('sidebarToggle');
+  if (btn) btn.innerHTML = document.body.classList.contains('sidebar-collapsed') ? '&gt;&gt;' : '&lt;&lt;';
+}
+
+function switchPage(page, skipSearch) {
+  try { applyPortalPermissionToUi_(); } catch (err) {}
+  page = page || 'home';
+  if (page === 'dashboard') page = 'home';
+
+  document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.getAttribute('data-page') === page));
+  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('active');
+  });
+
+  const pageTitle = document.getElementById('pageTitle');
+  const pageSubtitle = document.getElementById('pageSubtitle');
+  const keyword = document.getElementById('keyword');
+
+  if (page === 'home') {
+    document.getElementById('homeSection').classList.add('active');
+    pageTitle.textContent = '영업전산 HOME';
+    pageSubtitle.textContent = '영업 현황 및 공지사항을 볼 수 있습니다.';
+    loadDashboard();
+    return;
+  }
+
+  if (page === 'notices') {
+    document.getElementById('noticeSection').classList.add('active');
+    pageTitle.textContent = '공지사항';
+    pageSubtitle.textContent = '공지사항 세부 내용 확인 및 공지사항 작성이 가능합니다.';
+    loadNoticeTable();
+    setTimeout(function(){ try { applyPortalPermissionToUi_(); } catch (err) {} }, 50);
+    return;
+  }
+
+  if (page === 'customers') {
+    document.getElementById('customerSearchSection').classList.add('active');
+    pageTitle.textContent = '고객 상세 검색';
+    pageSubtitle.textContent = '고객사 기본정보와 상세 계약조건을 조회하고 수정합니다.';
+    if (!skipSearch) search();
+    setTimeout(() => { if (keyword) keyword.focus(); }, 80);
+    return;
+  }
+
+
+  if (page === 'favorites') {
+    document.getElementById('customerFavoritesSection').classList.add('active');
+    pageTitle.textContent = '고객 즐겨찾기';
+    pageSubtitle.textContent = '내가 즐겨찾기한 고객만 빠르게 조회합니다.';
+    refreshFavoriteCustomers(false);
+    setTimeout(function() { const el = document.getElementById('favoriteKeyword'); if (el) el.focus(); }, 80);
+    return;
+  }
+
+  if (page === 'contracts') {
+    document.getElementById('contractCompleteSection').classList.add('active');
+    pageTitle.textContent = '계약종합관리';
+    pageSubtitle.textContent = '마스터 파일의 수주확정/계약완료 시트 목록을 조회하고 운영 정보를 수정합니다.';
+    loadContractCompletePageV69();
+    setTimeout(function() { const el = document.getElementById('contractCompleteKeyword'); if (el) el.focus(); }, 80);
+    return;
+  }
+
+  if (page === 'send') {
+    document.getElementById('placeholderSection').classList.add('active');
+    pageTitle.textContent = '견적/자료 발송';
+    pageSubtitle.textContent = '고객을 선택하고 발송할 자료를 체크한 뒤 미리보기까지 확인합니다.';
+    renderSendPage();
+    return;
+  }
+
+  if (page === 'support') {
+    document.getElementById('supportSection').classList.add('active');
+    pageTitle.textContent = '영업지원 요청';
+    pageSubtitle.textContent = '영업지원 요청을 등록하고 처리 상태를 관리합니다.';
+    loadSupportPage();
+    setTimeout(function(){ try { applyPortalPermissionToUi_(); } catch (err) {} }, 50);
+    return;
+  }
+
+  if (page === 'activityLog') {
+    document.getElementById('activityLogSection').classList.add('active');
+    pageTitle.textContent = '작업로그';
+    pageSubtitle.textContent = '개인은 본인 작업을, 관리자/서무는 담당자별 작업 로그와 비교 통계를 확인합니다.';
+    loadActivityLogPage(false);
+    return;
+  }
+
+  if (page === 'today') {
+    document.getElementById('todaySection').classList.add('active');
+    pageTitle.textContent = '오늘 할 일';
+    pageSubtitle.textContent = '투두리스트와 컨택 예정 액션을 날짜별로 관리합니다.';
+    loadTodayPage();
+    return;
+  }
+
+  document.getElementById('placeholderSection').classList.add('active');
+  const labels = {
+    settings:['설정','상태값, 담당자, 수행사, 권한 설정을 관리하는 화면입니다.']
+  };
+  const item = labels[page] || ['준비 중','이 메뉴는 다음 단계에서 구현할 예정입니다.'];
+  pageTitle.textContent = item[0];
+  pageSubtitle.textContent = item[1];
+  document.getElementById('placeholderTitle').textContent = item[0];
+  document.getElementById('placeholderDesc').innerHTML = item[1] + '<br><br>현재 단계에서는 Home/공지사항/고객검색/자료발송 화면을 우선 안정화합니다.';
+}
+</script>

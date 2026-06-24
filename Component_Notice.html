@@ -1,0 +1,206 @@
+<script>
+let noticeSortKeyP15 = "";
+let noticeSortDirP15 = "asc";
+function loadHomeNoticeList() {
+  google.script.run
+    .withSuccessHandler(renderHomeNoticeList)
+    .withFailureHandler(showGlobalError)
+    .getPortalNotices(3);
+}
+
+function loadNoticeTable() {
+  google.script.run
+    .withSuccessHandler(renderNoticeTable)
+    .withFailureHandler(showGlobalError)
+    .getPortalNotices(0);
+}
+
+function upsertNoticeCache_(notices) {
+  notices = Array.isArray(notices) ? notices : [];
+  notices.forEach(function(n) {
+    if (n && n.id) noticeCacheById[String(n.id)] = n;
+  });
+}
+
+function renderHomeNoticeList(notices) {
+  const target = document.getElementById('homeNoticeArea');
+  if (!target) return;
+  notices = Array.isArray(notices) ? notices : [];
+  homeNoticeCache = notices.slice();
+  upsertNoticeCache_(notices);
+  if (!notices.length) {
+    target.innerHTML = '<div class="loading">등록된 공지사항이 없습니다.</div>';
+    return;
+  }
+  target.innerHTML = buildNoticeTableHtml(notices.slice(0, 3), false);
+}
+
+function renderNoticeTable(notices) {
+  const target = document.getElementById('noticeTableArea');
+  if (!target) return;
+  notices = Array.isArray(notices) ? notices : [];
+  noticeListCache = notices.slice();
+  upsertNoticeCache_(notices);
+  if (!notices.length) {
+    target.innerHTML = '<div class="loading">등록된 공지사항이 없습니다.' + (canPortal_('canWriteNotice') ? ' 작성하기 버튼으로 새 공지를 등록하세요.' : '') + '</div>';
+    return;
+  }
+  target.innerHTML = buildNoticeTableHtml(notices, canPortal_('canDeleteNotice'));
+  try { applyPortalPermissionToUi_(); } catch (err) {}
+}
+
+function buildNoticeTableHtml(notices, allowDelete) {
+  allowDelete = !!(allowDelete && canPortal_('canDeleteNotice'));
+  const modeClass = allowDelete && noticeDeleteMode ? ' notice-delete-mode' : '';
+  const checkHead = allowDelete ? '<th class="notice-check-col">□</th>' : '';
+  if (noticeSortKeyP15) notices = sortPortalRowsByKeyP15_(notices, noticeSortKeyP15, noticeSortDirP15);
+  const rows = notices.map(n => {
+    const content = String(n.content || '').replace(/\s+/g, ' ');
+    const shortContent = content.length > 42 ? content.slice(0, 42) + '...' : content;
+    const check = allowDelete ? '<td class="notice-check-col"><input type="checkbox" class="notice-delete-check" value="' + escAttr(n.id) + '"></td>' : '';
+    return '<tr>' + check +
+      '<td style="text-align:center;white-space:nowrap;">' + esc(n.createdDate || n.createdAt || '-') + '</td>' +
+      '<td style="text-align:center;white-space:nowrap;">' + esc(n.author || '-') + '</td>' +
+      '<td class="title-cell" onclick="openNoticeDetail(\'' + escAttr(n.id) + '\')">' + esc(n.title || '-') + '</td>' +
+      '<td>' + esc(shortContent || '-') + '</td>' +
+    '</tr>';
+  }).join('');
+  return '<table class="notice-table' + modeClass + '"><thead><tr>' + checkHead +
+    renderNoticeSortableThP15_('작성일자', 'createdDate') +
+    renderNoticeSortableThP15_('작성자', 'author') +
+    renderNoticeSortableThP15_('제목', 'title') +
+    renderNoticeSortableThP15_('내용', 'content') +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function toggleNoticeHeaderSortP15_(key) {
+  key = String(key || '').trim();
+  if (!key) return;
+  noticeSortDirP15 = noticeSortKeyP15 === key && noticeSortDirP15 === 'asc' ? 'desc' : 'asc';
+  noticeSortKeyP15 = key;
+  if (noticeListCache && noticeListCache.length) renderNoticeTable(noticeListCache);
+  else loadNoticeTable();
+}
+
+function renderNoticeSortableThP15_(label, key) {
+  return makePortalSortableThP15_(label, key, noticeSortKeyP15, noticeSortDirP15, 'toggleNoticeHeaderSortP15_', '');
+}
+
+function openNoticeDetail(id) {
+  currentNoticeId = id;
+  const cached = noticeCacheById[String(id || '')];
+  if (cached) {
+    showNoticeDetailModal(cached);
+    return;
+  }
+
+  // 캐시에 없는 예외 상황만 서버 조회합니다. 일반 클릭은 목록 로딩 때 받은 내용으로 즉시 팝업을 띄웁니다.
+  const body = document.getElementById('noticeDetailBody');
+  if (body) body.innerHTML = '<div class="loading">공지 상세를 불러오는 중입니다.</div>';
+  document.getElementById('noticeDetailBackdrop').style.display = 'flex';
+  google.script.run
+    .withSuccessHandler(function(notice){
+      if (notice && notice.id) noticeCacheById[String(notice.id)] = notice;
+      showNoticeDetailModal(notice);
+    })
+    .withFailureHandler(showGlobalError)
+    .getPortalNoticeDetail(id);
+}
+
+function showNoticeDetailModal(notice) {
+  currentNoticeId = notice && notice.id || currentNoticeId;
+  const body = document.getElementById('noticeDetailBody');
+  body.innerHTML = '<div class="notice-form-grid">' +
+    '<label>제목</label><div>' + esc(notice.title || '-') + '</div>' +
+    '<label>작성자</label><div>' + esc(notice.author || '-') + '</div>' +
+    '<label>작성일</label><div>' + esc(notice.createdDate || notice.createdAt || '-') + '</div>' +
+    '<label>내용</label><div class="notice-content-box">' + esc(notice.content || '') + '</div>' +
+    '</div>' +
+    '<div class="notice-confirmers"><b>확인자</b>: ' + esc(notice.confirmers || '아직 확인자가 없습니다.') + '</div>';
+  document.getElementById('noticeDetailBackdrop').style.display = 'flex';
+}
+
+function closeNoticeDetailModal() {
+  document.getElementById('noticeDetailBackdrop').style.display = 'none';
+}
+
+function confirmCurrentNotice() {
+  if (!currentNoticeId) return;
+  google.script.run
+    .withSuccessHandler(res => {
+      toast('확인 처리되었습니다.');
+      if (res && res.notice) {
+        noticeCacheById[String(res.notice.id)] = res.notice;
+        showNoticeDetailModal(res.notice);
+      }
+      loadNoticeTable();
+      loadHomeNoticeList();
+    })
+    .withFailureHandler(showGlobalError)
+    .confirmPortalNotice(currentNoticeId);
+}
+
+function openNoticeWriteModal() {
+  if (!canPortal_('canWriteNotice')) return alert('공지사항 작성 권한이 없습니다.');
+  document.getElementById('noticeWriteTitle').value = '';
+  document.getElementById('noticeWriteAuthor').value = (getPortalPermission_().name || getPortalPermission_().displayName || '');
+  document.getElementById('noticeWriteContent').value = '';
+  document.getElementById('noticeWriteDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('noticeWriteBackdrop').style.display = 'flex';
+  setTimeout(() => document.getElementById('noticeWriteTitle').focus(), 60);
+}
+
+function closeNoticeWriteModal() {
+  document.getElementById('noticeWriteBackdrop').style.display = 'none';
+}
+
+function saveNoticeFromModal() {
+  if (!canPortal_('canWriteNotice')) return alert('공지사항 작성 권한이 없습니다.');
+  const payload = {
+    title: document.getElementById('noticeWriteTitle').value,
+    author: document.getElementById('noticeWriteAuthor').value,
+    noticeDate: document.getElementById('noticeWriteDate').value,
+    content: document.getElementById('noticeWriteContent').value
+  };
+  google.script.run
+    .withSuccessHandler(() => {
+      closeNoticeWriteModal();
+      toast('공지사항을 저장했습니다.');
+      loadNoticeTable();
+      loadHomeNoticeList();
+    })
+    .withFailureHandler(showGlobalError)
+    .savePortalNotice(payload);
+}
+
+function handleNoticeDeleteButton() {
+  if (!canPortal_('canDeleteNotice')) return alert('공지사항 삭제 권한이 없습니다.');
+  if (!noticeDeleteMode) {
+    noticeDeleteMode = true;
+    document.body.classList.add('notice-delete-active');
+    document.getElementById('noticeDeleteBtn').textContent = '선택 삭제';
+    loadNoticeTable();
+    return;
+  }
+  const ids = Array.from(document.querySelectorAll('.notice-delete-check:checked')).map(el => el.value);
+  if (!ids.length) {
+    noticeDeleteMode = false;
+    document.body.classList.remove('notice-delete-active');
+    document.getElementById('noticeDeleteBtn').textContent = '삭제하기';
+    loadNoticeTable();
+    return;
+  }
+  if (!confirm('선택한 공지사항을 삭제하시겠습니까?')) return;
+  google.script.run
+    .withSuccessHandler(res => {
+      noticeDeleteMode = false;
+      document.body.classList.remove('notice-delete-active');
+      document.getElementById('noticeDeleteBtn').textContent = '삭제하기';
+      toast((res && res.deletedCount || ids.length) + '건 삭제했습니다.');
+      loadNoticeTable();
+      loadHomeNoticeList();
+    })
+    .withFailureHandler(showGlobalError)
+    .deletePortalNotices(ids);
+}
+</script>

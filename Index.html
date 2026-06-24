@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+    <?!= include('Styles'); ?>
+</head>
+<body>
+  <div class="layout" id="appLayout">
+    <aside class="sidebar" id="sidebar">
+      <button type="button" class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">&lt;&lt;</button>
+      <div class="brand">S1 Sales Portal<small>정보통신 유지보수 영업전산</small></div>
+      <div class="nav-item active" data-page="home" onclick="switchPage('home')"><span class="nav-icon">⌂</span><span class="nav-label">Home</span></div>
+      <div class="nav-item" data-page="notices" onclick="switchPage('notices')"><span class="nav-icon">!</span><span class="nav-label">공지사항</span></div>
+      <div class="nav-item" data-page="customers" onclick="switchPage('customers')"><span class="nav-icon">⌕</span><span class="nav-label">고객 상세 검색</span></div>
+      <div class="nav-item" data-page="favorites" onclick="switchPage('favorites')"><span class="nav-icon">★</span><span class="nav-label">고객 즐겨찾기</span></div>
+      <div class="nav-item" data-page="contracts" onclick="switchPage('contracts')"><span class="nav-icon">▤</span><span class="nav-label">계약종합관리</span></div>
+      <div class="nav-item" data-page="send" onclick="switchPage('send')"><span class="nav-icon">✉</span><span class="nav-label">견적/자료 발송</span></div>
+      <div class="nav-item" data-page="support" onclick="switchPage('support')"><span class="nav-icon">▣</span><span class="nav-label">영업지원 요청</span></div>
+      <div class="nav-item" data-page="activityLog" onclick="switchPage('activityLog')"><span class="nav-icon">◷</span><span class="nav-label">작업로그</span></div>
+      <div class="nav-item" data-page="today" onclick="switchPage('today')"><span class="nav-icon">✓</span><span class="nav-label">오늘 할 일</span></div>
+      <div class="nav-item" data-page="settings" onclick="switchPage('settings')"><span class="nav-icon">⚙</span><span class="nav-label">설정</span></div>
+      <div class="support-work-hint" id="supportWorkHint" style="display:none;"></div>
+      <div class="sidebar-company">시큐리티홀딩스</div>
+      <div class="sidebar-bottom" onclick="switchPage('settings')">설정</div>
+    </aside>
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <div class="page-title" id="pageTitle">영업전산 HOME</div>
+          <div class="subtitle" id="pageSubtitle">영업 현황 및 공지사항을 볼 수 있습니다.</div>
+        </div>
+        <div class="topbar-right"><div class="current-user-badge" id="currentUserBadge">권한 확인 중</div><div class="badge">MVP v73 · contract detail</div></div>
+      </div>
+
+      <section class="page-section active" id="homeSection">
+        <div class="home-cards">
+          <div class="metric-card"><div class="metric-label">나의 고객</div><div class="metric-value" id="statTotal">-</div></div>
+          <div class="metric-card"><div class="metric-label">견적서 발송</div><div class="metric-value" id="statSent">-</div></div>
+          <div class="metric-card"><div class="metric-label">계약 완료</div><div class="metric-value" id="statCompleted">-</div></div>
+          <div class="metric-card"><div class="metric-label">재확인 필요</div><div class="metric-value" id="statNeedCheck">-</div></div>
+        </div>
+        <div class="portal-grid">
+          <div class="portal-panel">
+            <div class="portal-panel-header">
+              <div><div class="portal-panel-title">공지사항</div><div class="portal-panel-sub">최신 공지 3개가 표시됩니다. 제목을 누르면 세부 내용으로 들어갑니다.</div></div>
+              <button class="secondary" onclick="switchPage('notices')">전체보기</button>
+            </div>
+            <div class="notice-table-wrap" id="homeNoticeArea"><div class="loading">공지사항을 불러오는 중입니다.</div></div>
+            <div class="home-tabs"><div class="home-tab active" onclick="switchPage('notices')">공지사항</div><div class="home-tab">수주현황</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="portal-panel page-section" id="noticeSection">
+        <div class="portal-panel-header page-inner-toolbar-only">
+          <button class="secondary" onclick="loadNoticeTable()">새로고침</button>
+        </div>
+        <div class="notice-table-wrap" id="noticeTableArea"><div class="loading">공지사항을 불러오는 중입니다.</div></div>
+        <div class="notice-delete-hint" id="noticeDeleteHint">삭제할 공지사항을 체크한 뒤 삭제하기를 다시 누르세요.</div>
+        <div class="notice-actions">
+          <button class="btn-blue" id="noticeWriteBtn" onclick="openNoticeWriteModal()">작성하기</button>
+          <button class="btn-red" id="noticeDeleteBtn" onclick="handleNoticeDeleteButton()">삭제하기</button>
+        </div>
+      </section>
+
+      <section class="panel page-section customer-search-panel" id="customerSearchSection">
+        <div class="customer-search-header customer-search-header-no-title">
+          <div class="customer-search-controls customer-search-controls-with-filter">
+            <div id="customerScopeToggle" class="customer-scope-toggle" style="display:none"></div>
+            <div id="customerFilterSummary" class="customer-filter-summary" style="display:none"></div>
+            <input id="keyword" placeholder="회사명, 주소, 전화번호, 담당자, 영업담당자 검색" title="회사명, 주소, 전화번호, 담당자, 영업담당자를 한 번에 검색합니다.">
+            <button onclick="search()" title="현재 검색어와 필터 조건으로 고객 목록을 조회합니다.">검색 <span class="portal-guide-help" title="검색어와 필터 조건으로 고객을 조회합니다.">?</span></button>
+            <button id="customerFilterToggleBtn" class="secondary customer-filter-toggle-btn" onclick="toggleCustomerFilterPanel()" title="진행현황, 담당자, 지역 등 상세 조건을 열고 닫습니다.">필터 <span class="portal-guide-help" title="진행현황, 담당자, 지역 등 상세 조건을 열고 닫습니다.">?</span></button>
+            <button id="customerFilterResetBtn" class="secondary customer-filter-reset-btn" onclick="resetCustomerFilters_()" title="검색어와 필터 조건을 초기화합니다.">초기화 <span class="portal-guide-help" title="검색어와 필터 조건을 초기화합니다.">?</span></button>
+            <button class="secondary" onclick="openNewCustomer()" title="새 고객 정보를 등록합니다. 저장 시 관리등급과 최종견적가가 자동 계산됩니다.">고객 등록 <span class="portal-guide-help" title="새 고객 정보를 등록합니다. 저장 시 관리등급과 최종견적가가 자동 계산됩니다.">?</span></button>
+            <div class="customer-sort-wrap">
+              <button id="customerSortButtonV67" class="secondary customer-sort-button" onclick="toggleCustomerSortMenuV67_(event)" title="고객 목록의 정렬 기준을 선택합니다.">정렬 <span class="portal-guide-help" title="고객 목록의 정렬 기준을 선택합니다.">?</span></button>
+              <div id="customerSortMenuV67" class="customer-sort-menu" style="display:none"></div>
+            </div>
+            <div id="customerTopPager" class="customer-top-pager" style="display:none"></div>
+          </div>
+        </div>
+        <div id="customerFilterPanel" class="customer-filter-panel" style="display:none"></div>
+        <div id="resultArea" class="loading customer-result-area">검색어를 입력하거나 검색 버튼을 눌러주세요.</div>
+      </section>
+
+      <section class="panel page-section customer-favorites-panel" id="customerFavoritesSection">
+        <div class="customer-search-header favorite-search-header customer-search-header-no-title">
+          <div class="customer-search-controls favorite-search-controls">
+            <input id="favoriteKeyword" placeholder="즐겨찾기 고객 검색" onkeydown="if(event.key==='Enter') renderFavoritePage()">
+            <button onclick="renderFavoritePage()">검색</button>
+            <button class="secondary" onclick="refreshFavoriteCustomers(true)">새로고침</button>
+          </div>
+        </div>
+        <div id="favoriteResultArea" class="loading customer-result-area">즐겨찾기 고객을 불러오는 중입니다.</div>
+      </section>
+
+      <section class="panel page-section contract-complete-panel" id="contractCompleteSection">
+        <div class="customer-search-header contract-complete-header customer-search-header-no-title">
+          <div class="customer-search-controls contract-complete-controls">
+            <input id="contractCompleteKeyword" placeholder="계약번호, 고객번호, 고객사명, 담당자, 수행사, 메모 검색" onkeydown="if(event.key==='Enter') searchContractCompletePageV69()">
+            <button onclick="searchContractCompletePageV69()">검색</button>
+            <button class="secondary" onclick="resetContractCompleteSearchV69()">초기화</button>
+            <button class="secondary" onclick="refreshContractCompletePageV69()">새로고침</button>
+          </div>
+        </div>
+        <div id="contractCompleteArea" class="loading customer-result-area">계약종합관리 목록을 불러오는 중입니다.</div>
+      </section>
+
+
+      <section class="portal-panel page-section" id="supportSection">
+        <div class="portal-panel-header page-inner-toolbar-only">
+          <button class="secondary" id="supportInlineResetBtn" onclick="resetSupportInlineEntry()">신규 요청 초기화</button>
+        </div>
+        <div class="support-new-panel" id="supportNewPanel">
+          <div class="support-new-title">신규 요청하기 <span class="portal-guide-help" title="고객번호를 불러온 뒤 요청할 업무를 남기면 요청 이력이 저장됩니다.">?</span></div>
+          <div class="support-inline-area" id="supportInlineArea"><div class="loading">신규 요청 입력행을 준비하는 중입니다.</div></div>
+        </div>
+        <div class="support-existing-title">기존 요청 목록</div>
+        <div class="support-toolbar">
+          <input id="supportKeyword" placeholder="접수번호, 고객명, 고객번호, 요청업무, 처리내용 검색" onkeydown="if(event.key==='Enter') loadSupportPage()">
+          <select id="supportStatusFilter" onchange="loadSupportPage()"><option value="">전체 상태</option></select>
+          <button onclick="loadSupportPage()">검색</button>
+          <button class="secondary" onclick="clearSupportFilter()">초기화</button>
+        </div>
+        <div class="support-table-wrap" id="supportBoardArea"><div class="loading">영업지원 요청을 불러오는 중입니다.</div></div>
+      </section>
+
+      <section class="portal-panel page-section activity-log-section" id="activityLogSection">
+        <div class="portal-panel-header page-inner-toolbar-only">
+          <button class="secondary" onclick="loadActivityLogPage(true)">새로고침</button>
+        </div>
+        <div id="activityLogArea"><div class="loading">작업로그 화면을 준비하는 중입니다.</div></div>
+      </section>
+
+      <section class="page-section" id="todaySection">
+        <div class="today-layout">
+          <div class="today-card">
+            <div class="today-date-head">
+              <div class="today-date-title" id="todayCalendarTitle">달력</div>
+              <div class="today-calendar-nav">
+                <button class="secondary" onclick="shiftTodayCalendar(-1)">&lt;</button>
+                <button class="secondary" onclick="setTodayDate(new Date())">오늘</button>
+                <button class="secondary" onclick="shiftTodayCalendar(1)">&gt;</button>
+              </div>
+            </div>
+            <div id="todayCalendarArea"></div>
+          </div>
+          <div>
+            <div class="today-card">
+              <div class="today-card-title" id="todaySelectedLabel">오늘 할 일</div>
+              <div id="todaySummaryArea" class="today-summary-grid"></div>
+              <div id="todayTodoArea"><div class="loading">할 일을 불러오는 중입니다.</div></div>
+              <div class="today-actions">
+                <button class="secondary" onclick="addTodayTodoRow()">할 일 추가</button>
+                <button onclick="saveTodayTodos()">저장</button>
+              </div>
+            </div>
+            <div class="today-card today-next-list">
+              <div class="today-card-title">컨택 예정 / 다음 액션</div>
+              <div id="todayNextActionArea"><div class="today-muted">선택한 날짜의 컨택 예정 액션이 없습니다.</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel page-section" id="placeholderSection"><div class="placeholder-panel"><div class="placeholder-title" id="placeholderTitle">준비 중</div><div class="placeholder-desc" id="placeholderDesc">이 메뉴는 다음 단계에서 붙일 예정입니다.</div></div></section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal">
+      <div class="modal-header"><div class="modal-title" id="modalTitle">고객 상세</div><button class="secondary" onclick="closeModal()">닫기</button></div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-actions-footer" id="modalActionFooter" style="display:none;">
+        <button class="secondary" id="footerEditDetail" onclick="toggleDetailEdit(true)">정보 수정</button>
+        <button id="footerSaveDetail" onclick="saveDetailFields()" disabled>저장</button>
+        <button class="secondary" id="footerTemp" onclick="toggleTempMemoPanel()">임시메모 추가</button>
+        <button class="secondary" onclick="closeModal()">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="mail-progress-backdrop" id="mailProgressBackdrop">
+    <div class="mail-progress-modal">
+      <div class="mail-progress-header">
+        <div class="mail-progress-title" id="mailProgressTitle">메일 발송중</div>
+        <button type="button" class="mail-progress-close" id="mailProgressTopClose" onclick="closeMailProgressModal()" style="display:none;">닫기</button>
+      </div>
+      <div class="mail-progress-body">
+        <div class="mail-progress-section-title">메일 발송하겠습니다.</div>
+        <div class="mail-progress-summary" id="mailProgressSummary"></div>
+        <div class="mail-progress-card">
+          <div class="mail-progress-message" id="mailProgressMessage">발송 준비 중</div>
+          <div class="progress-track"><div class="progress-bar" id="mailProgressBar"></div></div>
+          <div class="mail-progress-sub" id="mailProgressSub">0% · 경과 0초 · 남은 시간 계산 중</div>
+          <div class="mail-progress-result" id="mailProgressResult"></div>
+        </div>
+      </div>
+      <div class="mail-progress-footer">
+        <button type="button" class="danger" id="mailProgressCancelBtn" onclick="cancelCurrentMailSend()">발송 취소</button>
+      </div>
+    </div>
+  </div>
+
+
+
+  <div class="notice-modal-backdrop" id="noticeDetailBackdrop">
+    <div class="notice-modal">
+      <div class="notice-modal-header"><div class="notice-modal-title">공지사항 상세 보기</div><button class="notice-x" onclick="closeNoticeDetailModal()">X</button></div>
+      <div class="notice-modal-body" id="noticeDetailBody"></div>
+      <div class="notice-modal-footer"><button class="btn-blue" onclick="confirmCurrentNotice()">확인</button><button class="secondary" onclick="closeNoticeDetailModal()">닫기</button></div>
+    </div>
+  </div>
+
+  <div class="notice-modal-backdrop" id="noticeWriteBackdrop">
+    <div class="notice-modal">
+      <div class="notice-modal-header"><div class="notice-modal-title">공지사항 작성하기</div><button class="notice-x" onclick="closeNoticeWriteModal()">X</button></div>
+      <div class="notice-modal-body">
+        <div class="notice-form-grid">
+          <label>제목</label><input id="noticeWriteTitle" placeholder="공지 제목을 입력하세요.">
+          <label>작성자</label><input id="noticeWriteAuthor" placeholder="미입력 시 접속자명 자동 입력">
+          <label>작성일</label><input id="noticeWriteDate" type="date">
+          <label>내용</label><textarea id="noticeWriteContent" placeholder="공지 내용을 입력하세요."></textarea>
+        </div>
+      </div>
+      <div class="notice-modal-footer"><button class="btn-blue" onclick="saveNoticeFromModal()">저장</button><button class="secondary" onclick="closeNoticeWriteModal()">닫기</button></div>
+    </div>
+  </div>
+
+  <div class="contact-modal-backdrop" id="contactHistoryBackdrop">
+    <div class="contact-modal">
+      <div class="contact-modal-header">
+        <div class="contact-modal-title">컨택 이력 추가 <span class="portal-guide-help" title="통화, 문자, 메일 등 고객 접촉 내용을 고객별 이력으로 남깁니다.">?</span></div>
+        <button class="contact-modal-close" onclick="closeContactHistoryModal()">X</button>
+      </div>
+      <div class="contact-modal-body">
+        <div class="contact-form-grid">
+          <div class="contact-form-item">
+            <div class="contact-form-label">몇 차인지 <span class="portal-guide-help" title="고객에게 몇 번째로 연락한 건인지 선택합니다.">?</span></div>
+            <select id="contactRoundSelect"></select>
+          </div>
+          <div class="contact-form-item">
+            <div class="contact-form-label">연락수단</div>
+            <select id="contactMethodSelect"></select>
+          </div>
+          <div class="contact-form-item">
+            <div class="contact-form-label">컨택 일시 <span class="portal-guide-help" title="비워두면 저장 시점의 현재 시간이 자동 기록됩니다.">?</span></div>
+            <input id="contactAtInput" type="datetime-local">
+            <div class="contact-auto-note">자동 기록됩니다. 비워두면 저장 시각으로 저장됩니다.</div>
+          </div>
+          <div class="contact-form-item">
+            <div class="contact-form-label">컨택한 사람</div>
+            <input id="contactAuthorInput" placeholder="기본값: 현재 사용자">
+          </div>
+          <div class="contact-form-item">
+            <div class="contact-form-label">다음 액션 <span class="portal-guide-help" title="후속 전화, 자료 발송, 재확인 등 다음에 해야 할 일을 선택합니다.">?</span></div>
+            <select id="contactNextActionSelect"></select>
+          </div>
+          <div class="contact-form-item">
+            <div class="contact-form-label">다음 액션 월일시간</div>
+            <input id="contactNextAtInput" type="datetime-local">
+          </div>
+          <div class="contact-form-item wide contact-content-item">
+            <div class="contact-form-label">컨택 내용 <span class="portal-guide-help" title="태그만 선택해도 저장할 수 있고, 필요한 내용을 뒤에 추가로 적을 수 있습니다.">?</span></div>
+            <div class="contact-quick-tags" id="contactQuickTagPanel"></div>
+            <textarea id="contactContentInput" placeholder="예: 견적서 보내달라고 함"></textarea>
+          </div>
+          <div class="contact-form-item wide">
+            <div class="contact-form-label">다음 액션 내용 / 비고</div>
+            <textarea id="contactNextMemoInput" placeholder="예: 견적서 발송 후 전화하기"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="contact-modal-footer">
+        <button class="secondary" onclick="closeContactHistoryModal()">닫기</button>
+        <button id="contactSaveBtn" onclick="saveContactHistoryFromModal()">저장</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="support-modal-backdrop" id="supportRequestBackdrop">
+    <div class="support-modal">
+      <div class="support-modal-header">
+        <div class="support-modal-title" id="supportModalTitle">영업지원 요청 추가</div>
+        <button class="support-modal-close" onclick="closeSupportRequestModal()">X</button>
+      </div>
+      <div class="support-modal-body" id="supportModalBody">
+        <div class="support-form-grid">
+          <div class="support-form-item">
+            <div class="support-form-label">접수번호</div>
+            <input id="supportReceiptNo" disabled placeholder="자동">
+          </div>
+          <div class="support-form-item">
+            <div class="support-form-label">업무유형</div>
+            <select id="supportRequestType"></select>
+          </div>
+          <div class="support-form-item">
+            <div class="support-form-label">요청자</div>
+            <input id="supportRequester" placeholder="요청자명">
+          </div>
+          <div class="support-form-item">
+            <div class="support-form-label">고객번호 / 고객명 검색 <span class="portal-guide-help" title="고객번호 또는 고객명을 입력한 뒤 불러오기/검색으로 기본 정보를 채웁니다.">?</span></div>
+            <div class="support-customer-line">
+              <input id="supportCustomerNo" placeholder="고객번호 또는 고객명">
+              <button class="secondary" onclick="lookupSupportCustomer()">불러오기</button>
+              <button class="secondary" onclick="searchSupportCustomerCandidates()">검색</button>
+            </div>
+            <div class="support-search-results" id="supportCustomerSearchResults"></div>
+          </div>
+
+          <div class="support-section-title">고객 기본 정보</div>
+          <div class="support-form-item"><div class="support-form-label">고객명</div><input id="supportCustomerName"></div>
+          <div class="support-form-item"><div class="support-form-label">할인율</div><input id="supportDiscountRate"></div>
+          <div class="support-form-item"><div class="support-form-label">견적금액</div><input id="supportQuoteAmount"></div>
+          <div class="support-form-item"><div class="support-form-label">연면적</div><input id="supportArea"></div>
+          <div class="support-form-item"><div class="support-form-label">지역</div><input id="supportRegion"></div>
+          <div class="support-form-item"><div class="support-form-label">담당자 이름</div><input id="supportContactName"></div>
+          <div class="support-form-item half"><div class="support-form-label">담당자 이메일</div><input id="supportContactEmail"></div>
+          <div class="support-form-item wide"><div class="support-form-label">마스터시트 메모 <span class="support-muted">서무 참고용 / 여기서 수정해도 마스터시트에는 반영 안 됨</span></div><textarea id="supportMasterMemo" disabled></textarea></div>
+
+          <div class="support-section-title">요청 내용 <span class="portal-guide-help" title="서무/관리자가 처리해야 할 견적 수정, 자료 발송, 계약서류 요청 등을 적습니다.">?</span></div>
+          <div class="support-form-item wide"><div class="support-form-label">요청업무</div><textarea id="supportRequestText" placeholder="요청할 내용을 구체적으로 입력하세요."></textarea></div>
+
+          <div class="support-section-title">서무 처리 내용</div>
+          <div class="support-form-item"><div class="support-form-label">처리자</div><input id="supportHandler" placeholder="처리자명"></div>
+          <div class="support-form-item"><div class="support-form-label">진행 상태</div><select id="supportStatus"></select></div>
+          <div class="support-form-item"><div class="support-form-label">완료 시각</div><input id="supportCompletedAt" placeholder="예: 26-06-17 14:30"></div>
+          <div class="support-form-item"><div class="support-form-label">자동발송 확인</div><input id="supportAutoSendCheck" placeholder="필요 시 입력"></div>
+          <div class="support-form-item wide"><div class="support-form-label">처리내용</div><textarea id="supportProcessContent" placeholder="서무 처리 후 처리내용을 입력하세요."></textarea></div>
+        </div>
+      </div>
+      <div class="support-modal-footer">
+        <button class="secondary" id="supportCompleteNowBtn" onclick="setSupportCompletedNow()">완료시각 현재</button>
+        <button class="secondary" onclick="closeSupportRequestModal()">닫기</button>
+        <button id="supportSaveBtn" onclick="saveSupportRequestFromModal()">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <?!= include('Client_Utils'); ?>
+  <?!= include('Client_State'); ?>
+  <?!= include('Client_Router'); ?>
+  <?!= include('Component_Home'); ?>
+  <?!= include('Component_Notice'); ?>
+  <?!= include('Component_CustomerSearch'); ?>
+  <?!= include('Component_Favorites'); ?>
+  <?!= include('Component_ContractComplete'); ?>
+  <?!= include('Component_Send'); ?>
+  <?!= include('Component_CustomerDetail'); ?>
+  <?!= include('Component_Support'); ?>
+  <?!= include('Component_Today'); ?>
+  <?!= include('Component_ActivityLog'); ?>
+  <?!= include('Component_Modals'); ?>
+</body>
+</html>

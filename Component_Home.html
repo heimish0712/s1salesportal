@@ -1,0 +1,194 @@
+<script>
+const HOME_CACHE_STORAGE_KEY_V77_BASE = 'portalHomeCache:v77';
+let homeLoadInFlightV77 = false;
+let homeRefreshInFlightV77 = false;
+let homeLastLoadStartedAtV77 = 0;
+let homeLastRefreshStartedAtV77 = 0;
+
+function loadDashboard(options) {
+  options = options || {};
+
+  // 권한별 집계이므로 권한 확인 전의 낡은 공용 캐시는 렌더링하지 않습니다.
+  if (!options.skipLocal) {
+    renderHomeFromLocalCacheV77_();
+  }
+
+  const now = Date.now();
+  if (homeLoadInFlightV77 || (!options.force && now - homeLastLoadStartedAtV77 < 1500)) {
+    return;
+  }
+  homeLoadInFlightV77 = true;
+  homeLastLoadStartedAtV77 = now;
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      homeLoadInFlightV77 = false;
+      applyHomeDataV77_(data, true);
+      scheduleDashboardRefreshV77_(data && data.dashboard);
+    })
+    .withFailureHandler(function(err) {
+      homeLoadInFlightV77 = false;
+      renderHomeLoadSoftErrorV77_(err);
+    })
+    .getPortalHomeData();
+}
+
+function applyHomeDataV77_(data, saveCache) {
+  data = data || {};
+  const dashboard = data.dashboard || data;
+  renderDashboardStatsV77_(dashboard);
+
+  if (Array.isArray(data.notices)) {
+    renderHomeNoticeList(data.notices);
+  } else if (!homeNoticeCache || !homeNoticeCache.length) {
+    loadHomeNoticeList();
+  }
+
+  if (saveCache) saveHomeCacheV77_(data);
+}
+
+function renderDashboardStatsV77_(dashboard) {
+  dashboard = dashboard || {};
+  const cards = Array.isArray(dashboard.cards) && dashboard.cards.length
+    ? dashboard.cards.slice(0, 4)
+    : [
+        { label: '고객', value: dashboard.total },
+        { label: '오늘 할 일', value: dashboard.sent },
+        { label: '계약 완료', value: dashboard.completed },
+        { label: '재확인 필요', value: dashboard.needCheck }
+      ];
+
+  while (cards.length < 4) cards.push({ label: '-', value: '-' });
+
+  const valueIds = ['statTotal', 'statSent', 'statCompleted', 'statNeedCheck'];
+  const labelEls = getHomeMetricLabelElementsV77_();
+
+  cards.forEach(function(card, idx) {
+    const valueEl = document.getElementById(valueIds[idx]);
+    if (valueEl) valueEl.textContent = normalizeHomeMetricTextV77_(card.value);
+    if (labelEls[idx]) labelEls[idx].textContent = String(card.label || '-');
+  });
+}
+
+function getHomeMetricLabelElementsV77_() {
+  const section = document.getElementById('homeSection');
+  if (!section) return [];
+  return Array.from(section.querySelectorAll('.home-cards .metric-card .metric-label'));
+}
+
+function normalizeHomeMetricTextV77_(value) {
+  if (value === undefined || value === null || value === '') return '-';
+  return String(value);
+}
+
+function renderHomeFromLocalCacheV77_() {
+  // 권한 로딩 전에는 admin/sales 캐시가 섞일 수 있으므로 local cache를 사용하지 않습니다.
+  if (typeof portalPermissionLoadedV63 !== 'undefined' && !portalPermissionLoadedV63) return false;
+
+  const cached = readHomeCacheV77_();
+  if (!cached) return false;
+  applyHomeDataV77_(cached, false);
+  return true;
+}
+
+
+function isHomeAllScopeByPermissionV78_(p) {
+  p = p || {};
+  // PATCH P1-15: 고객 전체열람권한과 HOME 관리자형 대시보드 권한을 분리합니다.
+  return !!(p.active !== false && p.canUseAdminHome);
+}
+
+function getHomeCacheKeyV77_(dashboard) {
+  if (dashboard && dashboard.clientCacheKey) return String(dashboard.clientCacheKey);
+
+  try {
+    if (typeof getPortalPermission_ === 'function') {
+      const p = getPortalPermission_();
+      if (p && p.active !== false) {
+        const allScope = isHomeAllScopeByPermissionV78_(p);
+        const scope = allScope ? 'ALL_ADMIN' : ('OWN_' + (p.salesRepName || p.name || p.email || 'USER'));
+        return HOME_CACHE_STORAGE_KEY_V77_BASE + ':' + scope.replace(/[^A-Za-z0-9가-힣_]+/g, '_');
+      }
+    }
+  } catch (err) {}
+
+  return HOME_CACHE_STORAGE_KEY_V77_BASE + ':UNKNOWN';
+}
+
+function readHomeCacheV77_() {
+  try {
+    const raw = localStorage.getItem(getHomeCacheKeyV77_());
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object') return null;
+    return obj;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveHomeCacheV77_(data) {
+  try {
+    const dashboard = data && data.dashboard ? data.dashboard : null;
+    const slim = {
+      dashboard: dashboard,
+      notices: Array.isArray(data && data.notices) ? data.notices.slice(0, 3) : [],
+      savedAt: new Date().toISOString()
+    };
+    localStorage.setItem(getHomeCacheKeyV77_(dashboard), JSON.stringify(slim));
+  } catch (err) {}
+}
+
+function scheduleDashboardRefreshV77_(dashboard) {
+  dashboard = dashboard || {};
+  const now = Date.now();
+  const needsRefresh = dashboard.needsRefresh || dashboard.initializing || dashboard.total === '-' || !dashboard.cachedAt;
+  if (!needsRefresh && now - homeLastRefreshStartedAtV77 < 5 * 60 * 1000) return;
+  if (homeRefreshInFlightV77) return;
+
+  homeRefreshInFlightV77 = true;
+  homeLastRefreshStartedAtV77 = now;
+
+  setTimeout(function() {
+    google.script.run
+      .withSuccessHandler(function(freshDashboard) {
+        homeRefreshInFlightV77 = false;
+        if (freshDashboard) {
+          const cached = readHomeCacheV77_() || {};
+          cached.dashboard = freshDashboard;
+          saveHomeCacheV77_(cached);
+          renderDashboardStatsV77_(freshDashboard);
+        }
+      })
+      .withFailureHandler(function(err) {
+        homeRefreshInFlightV77 = false;
+        console.warn('대시보드 백그라운드 갱신 실패', err);
+      })
+      .refreshPortalDashboardCache();
+  }, 400);
+}
+
+function renderHomeLoadSoftErrorV77_(err) {
+  console.warn('HOME 데이터 조회 실패', err);
+  const hasCached = renderHomeFromLocalCacheV77_();
+  if (!hasCached) {
+    renderDashboardStatsV77_({
+      cards: [
+        { label: '고객', value: '-' },
+        { label: '오늘 할 일', value: '-' },
+        { label: '계약 완료', value: '-' },
+        { label: '재확인 필요', value: '-' }
+      ]
+    });
+  }
+}
+
+// 기존 코드/다른 컴포넌트에서 참조할 수 있는 구버전 함수명 호환 alias
+function renderDashboardStatsV46_(dashboard) { return renderDashboardStatsV77_(dashboard); }
+function applyHomeDataV46_(data, saveCache) { return applyHomeDataV77_(data, saveCache); }
+function renderHomeFromLocalCacheV46_() { return renderHomeFromLocalCacheV77_(); }
+function readHomeCacheV46_() { return readHomeCacheV77_(); }
+function saveHomeCacheV46_(data) { return saveHomeCacheV77_(data); }
+function scheduleDashboardRefreshV46_(dashboard) { return scheduleDashboardRefreshV77_(dashboard); }
+function renderHomeLoadSoftErrorV46_(err) { return renderHomeLoadSoftErrorV77_(err); }
+</script>

@@ -1,0 +1,2839 @@
+<script>
+function search() { closeCustomerSortMenuV67_(); renderCustomerScopeToggleP04_(); searchCustomerPage(0); }
+function resetSearch() {
+  const input = document.getElementById('keyword');
+  if (input) input.value = '';
+  customerFilterStateP = {};
+  customerSortModeV67 = CUSTOMER_SORT_DEFAULT_V67;
+  renderCustomerFilterPanel_();
+  updateCustomerFilterSummary_();
+  renderCustomerSortMenuV67_();
+  renderCustomerScopeToggleP04_();
+  searchCustomerPage(0);
+}
+
+// PATCH P: 고객상세검색 필터 상태
+// - 필터 UI는 고객상세검색 화면에 남아 있으며 메뉴 이동으로 초기화되지 않습니다.
+// - 체크박스를 켠 필터만 활성화되고, 검색 버튼을 눌렀을 때 조건이 적용됩니다.
+let customerFilterPanelOpenP = false;
+let customerFilterStateP = {};
+let customerFilterWaitTimerP = null;
+let customerFilterInitializedP = false;
+
+// PATCH P0-4: 고객 상세 검색 조회 범위(전체 고객 / 나의 고객) 토글
+// 권한이 없는 사용자는 항상 나의 고객 범위만 사용합니다.
+let customerScopeModeP04 = '';
+let customerHeaderSortKeyP15 = '';
+let customerHeaderSortDirP15 = 'asc';
+
+function getCustomerScopeCanViewAllP04_() {
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  return !!(p && p.active !== false && (p.canViewAllCustomers || p.isAdmin || p.level === 'ADMIN'));
+}
+
+function getEffectiveCustomerScopeP04_() {
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  if (!p || p.active === false) return 'OWN';
+  if (!getCustomerScopeCanViewAllP04_()) return 'OWN';
+  const current = String(customerScopeModeP04 || '').toUpperCase();
+  if (current === 'ALL' || current === 'OWN') return current;
+  const defaultScope = String(p.defaultScope || '').toUpperCase();
+  return defaultScope === 'OWN' ? 'OWN' : 'ALL';
+}
+
+function getCustomerScopeForRequestP04_() {
+  return getEffectiveCustomerScopeP04_();
+}
+
+function renderCustomerScopeToggleP04_() {
+  const el = document.getElementById('customerScopeToggle');
+  if (!el) return;
+  if (!portalPermissionLoadedV63) {
+    el.style.display = 'none';
+    return;
+  }
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  if (!p || p.active === false) {
+    el.style.display = 'none';
+    return;
+  }
+  const canAll = getCustomerScopeCanViewAllP04_();
+  const scope = getEffectiveCustomerScopeP04_();
+  const allDisabled = canAll ? '' : ' disabled';
+  el.innerHTML = '' +
+    '<button type="button" title="권한 범위 내 전체 고객을 조회합니다." class="customer-scope-btn ' + (scope === 'ALL' ? 'active' : '') + '"' + allDisabled + ' onclick="setCustomerScopeModeP04_(\'ALL\')">전체 고객</button>' +
+    '<button type="button" title="현재 로그인한 담당자에게 배정된 고객만 표시합니다." class="customer-scope-btn ' + (scope === 'OWN' ? 'active' : '') + '" onclick="setCustomerScopeModeP04_(\'OWN\')">나의 고객</button>';
+  el.style.display = 'inline-flex';
+  el.classList.toggle('only-own', !canAll);
+}
+
+function setCustomerScopeModeP04_(scope) {
+  scope = String(scope || '').toUpperCase() === 'ALL' ? 'ALL' : 'OWN';
+  if (scope === 'ALL' && !getCustomerScopeCanViewAllP04_()) scope = 'OWN';
+  const prev = getEffectiveCustomerScopeP04_();
+  customerScopeModeP04 = scope;
+  renderCustomerScopeToggleP04_();
+  if (prev !== getEffectiveCustomerScopeP04_()) {
+    customerPageMemoryCache = {};
+    try { Object.keys(sessionStorage || {}).forEach(function(k) { if (String(k).indexOf('portalCustomerPage:') === 0) sessionStorage.removeItem(k); }); } catch (err) {}
+  }
+  searchCustomerPage(0);
+}
+
+function isCustomerRowOwnedByCurrentUserP04_(row) {
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  if (!p || p.active === false) return false;
+  const salesRep = normalizePortalPermissionTextClient_(row && (row.salesRep || row['영업담당자'] || row.salesRepName || ''));
+  const aliases = splitPortalPermissionAliasesClient_((p.salesRepName || '') || (p.name || ''));
+  if (!salesRep || !aliases.length) return false;
+  return aliases.some(function(alias) {
+    const a = normalizePortalPermissionTextClient_(alias);
+    return a && (salesRep === a || salesRep.indexOf(a) >= 0 || a.indexOf(salesRep) >= 0);
+  });
+}
+
+function filterCustomerRowsByCustomerScopeP04_(rows) {
+  rows = filterCustomerRowsByPermissionClient_(Array.isArray(rows) ? rows : []);
+  if (getEffectiveCustomerScopeP04_() !== 'OWN') return rows;
+  return rows.filter(isCustomerRowOwnedByCurrentUserP04_);
+}
+
+const CUSTOMER_FILTER_DEFS_P = [
+  { section:'고객사 기본 정보', key:'customerNo', label:'고객번호', type:'range' },
+  { section:'고객사 기본 정보', key:'company', label:'회사명', type:'text' },
+  { section:'고객사 기본 정보', key:'salesRep', label:'영업담당자', type:'select' },
+  { section:'고객사 기본 정보', key:'status', label:'진행현황', type:'select' },
+  { section:'고객사 기본 정보', key:'customerRank', label:'고객등급', type:'select', options:['A급','B급','C급','보류','제외'] },
+  { section:'고객사 기본 정보', key:'contact', label:'담당자', type:'text' },
+  { section:'고객사 기본 정보', key:'phone', label:'대표전화번호', type:'text' },
+  { section:'고객사 기본 정보', key:'directPhone', label:'직통번호', type:'text' },
+  { section:'고객사 기본 정보', key:'email', label:'이메일 주소', type:'text' },
+  { section:'고객사 기본 정보', key:'address', label:'고객사 상세 주소', type:'text' },
+
+  { section:'상세 계약조건', key:'area', label:'연면적', type:'range' },
+  { section:'상세 계약조건', key:'grade', label:'관리등급', type:'select' },
+  { section:'상세 계약조건', key:'buildingType', label:'건물 유형', type:'select' },
+  { section:'상세 계약조건', key:'contractUnit', label:'계약단위', type:'select' },
+  { section:'상세 계약조건', key:'appointment', label:'관리자 선임 여부', type:'select' },
+  { section:'상세 계약조건', key:'maintenance', label:'유지점검', type:'select' },
+  { section:'상세 계약조건', key:'performance', label:'성능점검', type:'select' },
+  { section:'상세 계약조건', key:'vat', label:'부가세', type:'select' },
+  { section:'상세 계약조건', key:'discountRate', label:'할인율', type:'range' },
+  { section:'상세 계약조건', key:'finalQuote', label:'최종 견적가', type:'range' },
+  { section:'상세 계약조건', key:'specialTerms', label:'용역신청서특약사항', type:'text' },
+
+  { section:'서류 수취 여부', key:'businessRegistrationReceived', label:'사업자등록증', type:'select', options:['O','X'] },
+  { section:'서류 수취 여부', key:'serviceApplicationReceived', label:'용역신청서', type:'select', options:['O','X'] },
+  { section:'서류 수취 여부', key:'appointmentReportReceived', label:'선임신고서', type:'select', options:['O','X'] },
+
+  { section:'사업자등록증 정보', key:'businessNo', label:'사업자등록번호', type:'text' },
+  { section:'사업자등록증 정보', key:'businessLegalName', label:'법인명', type:'text' },
+  { section:'사업자등록증 정보', key:'representativeName', label:'대표자명', type:'text' }
+];
+
+function searchCustomerPage(page) {
+  ensureCustomerFilterUi_();
+  renderCustomerScopeToggleP04_();
+  hideCustomerTopPager_();
+  if (!portalPermissionLoadedV63) {
+    resultArea.innerHTML = '<div class="loading">사용자 권한을 확인하는 중입니다...</div>';
+    loadPortalCurrentPermission_({ silent: true }, function() { searchCustomerPage(page); });
+    return;
+  }
+  const keywordValue = String((document.getElementById('keyword') && document.getElementById('keyword').value) || '').trim();
+  customerSearchState = { keyword: keywordValue, page: Math.max(0, Number(page) || 0), scope: getEffectiveCustomerScopeP04_() };
+  updateCustomerFilterSummary_();
+  resultArea.innerHTML = '<div class="loading">고객 데이터를 불러오는 중입니다...<br><span class="cache-note">검색인덱스_DB를 먼저 조회하고 상세정보는 뒤에서 준비합니다.</span></div>';
+  initializeCustomerSearchIndex({ silent: true, useLocalFirst: true });
+
+  if (hasActiveCustomerFilterConditions_() && !(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows))) {
+    waitCustomerFilterIndexThenSearch_(keywordValue, customerSearchState.page);
+    return;
+  }
+
+  fetchCustomerPage_(keywordValue, customerSearchState.page, function(res, fromCache) {
+    renderResults(res, fromCache);
+    scheduleCustomerPrefetch_(keywordValue, customerSearchState.page + 1, 4);
+    scheduleDetailPrefetchFromResult_(res, keywordValue, customerSearchState.page);
+  }, showSearchError);
+}
+
+function renderResults(response, fromCache) {
+  const res = normalizePagedResponse_(response);
+  lastCustomerResultResponse = res;
+  lastCustomerResultFromCache = !!fromCache;
+  updateCustomerTopPager_(res, fromCache);
+  renderCustomerScopeToggleP04_();
+  ensureCustomerFilterUi_();
+  updateCustomerFilterSummary_();
+
+  const rows = res.rows || [];
+  if (!rows.length) {
+    resultArea.innerHTML = '<div class="loading">검색 결과가 없습니다.</div>' + renderPagerHtml_(res, 'searchCustomerPage', fromCache);
+    return;
+  }
+
+  let html = '<div class="customer-table-scroll"><table class="customer-result-table"><colgroup>';
+  html += '<col style="width:38px">';
+  CUSTOMER_RESULT_TABLE.columns.forEach(function(col) {
+    html += '<col style="width:' + escAttr(col.width || 'auto') + '">';
+  });
+  html += '<col style="width:' + escAttr(CUSTOMER_RESULT_TABLE.actionWidth || '76px') + '">';
+  html += '</colgroup><thead><tr>';
+  html += '<th class="customer-favorite-head"></th>';
+  CUSTOMER_RESULT_TABLE.columns.forEach(function(col) {
+    html += renderCustomerSearchSortableThP15_(col);
+  });
+  html += '<th></th></tr></thead><tbody>';
+
+  rows.forEach(function(r) {
+    const rowNo = Number(r.rowNo) || 0;
+    const isExpanded = customerExpandedRowNo === rowNo;
+    html += '<tr class="customer-main-row' + (isExpanded ? ' customer-expanded' : '') + '" data-row-no="' + rowNo + '">';
+    html += renderCustomerFavoriteCell_(r);
+    CUSTOMER_RESULT_TABLE.columns.forEach(function(col) {
+      html += renderCustomerResultCell_(r, col);
+    });
+    html += '<td><div class="customer-actions">' +
+      '<button type="button" class="customer-row-btn primary" onclick="event.stopPropagation(); openDetailSafe_(' + rowNo + ')">상세</button>' +
+      '<button type="button" class="customer-row-btn" onclick="event.stopPropagation(); openSendForCustomer(' + rowNo + ')">발송</button>' +
+      '<button type="button" class="customer-row-btn customer-row-expand-btn" title="상세 펼침/접기" onclick="event.stopPropagation(); toggleCustomerExpand(' + rowNo + ')">' + (isExpanded ? '▲' : '▼') + '</button>' +
+      '</div></td>';
+    html += '</tr>';
+
+    if (isExpanded) {
+      const colspan = CUSTOMER_RESULT_TABLE.columns.length + 2;
+      html += '<tr class="customer-expand-row" id="customerExpandRow_' + rowNo + '"><td colspan="' + colspan + '">' + renderCustomerExpandedContent_(rowNo, r) + '</td></tr>';
+    }
+  });
+
+  html += '</tbody></table></div>' + renderPagerHtml_(res, 'searchCustomerPage', fromCache);
+  resultArea.innerHTML = html;
+  bindCustomerResultInlineEditDelegationP1F_();
+  applyPendingSupportCustomerOpenV64_(rows);
+}
+
+
+function applyPendingSupportCustomerOpenV64_(rows) {
+  const pending = pendingSupportCustomerOpenV64;
+  if (!pending) return;
+  rows = Array.isArray(rows) ? rows : [];
+  const wantNo = normalizeCustomerNoForKey_(pending.customerNo || '');
+  const wantName = String(pending.customerName || '').replace(/\s+/g, '').toLowerCase();
+  let hit = null;
+  if (wantNo) {
+    hit = rows.find(function(r) { return normalizeCustomerNoForKey_(r && r.customerNo) === wantNo; }) || null;
+  }
+  if (!hit && wantName) {
+    hit = rows.find(function(r) { return String(r && r.company || '').replace(/\s+/g, '').toLowerCase().indexOf(wantName) >= 0; }) || null;
+  }
+  if (!hit) return;
+
+  pendingSupportCustomerOpenV64 = null;
+  const rowNo = Number(hit.rowNo) || 0;
+  if (!rowNo) return;
+  if (customerExpandedRowNo !== rowNo) {
+    customerExpandedRowNo = rowNo;
+    renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+    return;
+  }
+  setTimeout(function() {
+    const el = document.getElementById('customerExpandRow_' + rowNo) || document.querySelector('[data-row-no="' + rowNo + '"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 120);
+}
+
+
+// PATCH P0-1F: 고객 상세 검색 목록 인라인 수정 이벤트를 일회성 inline handler가 아니라
+// resultArea 위임 방식으로도 받습니다. 행이 저장/재렌더링된 뒤에도 진행현황/전화번호/메모를 계속 수정할 수 있게 보강합니다.
+let customerInlineEditDelegateBoundP1F_ = false;
+function bindCustomerResultInlineEditDelegationP1F_() {
+  if (customerInlineEditDelegateBoundP1F_) return;
+  customerInlineEditDelegateBoundP1F_ = true;
+  const targets = [document.getElementById('resultArea'), document.getElementById('favoriteResultArea')].filter(Boolean);
+  targets.forEach(function(target) {
+    if (target.getAttribute('data-inline-edit-delegated-p15') === 'Y') return;
+    target.setAttribute('data-inline-edit-delegated-p15', 'Y');
+    target.addEventListener('dblclick', function(e) {
+      handleCustomerResultDelegatedDblClick_(e);
+    }, true);
+  });
+}
+
+function bindFavoriteCustomerInlineEditDelegationP15_() {
+  const prev = customerInlineEditDelegateBoundP1F_;
+  customerInlineEditDelegateBoundP1F_ = false;
+  bindCustomerResultInlineEditDelegationP1F_();
+  customerInlineEditDelegateBoundP1F_ = true || prev;
+}
+
+function getCustomerHeaderSortInfoP15_() {
+  const m = String(customerSortModeV67 || '').match(/^header:([^:]+):(asc|desc)$/);
+  return m ? { key: m[1], dir: m[2] } : { key: '', dir: 'asc' };
+}
+
+function renderCustomerSearchSortableThP15_(col) {
+  col = col || {};
+  const info = getCustomerHeaderSortInfoP15_();
+  return makePortalSortableThP15_(col.label || col.key, col.key || '', info.key, info.dir, 'toggleCustomerSearchHeaderSortP15_', '');
+}
+
+function toggleCustomerSearchHeaderSortP15_(key) {
+  key = String(key || '').trim();
+  if (!key) return;
+  const info = getCustomerHeaderSortInfoP15_();
+  const dir = info.key === key && info.dir === 'asc' ? 'desc' : 'asc';
+  customerHeaderSortKeyP15 = key;
+  customerHeaderSortDirP15 = dir;
+  customerSortModeV67 = 'header:' + key + ':' + dir;
+  closeCustomerSortMenuV67_();
+  renderCustomerSortMenuV67_();
+  searchCustomerPage(0);
+}
+
+function renderCustomerResultCell_(row, col) {
+  const key = col.key || '';
+  const rawValue = row && row[key] != null ? row[key] : '';
+  let value = disp(rawValue);
+  let title = value;
+
+  if (key === 'memo') {
+    value = shortenCustomerMemo_(value, CUSTOMER_RESULT_TABLE.memoMaxLength || 90);
+  }
+
+  let className = col.className || '';
+  if (col.align === 'center') className += ' customer-cell-center';
+  if (col.align === 'right') className += ' customer-cell-right';
+
+  const rowNo = Number(row && row.rowNo) || 0;
+  const editableKeys = { status: true, phone: true, memo: true };
+  const expandKeys = { customerNo: true, salesRep: true, company: true };
+
+  if (editableKeys[key]) className += ' customer-inline-editable customer-inline-editable-' + key;
+  if (expandKeys[key]) className += ' customer-expand-trigger-cell';
+
+  let valueHtml;
+  if (key === 'status') {
+    valueHtml = renderStatusChip_(value);
+  } else {
+    valueHtml = esc(value);
+  }
+
+  let inner = valueHtml;
+  if (editableKeys[key]) {
+    inner = '<span class="customer-inline-text-trigger" title="이 글자를 더블클릭하면 바로 수정합니다.">' + valueHtml + '</span>';
+  } else if (expandKeys[key]) {
+    inner = '<span class="customer-expand-text-trigger" title="더블클릭하면 고객 상세 정보가 아래로 펼쳐집니다.">' + valueHtml + '</span>';
+  }
+
+  let titleText = title;
+  if (editableKeys[key]) {
+    titleText = title + '\n\n글자 부분을 더블클릭하면 이 칸에서 바로 수정할 수 있습니다. 빈 공간을 더블클릭하면 상세가 펼쳐집니다.';
+  } else if (expandKeys[key]) {
+    titleText = title + '\n\n더블클릭하면 고객 상세 정보가 아래로 펼쳐집니다.';
+  } else {
+    titleText = title + '\n\n빈 공간을 더블클릭하면 고객 상세 정보가 아래로 펼쳐집니다.';
+  }
+
+  return '<td class="' + escAttr(className.trim()) + '" title="' + escAttr(titleText) + '" data-row-no="' + rowNo + '" data-key="' + escAttr(key) + '">' + inner + '</td>';
+}
+
+function handleCustomerResultDelegatedDblClick_(event) {
+  const target = event && event.target ? event.target : null;
+  if (!target || (target.closest && target.closest('.customer-inline-editor'))) return;
+  const cell = target.closest ? target.closest('td[data-row-no][data-key]') : null;
+  const listArea = cell && cell.closest ? cell.closest('#resultArea, #favoriteResultArea') : null;
+  if (!cell || !listArea) return;
+  const rowNo = Number(cell.getAttribute('data-row-no')) || 0;
+  const key = String(cell.getAttribute('data-key') || '').trim();
+  handleCustomerResultCellDblClick_(event, rowNo, key, listArea.id === 'favoriteResultArea' ? 'favorite' : 'customer');
+}
+
+function toggleCustomerListExpandByContextP15_(rowNo, context) {
+  if (context === 'favorite' && typeof toggleFavoriteCustomerExpand_ === 'function') return toggleFavoriteCustomerExpand_(rowNo);
+  return toggleCustomerExpand(rowNo);
+}
+
+function handleCustomerResultCellDblClick_(event, rowNo, key, context) {
+  if (event) {
+    event.stopPropagation();
+    event.preventDefault();
+  }
+  rowNo = Number(rowNo) || 0;
+  key = String(key || '').trim();
+  if (!rowNo) return;
+
+  const target = event && event.target ? event.target : null;
+  const cell = target && target.closest ? target.closest('td[data-row-no][data-key]') : document.querySelector('td[data-row-no="' + rowNo + '"][data-key="' + key + '"]');
+  if (!cell) return;
+
+  if (['status','phone','memo'].indexOf(key) >= 0) {
+    const clickedText = !!(target && target.closest && target.closest('.customer-inline-text-trigger'));
+    if (clickedText) {
+      event.__customerInlineCell = cell;
+      startCustomerInlineEdit_(event, rowNo, key);
+      return;
+    }
+    toggleCustomerListExpandByContextP15_(rowNo, context);
+    return;
+  }
+
+  toggleCustomerListExpandByContextP15_(rowNo, context);
+}
+
+function formatCustomerInlineMemoNow_() {
+  const d = new Date();
+  const pad = function(n) { return String(n).padStart(2, '0'); };
+  return pad(d.getFullYear() % 100) + '.' + pad(d.getMonth() + 1) + '.' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' ';
+}
+
+function holdCustomerMemoTagFocus_(event, inputId) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  window.customerInlineMemoTagPointerDownP1I = inputId;
+  const editor = document.getElementById(inputId);
+  if (editor && editor.focus) {
+    setTimeout(function() { try { editor.focus({ preventScroll: true }); } catch (err) { editor.focus(); } }, 0);
+  }
+  return false;
+}
+
+function insertCustomerMemoTemplateIntoEditor_(event, inputId, templateType) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  const editor = document.getElementById(inputId);
+  if (!editor) return false;
+
+  const nowText = formatCustomerInlineMemoNow_();
+  const insertText = templateType === 'contact'
+    ? '[컨택이력][0차][전화] ' + nowText
+    : nowText;
+
+  try { editor.focus({ preventScroll: true }); } catch (err) { editor.focus(); }
+  const value = String(editor.value || '');
+  const start = typeof editor.selectionStart === 'number' ? editor.selectionStart : value.length;
+  const end = typeof editor.selectionEnd === 'number' ? editor.selectionEnd : start;
+  editor.value = value.slice(0, start) + insertText + value.slice(end);
+  const nextPos = start + insertText.length;
+  if (editor.setSelectionRange) editor.setSelectionRange(nextPos, nextPos);
+  if (document.body && document.body.classList) document.body.classList.add('portal-user-editing');
+  setTimeout(function() { if (window.customerInlineMemoTagPointerDownP1I === inputId) window.customerInlineMemoTagPointerDownP1I = null; }, 0);
+  return false;
+}
+
+function renderCustomerMemoTagPopover_(inputId, extraClass) {
+  return '<div class="customer-memo-tag-popover ' + escAttr(extraClass || '') + '" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="event.stopPropagation();">' +
+    '<button type="button" tabindex="-1" class="customer-memo-tag-btn" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="return insertCustomerMemoTemplateIntoEditor_(event,\'' + escAttr(inputId) + '\',\'contact\')">#컨택이력</button>' +
+    '<button type="button" tabindex="-1" class="customer-memo-tag-btn" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="return insertCustomerMemoTemplateIntoEditor_(event,\'' + escAttr(inputId) + '\',\'now\')">#지금시간</button>' +
+  '</div>';
+}
+
+function showCustomerExpandMemoTags_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const box = document.getElementById('expandedMemoBox_' + rowNo);
+  if (box && box.classList) box.classList.add('memo-tags-active');
+}
+
+function insertCustomerExpandMemoTemplate_(event, rowNo, templateType) {
+  rowNo = Number(rowNo) || 0;
+  return insertCustomerMemoTemplateIntoEditor_(event, 'expandedMemo_' + rowNo, templateType);
+}
+
+
+function startCustomerInlineEdit_(event, rowNo, key) {
+  if (event) {
+    event.stopPropagation();
+    event.preventDefault();
+  }
+  rowNo = Number(rowNo) || 0;
+  key = String(key || '').trim();
+  if (!rowNo || ['status','phone','memo'].indexOf(key) < 0) return;
+
+  const cell = event && (event.__customerInlineCell || event.currentTarget) ? (event.__customerInlineCell || event.currentTarget) : document.querySelector('td[data-row-no="' + rowNo + '"][data-key="' + key + '"]');
+  if (!cell) return;
+  if (cell.getAttribute('data-inline-editing') === 'Y') {
+    const activeEditor = cell.querySelector('.customer-inline-editor');
+    if (activeEditor && activeEditor.focus) activeEditor.focus();
+    return;
+  }
+
+  if (window.customerInlineEditActive && window.customerInlineEditActive.inputId) {
+    commitCustomerInlineEdit_(window.customerInlineEditActive.inputId, { silent: true });
+    if (!document.getElementById(window.customerInlineEditActive && window.customerInlineEditActive.inputId)) {
+      window.customerInlineEditActive = null;
+    }
+  }
+
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const detail = getCustomerDetailCache_(rowNo, rowSummary.customerNo) || null;
+  let currentValue = '';
+  if (key === 'memo') currentValue = detail && detail.memo != null ? detail.memo : rowSummary.memo;
+  else currentValue = detail && detail[key] != null ? detail[key] : rowSummary[key];
+  currentValue = String(currentValue == null ? '' : currentValue);
+
+  const inputId = 'customerInlineEdit_' + rowNo + '_' + key;
+  cell.setAttribute('data-inline-editing', 'Y');
+  cell.setAttribute('data-original-html', cell.innerHTML);
+  cell.classList.add('customer-inline-editing-cell');
+
+  if (key === 'status') {
+    const optionsHtml = (typeof renderStatusOptionsForDetail_ === 'function')
+      ? renderStatusOptionsForDetail_(currentValue)
+      : '<option value="' + escAttr(currentValue) + '" selected>' + esc(currentValue || '-') + '</option>';
+    cell.innerHTML = '<select id="' + inputId + '" class="customer-inline-editor customer-inline-status-editor" data-row-no="' + rowNo + '" data-key="status" data-original="' + escAttr(currentValue) + '">' + optionsHtml + '</select>';
+  } else if (key === 'memo') {
+    cell.innerHTML = '<div class="customer-inline-memo-edit-wrap">' +
+      '<textarea id="' + inputId + '" class="customer-inline-editor customer-inline-memo-editor" data-row-no="' + rowNo + '" data-key="memo" data-original="' + escAttr(currentValue) + '">' + esc(currentValue) + '</textarea>' +
+      renderCustomerMemoTagPopover_(inputId, 'customer-inline-memo-tag-popover') +
+    '</div>';
+  } else {
+    cell.innerHTML = '<input id="' + inputId + '" class="customer-inline-editor customer-inline-phone-editor" type="text" data-row-no="' + rowNo + '" data-key="phone" data-original="' + escAttr(currentValue) + '" value="' + escAttr(currentValue) + '">';
+  }
+
+  const editor = document.getElementById(inputId);
+  if (!editor) return;
+  window.customerInlineEditActive = { inputId: inputId, rowNo: rowNo, key: key };
+  if (document.body && document.body.classList) document.body.classList.add('portal-user-editing');
+
+  editor.addEventListener('click', function(e) { e.stopPropagation(); });
+  editor.addEventListener('dblclick', function(e) { e.stopPropagation(); });
+  if (key === 'status') {
+    editor.addEventListener('change', function() {
+      setTimeout(function() { commitCustomerInlineEdit_(inputId); }, 30);
+    });
+  }
+  editor.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelCustomerInlineEdit_(inputId);
+      return;
+    }
+    if (key !== 'memo' && e.key === 'Enter') {
+      e.preventDefault();
+      commitCustomerInlineEdit_(inputId);
+      return;
+    }
+    if (key === 'memo' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      commitCustomerInlineEdit_(inputId);
+    }
+  });
+  editor.addEventListener('blur', function() {
+    if (key === 'memo' && window.customerInlineMemoTagPointerDownP1I === inputId) {
+      setTimeout(function() {
+        const memoEditor = document.getElementById(inputId);
+        if (memoEditor && memoEditor.focus) {
+          try { memoEditor.focus({ preventScroll: true }); } catch (err) { memoEditor.focus(); }
+        }
+      }, 0);
+      return;
+    }
+    setTimeout(function() { commitCustomerInlineEdit_(inputId); }, 80);
+  });
+
+  setTimeout(function() {
+    try { editor.focus({ preventScroll: true }); } catch (err) { editor.focus(); }
+    if (key === 'phone' && editor.select) {
+      editor.select();
+    } else if (key === 'memo' && editor.setSelectionRange) {
+      const endPos = String(editor.value || '').length;
+      editor.setSelectionRange(endPos, endPos);
+    }
+  }, 0);
+}
+
+function cancelCustomerInlineEdit_(inputId) {
+  const editor = document.getElementById(inputId);
+  if (!editor) return;
+  const cell = editor.closest('td');
+  if (!cell) return;
+  cell.innerHTML = cell.getAttribute('data-original-html') || '';
+  cell.removeAttribute('data-original-html');
+  cell.removeAttribute('data-inline-editing');
+  cell.classList.remove('customer-inline-editing-cell');
+  if (window.customerInlineEditActive && window.customerInlineEditActive.inputId === inputId) window.customerInlineEditActive = null;
+  clearCustomerInlineEditingFlag_();
+}
+
+function renderCustomerInlineDisplayHtml_(key, rawValue) {
+  let value = disp(rawValue);
+  if (key === 'memo') {
+    value = shortenCustomerMemo_(value, CUSTOMER_RESULT_TABLE.memoMaxLength || 90);
+  }
+  if (key === 'status') {
+    return renderStatusChip_(value);
+  }
+  return esc(value);
+}
+
+function finishCustomerInlineEditCell_(cell, rowNo, key, value) {
+  if (!cell) return;
+  const displayHtml = renderCustomerInlineDisplayHtml_(key, value);
+  if (['status','phone','memo'].indexOf(String(key || '')) >= 0) {
+    cell.innerHTML = '<span class="customer-inline-text-trigger" title="이 글자를 더블클릭하면 바로 수정합니다.">' + displayHtml + '</span>';
+  } else {
+    cell.innerHTML = displayHtml;
+  }
+  cell.removeAttribute('data-original-html');
+  cell.removeAttribute('data-inline-editing');
+  cell.classList.remove('customer-inline-editing-cell');
+  cell.classList.remove('customer-inline-saving-cell');
+  cell.setAttribute('data-row-no', String(rowNo || ''));
+  cell.setAttribute('data-key', String(key || ''));
+}
+
+function refreshCustomerInlineCellDisplay_(rowNo, key) {
+  rowNo = Number(rowNo) || 0;
+  key = String(key || '').trim();
+  if (!rowNo || ['status','phone','memo'].indexOf(key) < 0) return;
+  const cells = Array.from(document.querySelectorAll('td[data-row-no="' + rowNo + '"][data-key="' + key + '"]'));
+  if (!cells.length) return;
+
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const detail = getCustomerDetailCache_(rowNo, rowSummary.customerNo) || null;
+  let value = '';
+  if (key === 'memo') value = detail && detail.memo != null ? detail.memo : rowSummary.memo;
+  else value = detail && detail[key] != null ? detail[key] : rowSummary[key];
+  cells.forEach(function(cell) {
+    if (!cell || cell.getAttribute('data-inline-editing') === 'Y') return;
+    finishCustomerInlineEditCell_(cell, rowNo, key, String(value == null ? '' : value));
+  });
+}
+
+function clearCustomerInlineEditingFlag_() {
+  const active = window.customerInlineEditActive;
+  if (active && active.inputId && document.getElementById(active.inputId)) return;
+  if (document.body && document.body.classList) document.body.classList.remove('portal-user-editing');
+}
+
+function commitCustomerInlineEdit_(inputId, options) {
+  options = options || {};
+  const editor = document.getElementById(inputId);
+  if (!editor) {
+    if (window.customerInlineEditActive && window.customerInlineEditActive.inputId === inputId) window.customerInlineEditActive = null;
+    return;
+  }
+  if (editor.getAttribute('data-saving') === 'Y') return;
+
+  const rowNo = Number(editor.getAttribute('data-row-no')) || 0;
+  const key = String(editor.getAttribute('data-key') || '').trim();
+  const originalValue = String(editor.getAttribute('data-original') || '');
+  const nextValue = String(editor.value == null ? '' : editor.value).trim();
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const customerNo = rowSummary.customerNo || '';
+  const cell = editor.closest('td');
+  if (!rowNo || ['status','phone','memo'].indexOf(key) < 0) {
+    cancelCustomerInlineEdit_(inputId);
+    return;
+  }
+
+  if (nextValue === originalValue) {
+    cancelCustomerInlineEdit_(inputId);
+    return;
+  }
+
+  editor.setAttribute('data-saving', 'Y');
+  if (cell) cell.classList.add('customer-inline-saving-cell');
+
+  const patch = {};
+  patch[key] = nextValue;
+  const rollback = {};
+  rollback[key] = originalValue;
+  applyCustomerInlinePatchOptimistic_(rowNo, patch);
+  if (window.customerInlineEditActive && window.customerInlineEditActive.inputId === inputId) window.customerInlineEditActive = null;
+  finishCustomerInlineEditCell_(cell, rowNo, key, nextValue);
+  clearCustomerInlineEditingFlag_();
+
+  const runner = google.script.run
+    .withSuccessHandler(function(res) {
+      if (key === 'memo' && res && Object.prototype.hasOwnProperty.call(res, 'memo')) {
+        applyCustomerInlinePatchOptimistic_(rowNo, { memo: res.memo });
+      } else if (res && res.values) {
+        applyCustomerInlinePatchOptimistic_(rowNo, res.values);
+      } else {
+        applyCustomerInlinePatchOptimistic_(rowNo, patch);
+      }
+      // 입력 중인 다른 칸을 끊지 않기 위해 저장 성공 토스트와 전체 리스트 재렌더링은 하지 않습니다.
+      // 화면/캐시는 위 optimistic patch와 아래 targeted refresh로만 조용히 반영합니다.
+      refreshCustomerInlineCellDisplay_(rowNo, key);
+    })
+    .withFailureHandler(function(err) {
+      applyCustomerInlinePatchOptimistic_(rowNo, rollback);
+      refreshCustomerInlineCellDisplay_(rowNo, key);
+      alert('목록 즉시수정 저장 실패: ' + getErrorMessage_(err));
+    });
+
+  if (key === 'memo') {
+    runner.saveCustomerMemoFast({ rowNo: rowNo, customerNo: customerNo, memo: nextValue });
+  } else {
+    const values = {};
+    values[key] = nextValue;
+    runner.saveCustomerDetailFast({ rowNo: rowNo, customerNo: customerNo, values: values });
+  }
+}
+
+function applyCustomerInlinePatchOptimistic_(rowNo, patchValues) {
+  rowNo = Number(rowNo) || 0;
+  patchValues = patchValues || {};
+  if (!rowNo) return;
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const customerNo = rowSummary.customerNo || '';
+  patchCustomerSearchIndexAndPagesK1_({ rowNo: rowNo, customerNo: customerNo }, patchValues, { source: 'inlineEdit' });
+
+  let detail = getCustomerDetailCache_(rowNo, customerNo) || buildCustomerDetailFromRowSummary_(Object.assign({}, rowSummary, patchValues), rowNo);
+  detail = applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(detail || {})), patchValues);
+  if (!detail.rowNo) detail.rowNo = rowNo;
+  if (!detail.customerNo) detail.customerNo = customerNo;
+  setCustomerDetailCache_(detail, { source: 'optimistic', force: true, patchValues: patchValues, allowIndexPatch: true, skipStorage: false });
+}
+
+
+function renderCustomerFavoriteCell_(row) {
+  row = row || {};
+  const active = isCustomerFavorite_(row);
+  const rowNo = Number(row.rowNo) || 0;
+  const label = active ? '즐겨찾기 해제' : '즐겨찾기 추가';
+  return '<td class="customer-favorite-cell" title="' + escAttr(label) + '">' +
+    '<button type="button" class="customer-favorite-star ' + (active ? 'active' : '') + '" onclick="event.stopPropagation(); toggleCustomerFavoriteFromList(' + rowNo + ')">' + (active ? '★' : '☆') + '</button>' +
+  '</td>';
+}
+
+function toggleCustomerFavoriteFromList(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const row = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  if (!rowNo && !row.customerNo) return;
+
+  const wasFavorite = isCustomerFavorite_(row);
+  const nextFavorite = !wasFavorite;
+  const favoriteMutation = patchFavoriteStateOptimistic_(row, nextFavorite);
+
+  // 사용자가 별을 누른 순간이 화면 기준입니다.
+  // 서버 저장 응답을 기다리는 동안에도 별을 비우거나 되돌리지 않습니다.
+  repaintCustomerResultsIfVisible_();
+  try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.ok) {
+        commitFavoriteStateOptimistic_(favoriteMutation, res.map || customerFavoriteMapV60 || {});
+        if (Array.isArray(res.favorites)) customerFavoriteRowsV60 = res.favorites;
+        repaintCustomerResultsIfVisible_();
+        try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+        toast(nextFavorite ? '즐겨찾기에 추가했습니다.' : '즐겨찾기에서 해제했습니다.');
+      }
+    })
+    .withFailureHandler(function(err) {
+      rollbackFavoriteStateOptimistic_(favoriteMutation, wasFavorite);
+      repaintCustomerResultsIfVisible_();
+      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (renderErr) {}
+      alert('즐겨찾기 변경 실패: ' + getErrorMessage_(err));
+    })
+    .togglePortalCustomerFavorite({
+      rowNo: rowNo,
+      customerNo: row.customerNo || '',
+      company: row.company || '',
+      favorite: nextFavorite
+    });
+}
+
+
+// PATCH B: customerNo 중심 상세 캐시/상태관리 helper
+function normalizeCustomerNoForKey_(value) {
+  return String(value || '').trim();
+}
+
+function makeCustomerDetailCacheKey_(rowNo, customerNo) {
+  const cno = normalizeCustomerNoForKey_(customerNo);
+  if (cno) return 'CNO:' + cno;
+  rowNo = Number(rowNo) || 0;
+  return rowNo ? ('ROW:' + rowNo) : '';
+}
+
+function getCustomerDetailCacheKeyFromRow_(row, fallbackRowNo) {
+  row = row || {};
+  return makeCustomerDetailCacheKey_(Number(row.rowNo || fallbackRowNo) || 0, row.customerNo || '');
+}
+
+function getCustomerDetailCacheKeyFromDetail_(detail) {
+  detail = detail || {};
+  return makeCustomerDetailCacheKey_(Number(detail.rowNo) || 0, detail.customerNo || '');
+}
+
+
+// PATCH D: 저장 직후 optimistic detail을 기준으로 화면/캐시를 먼저 갱신하고,
+// 서버 상세 보강/프리패치 응답이 늦게 도착해도 사용자가 저장한 값을 되돌리지 않게 합니다.
+function getCustomerDetailPendingKey_(rowNo, customerNo) {
+  return makeCustomerDetailCacheKey_(rowNo, customerNo);
+}
+
+function registerCustomerDetailPendingSave_(detail, values, saveSeq) {
+  detail = detail || {};
+  const key = getCustomerDetailCacheKeyFromDetail_(detail);
+  if (!key) return;
+  customerDetailPendingSaveMap[key] = {
+    rowNo: Number(detail.rowNo) || 0,
+    customerNo: normalizeCustomerNoForKey_(detail.customerNo),
+    values: Object.assign({}, values || {}),
+    saveSeq: Number(saveSeq) || 0,
+    startedAt: Date.now()
+  };
+}
+
+function clearCustomerDetailPendingSave_(rowNo, customerNo, saveSeq) {
+  const key = getCustomerDetailPendingKey_(rowNo, customerNo);
+  if (!key || !customerDetailPendingSaveMap[key]) return;
+  if (saveSeq && Number(customerDetailPendingSaveMap[key].saveSeq) !== Number(saveSeq)) return;
+  delete customerDetailPendingSaveMap[key];
+}
+
+function getCustomerDetailPendingSave_(rowNo, customerNo) {
+  const key = getCustomerDetailPendingKey_(rowNo, customerNo);
+  if (!key) return null;
+  const pending = customerDetailPendingSaveMap[key] || null;
+  if (!pending) return null;
+  // 너무 오래된 pending은 실패/새로고침 흔적으로 보고 자동 폐기합니다.
+  if (Date.now() - Number(pending.startedAt || 0) > 120000) {
+    delete customerDetailPendingSaveMap[key];
+    return null;
+  }
+  return pending;
+}
+
+function applyPendingSaveToIncomingDetail_(detail) {
+  detail = detail || {};
+  const pending = getCustomerDetailPendingSave_(detail.rowNo, detail.customerNo);
+  if (!pending) return detail;
+  const next = applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(detail)), pending.values || {});
+  next.__pendingSave = true;
+  next.__pendingSaveSeq = pending.saveSeq;
+  next.__optimisticSavedAt = new Date(pending.startedAt || Date.now()).toISOString();
+  return next;
+}
+
+function repaintCustomerResultsIfVisible_() {
+  // PATCH J: 기존에는 존재하지 않는 #customerResultBody를 검사해서 저장 후 리스트 repaint가 실행되지 않았습니다.
+  // 현재 고객검색 화면 구조는 resultArea.innerHTML 전체를 renderResults()로 교체하므로,
+  // lastCustomerResultResponse가 있으면 즉시 다시 그립니다.
+  try {
+    if (lastCustomerResultResponse && typeof renderResults === 'function') {
+      renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+    }
+  } catch (err) {}
+}
+
+function getCustomerDetailCache_(rowNo, customerNo) {
+  rowNo = Number(rowNo) || 0;
+  const primaryKey = makeCustomerDetailCacheKey_(rowNo, customerNo);
+  if (primaryKey && customerDetailInlineCache[primaryKey]) return customerDetailInlineCache[primaryKey];
+  if (rowNo && customerDetailInlineCache['ROW:' + rowNo]) return customerDetailInlineCache['ROW:' + rowNo];
+  // PATCH B 호환: PATCH A 이전/중간 버전이 숫자 rowNo key로 저장한 메모리 캐시 fallback
+  if (rowNo && customerDetailInlineCache[rowNo]) return customerDetailInlineCache[rowNo];
+  return null;
+}
+
+function findCustomerRowSummary_(rowNo, customerNo) {
+  const cno = normalizeCustomerNoForKey_(customerNo);
+  if (cno) {
+    const byCno = findCustomerRowSummaryByCustomerNo_(cno);
+    if (byCno) return byCno;
+  }
+  return findCustomerRowSummaryByRowNo_(rowNo);
+}
+
+
+// PATCH P1-12: 마스터시트 단건 최신화 TTL
+// 전체 목록을 매번 재생성하지 않고, 펼침/상세/프리패치 시 보이는 row만 짧은 주기로 마스터에서 재조회합니다.
+const CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112 = 8000;
+const CUSTOMER_DETAIL_EXPAND_REALTIME_TTL_MS_P112 = 3000;
+
+function getCustomerDetailLoadedAtMsP112_(detail) {
+  if (!detail) return 0;
+  const raw = detail.__loadedAt || detail.__storedAt || detail.__masterFetchedAt || '';
+  if (typeof raw === 'number') return raw;
+  const t = Date.parse(raw);
+  return isNaN(t) ? 0 : t;
+}
+
+function isCustomerDetailFreshFromMasterP112_(detail, ttlMs) {
+  if (!detail || !detail.__masterBacked) return false;
+  const t = getCustomerDetailLoadedAtMsP112_(detail);
+  if (!t) return false;
+  return Date.now() - t <= (Number(ttlMs) || CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112);
+}
+
+function toggleCustomerExpand(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+
+  if (customerExpandedRowNo === rowNo) {
+    customerExpandedRowNo = null;
+    renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+    return;
+  }
+
+  customerExpandedRowNo = rowNo;
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo);
+  const targetCustomerNo = normalizeCustomerNoForKey_(rowSummary && rowSummary.customerNo);
+  if (!getCustomerDetailCache_(rowNo, targetCustomerNo) && rowSummary) {
+    setCustomerDetailCache_(buildCustomerDetailFromRowSummary_(rowSummary, rowNo), { source: 'index', skipStorage: true, allowIndexPatch: false });
+  }
+  renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+
+  const cached = getCustomerDetailCache_(rowNo, targetCustomerNo);
+  if (cached && !cached.__summary && !cached.__lite && isCustomerDetailFreshFromMasterP112_(cached, CUSTOMER_DETAIL_EXPAND_REALTIME_TTL_MS_P112)) return;
+
+  fetchCustomerDetailFromServer_(rowNo, function(detail) {
+    if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+  }, function(err) {
+    const row = document.getElementById('customerExpandRow_' + rowNo);
+    if (row) row.querySelector('td').innerHTML = '<div class="customer-expand-loading">상세정보를 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+  });
+}
+
+// PATCH M: 고객검색 펼침 영역을 표 형태의 업무용 상세 카드로 재구성합니다.
+// - 펼침 영역에서 회사명은 유지합니다.
+// - 고객번호/진행현황/상세보강중 안내문구는 제거합니다.
+// - 버튼은 컨택이력추가 / 영업지원요청 / 메일자료발송 / 상세정보수정으로 정리합니다. 접기는 행 우측 ▲ 버튼으로 처리합니다.
+const CUSTOMER_EXPAND_RAW_HEADER_CANDIDATES = {
+  businessRegistrationReceived: ['사업자등록증', '사업자등록증 수취 여부', '사업자등록증 수취여부', '사업자등록증수취여부', '사업자등록증요청', '사업자등록증 요청'],
+  serviceApplicationReceived: ['용역신청서', '용역신청서 수취 여부', '용역신청서 수취여부', '용역신청서수취여부', '용역신청서요청', '용역신청서 요청'],
+  appointmentReportReceived: ['선임신고서', '선임신고서 수취 여부', '선임신고서 수취여부', '선임신고서수취여부', '선임신고서 및 위임장 요청', '선임신고서 및 위임장', '선임신고서·위임장'],
+  businessNo: ['사업자등록번호', '사업자 등록 번호', '사업자번호', '등록번호'],
+  businessLegalName: ['사업자등록증상 법인명', '계약 당사자(사업자등록증상 법인명)', '계약 당사자', '법인명', '상호', '업체명'],
+  representativeName: ['대표자명', '대표자', '대표', '대표자 성명'],
+  grade: ['관리등급', '관리 등급', '등급', '연면적유형', '연면적 유형'],
+  customerRank: ['고객등급', '고객 등급', '영업등급', '고객관리등급', '고객 관리 등급']
+};
+
+function renderCustomerExpandedContent_(rowNo, rowSummary) {
+  const detail = getCustomerDetailCache_(rowNo, rowSummary && rowSummary.customerNo) || buildCustomerDetailFromRowSummary_(rowSummary || {}, rowNo);
+  const company = detail.company || rowSummary.company || '';
+
+  let html = '<div class="customer-expand-panel customer-expand-panel-v58">';
+  html += '<div class="customer-expand-top customer-expand-top-v58">' +
+    '<div class="customer-expand-title-wrap"><div class="customer-expand-title"><span class="customer-expand-title-label">[회사명]</span><span class="customer-expand-title-company">' + esc(company || '고객 상세') + '</span></div></div>' +
+    '<div class="customer-expand-actions customer-expand-actions-v58">' +
+      '<button type="button" class="contact-add-btn" onclick="event.stopPropagation(); openContactHistoryModal(' + rowNo + ')">컨택이력추가</button>' +
+      '<button type="button" onclick="event.stopPropagation(); openSupportRequestForCustomerExpand_(' + rowNo + ')">영업지원요청</button>' +
+      '<button type="button" onclick="event.stopPropagation(); openSendForCustomer(' + rowNo + ')">메일자료발송</button>' +
+      '<button type="button" onclick="event.stopPropagation(); openCustomerDetailEditFromExpand_(' + rowNo + ')">상세정보수정</button>' +
+    '</div>' +
+  '</div>';
+
+  html += '<div class="customer-expand-board-v58">';
+  var basicInfoRows = [
+    [
+      { key:'customerNo', label:'고객번호' },
+      { key:'company', label:'회사명' },
+      { key:'salesRep', label:'영업담당자' },
+      { key:'status', label:'진행현황' }
+    ],
+    [
+      { key:'customerRank', label:'고객등급' },
+      { key:'contact', label:'담당자' },
+      { key:'phone', label:'대표전화번호' },
+      { key:'directPhone', label:'직통번호' }
+    ],
+    [
+      { key:'email', label:'이메일 주소' },
+      { key:'address', label:'고객사 상세 주소', span:3 }
+    ]
+  ];
+  basicInfoRows[0]._columns = 4;
+  basicInfoRows[1]._columns = 4;
+  basicInfoRows[2]._columns = 4;
+
+  var contractRows = [
+    [
+      { key:'area', label:'연면적' },
+      { key:'grade', label:'관리등급' },
+      { key:'buildingType', label:'건물 유형' },
+      { key:'contractUnit', label:'계약단위' }
+    ],
+    [
+      { key:'appointment', label:'관리자 선임 여부' },
+      { key:'maintenance', label:'유지점검' },
+      { key:'performance', label:'성능점검' },
+      { key:'vat', label:'부가세' }
+    ],
+    [
+      { key:'discountRate', label:'할인율' },
+      { key:'finalQuote', label:'최종 견적가' },
+      { key:'specialTerms', label:'용역신청서특약사항', span:2 }
+    ]
+  ];
+  contractRows[0]._columns = 4;
+  contractRows[1]._columns = 4;
+  contractRows[2]._columns = 4;
+
+  html += renderCustomerExpandFormBlock_('고객사 기본 정보', basicInfoRows, detail, 'basic', 'customer-expand-block-basic');
+
+  html += renderCustomerExpandFormBlock_('상세 계약조건', contractRows, detail, 'contract', 'customer-expand-block-contract');
+
+  html += renderCustomerExpandFormBlock_('서류 수취 여부', [
+    [
+      { key:'businessRegistrationReceived', label:'사업자등록증' },
+      { key:'serviceApplicationReceived', label:'용역신청서' },
+      { key:'appointmentReportReceived', label:'선임신고서' }
+    ]
+  ], detail, 'extra', 'customer-expand-block-docs');
+
+  html += renderCustomerExpandFormBlock_('사업자등록증 정보', [
+    [
+      { key:'businessNo', label:'사업자등록번호' },
+      { key:'businessLegalName', label:'법인명' },
+      { key:'representativeName', label:'대표자명' }
+    ]
+  ], detail, 'extra', 'customer-expand-block-biz');
+
+  const memoValue = getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || rowSummary.memo || '';
+  const expandedMemoInputId = 'expandedMemo_' + rowNo;
+  html += '<div class="customer-expand-form-block customer-expand-memo-box-v58" id="expandedMemoBox_' + rowNo + '">' +
+    '<div class="customer-expand-memo-label-v58">마스터시트<br>메모</div>' +
+    '<div class="customer-expand-memo-main-v58">' +
+      '<div class="customer-expand-memo-edit-wrap-p15 customer-expand-memo-edit-wrap-fixed-tags">' +
+        '<div class="customer-expand-memo-tag-row customer-expand-memo-tag-row-always">' + renderCustomerMemoTagPopover_(expandedMemoInputId, 'customer-expand-memo-tag-popover') + '</div>' +
+        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '">' + esc(memoValue) + '</textarea>' +
+      '</div>' +
+      '<div class="customer-expand-save-row">' +
+        '<button type="button" class="secondary" onclick="event.stopPropagation(); resetExpandedCustomerMemo(' + rowNo + ')">되돌리기</button>' +
+        '<button type="button" id="expandedMemoSaveBtn_' + rowNo + '" onclick="event.stopPropagation(); saveExpandedCustomerMemo(' + rowNo + ')">저장</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+
+  html += '</div></div>';
+  return html;
+}
+
+function renderCustomerExpandFormBlock_(title, rowDefs, detail, sectionKey, extraClass) {
+  let html = '<div class="customer-expand-form-block ' + escAttr(extraClass || '') + '">';
+  html += '<div class="customer-expand-form-title">' + esc(title || '') + '</div>';
+  html += '<div class="customer-expand-form-body">';
+  (rowDefs || []).forEach(function(row, rowIdx) {
+    const columnCount = Math.max(1, Number(row && row._columns) || (row ? row.length : 1));
+    html += '<div class="customer-expand-form-row customer-expand-form-row-cols-' + columnCount + ' row-' + rowIdx + '">';
+    (row || []).forEach(function(def) {
+      html += renderCustomerExpandFormCell_(detail, sectionKey, def);
+    });
+    html += '</div>';
+  });
+  html += '</div></div>';
+  return html;
+}
+
+function renderCustomerExpandFormCell_(detail, sectionKey, def) {
+  def = def || {};
+  const item = getCustomerExpandFieldValue_(detail, sectionKey, def.key);
+  const label = def.label || item.label || def.key || '';
+  const rawValue = item.value;
+  const displayValue = formatCustomerExpandDisplayValue_(def.key, rawValue, detail);
+  const span = Math.max(1, Math.min(4, Number(def.span) || 1));
+  const valueHtml = def.key === 'status' ? renderStatusChip_(displayValue) : renderCustomerExpandValueHtml_(displayValue);
+  return '<div class="customer-expand-form-cell key-' + escAttr(String(def.key || '').replace(/[^a-zA-Z0-9_-]/g, '-')) + ' span-' + span + '">' +
+    '<div class="customer-expand-form-label">' + esc(label) + '</div>' +
+    '<div class="customer-expand-form-value key-' + escAttr(String(def.key || '').replace(/[^a-zA-Z0-9_-]/g, '-')) + (def.key === 'status' ? ' status-value' : '') + '">' + valueHtml + '</div>' +
+  '</div>';
+}
+
+function formatCustomerExpandDisplayValue_(key, value, detail) {
+  const normalized = String(value == null ? '' : value).trim();
+  if (key === 'businessRegistrationReceived') {
+    const businessNo = String(getCustomerExpandFieldValue_(detail, 'extra', 'businessNo').value || '').trim();
+    return businessNo ? 'O' : 'X';
+  }
+  if (key === 'serviceApplicationReceived' || key === 'appointmentReportReceived') {
+    return normalizeCustomerExpandBooleanMark_(normalized);
+  }
+  if (key === 'phone' || key === 'directPhone') {
+    return splitCustomerExpandPhoneLines_(normalized) || disp(normalized);
+  }
+  if (key === 'email') {
+    return splitCustomerExpandEmailLines_(normalized) || disp(normalized);
+  }
+  return disp(normalized);
+}
+
+function renderCustomerExpandValueHtml_(value) {
+  const text = String(value == null || value === '' ? '-' : value);
+  return text.split(/\n+/).map(function(line) {
+    return '<span class="customer-expand-multi-line">' + esc(line || '-') + '</span>';
+  }).join('');
+}
+
+function splitCustomerExpandPhoneLines_(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const matches = text.match(/\d{2,4}[-\s]?\d{3,4}[-\s]?\d{4}/g);
+  if (matches && matches.length > 1) {
+    return matches.map(function(v) { return v.replace(/\s+/g, '-').trim(); }).join('\n');
+  }
+  if (matches && matches.length === 1) return matches[0].replace(/\s+/g, '-').trim();
+  const parts = text.split(/[\n,;|/]+/).map(function(v) { return v.trim(); }).filter(Boolean);
+  return parts.length > 1 ? parts.join('\n') : text;
+}
+
+function splitCustomerExpandEmailLines_(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const matches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
+  if (matches && matches.length) return matches.join('\n');
+  const parts = text.split(/[\n,;|/]+/).map(function(v) { return v.trim(); }).filter(Boolean);
+  return parts.length > 1 ? parts.join('\n') : text;
+}
+
+function normalizeCustomerExpandBooleanMark_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return 'X';
+  const upper = text.toUpperCase();
+  if (['TRUE', 'Y', 'YES', 'O', '1', '수취', '완료', '있음'].indexOf(upper) >= 0) return 'O';
+  if (text === '예' || text === '유' || text === 'ㅇ') return 'O';
+  if (['FALSE', 'N', 'NO', 'X', '0', '-', '미수취', '없음'].indexOf(upper) >= 0) return 'X';
+  if (text === '아니오' || text === '무' || text === 'ㄴ') return 'X';
+  return upper === 'TRUE' ? 'O' : (upper === 'FALSE' ? 'X' : text);
+}
+
+function renderCustomerExpandSection_(title, fields, detail, sectionKey) {
+  // 이전 카드형 렌더러 호환용. PATCH M 이후 실제 펼침 UI는 renderCustomerExpandFormBlock_()을 사용합니다.
+  const rows = [];
+  let current = [];
+  (fields || []).forEach(function(def) {
+    current.push(def);
+    if (current.length >= 4 || def.wide) {
+      rows.push(current);
+      current = [];
+    }
+  });
+  if (current.length) rows.push(current);
+  return renderCustomerExpandFormBlock_(title, rows, detail, sectionKey, '');
+}
+
+function getCustomerExpandRawValue_(detail, candidates) {
+  detail = detail || {};
+  const raw = detail.raw || {};
+  candidates = Array.isArray(candidates) ? candidates : [candidates];
+  for (let i = 0; i < candidates.length; i++) {
+    const key = String(candidates[i] || '').trim();
+    if (!key) continue;
+    if (Object.prototype.hasOwnProperty.call(raw, key) && String(raw[key] || '').trim() !== '') return raw[key];
+  }
+  return '';
+}
+
+function getCustomerExpandFieldValue_(detail, sectionKey, key) {
+  detail = detail || {};
+  const directMap = {
+    customerNo: detail.customerNo,
+    company: detail.company,
+    address: detail.address,
+    contact: detail.contact,
+    phone: detail.phone,
+    directPhone: detail.directPhone,
+    email: detail.email,
+    salesRep: detail.salesRep,
+    vendor: detail.vendor,
+    status: detail.status,
+    memo: detail.memo,
+    firstRegisteredAt: detail.firstRegisteredAt,
+    region: detail.region,
+    area: detail.area,
+    grade: detail.grade,
+    buildingType: detail.buildingType,
+    finalQuote: detail.finalQuote,
+    contractUnit: detail.contractUnit,
+    appointment: detail.appointment,
+    maintenance: detail.maintenance,
+    performance: detail.performance,
+    vat: detail.vat,
+    discountRate: detail.discountRate,
+    specialTerms: detail.specialTerms
+  };
+  if (Object.prototype.hasOwnProperty.call(directMap, key) && String(directMap[key] || '').trim() !== '') {
+    return { label: key, value: directMap[key] || '' };
+  }
+
+  const candidates = CUSTOMER_EXPAND_RAW_HEADER_CANDIDATES[key];
+  if (candidates && candidates.length) {
+    return { label: key, value: getCustomerExpandRawValue_(detail, candidates) || '' };
+  }
+
+  const arr = detail.detailFields && detail.detailFields[sectionKey] ? detail.detailFields[sectionKey] : [];
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] && arr[i].key === key) {
+      return { label: arr[i].label || key, value: arr[i].value || '' };
+    }
+  }
+
+  // PATCH M-FIX2: 화면 배치상 '관리등급'처럼 다른 섹션에 있는 필드를 계약조건 표에서 표시할 수 있으므로
+  // sectionKey가 달라도 detailFields 전체에서 한 번 더 찾습니다.
+  const allSections = detail.detailFields || {};
+  const sectionNames = Object.keys(allSections);
+  for (let s = 0; s < sectionNames.length; s++) {
+    const list = allSections[sectionNames[s]] || [];
+    for (let j = 0; j < list.length; j++) {
+      if (list[j] && list[j].key === key) {
+        return { label: list[j].label || key, value: list[j].value || '' };
+      }
+    }
+  }
+  return { label: key, value: '' };
+}
+
+function buildSupportCustomerInfoFromExpand_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const detail = getCustomerDetailCache_(rowNo, rowSummary.customerNo) || buildCustomerDetailFromRowSummary_(rowSummary, rowNo);
+  const info = {
+    rowNo: rowNo,
+    customerNo: detail.customerNo || rowSummary.customerNo || '',
+    customerName: detail.company || rowSummary.company || '',
+    contractUnit: getCustomerExpandFieldValue_(detail, 'contract', 'contractUnit').value || '',
+    appointment: getCustomerExpandFieldValue_(detail, 'contract', 'appointment').value || '',
+    maintenance: getCustomerExpandFieldValue_(detail, 'contract', 'maintenance').value || '',
+    performance: getCustomerExpandFieldValue_(detail, 'contract', 'performance').value || '',
+    discountRate: getCustomerExpandFieldValue_(detail, 'contract', 'discountRate').value || '',
+    vat: getCustomerExpandFieldValue_(detail, 'contract', 'vat').value || '',
+    quoteAmount: getCustomerExpandFieldValue_(detail, 'contract', 'finalQuote').value || detail.finalQuote || rowSummary.finalQuote || '',
+    status: detail.status || rowSummary.status || '',
+    area: getCustomerExpandFieldValue_(detail, 'contract', 'area').value || '',
+    region: getCustomerExpandFieldValue_(detail, 'basic', 'region').value || detail.region || '',
+    contactName: detail.contact || rowSummary.contact || '',
+    contactEmail: detail.email || rowSummary.email || '',
+    masterMemo: detail.memo || rowSummary.memo || ''
+  };
+  if (typeof buildSupportInlineContractSummaryClient_ === 'function') {
+    info.contractSummary = buildSupportInlineContractSummaryClient_(info);
+  }
+  return info;
+}
+
+function openSupportRequestForCustomerExpand_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  const info = buildSupportCustomerInfoFromExpand_(rowNo);
+  switchPage('support');
+
+  let tries = 0;
+  const timer = setInterval(function() {
+    tries++;
+    const input = document.getElementById('supportInlineCustomerNo');
+    const name = document.getElementById('supportInlineCustomerName');
+    if (input && name) {
+      clearInterval(timer);
+      if (typeof fillSupportInlineCustomerInfo_ === 'function') {
+        fillSupportInlineCustomerInfo_(info);
+      } else {
+        input.value = info.customerNo || '';
+        name.value = info.customerName || '';
+      }
+      const text = document.getElementById('supportInlineRequestText');
+      if (text) text.focus();
+      toast('영업지원 요청 화면에 고객 정보를 적용했습니다.');
+      return;
+    }
+    if (tries > 30) {
+      clearInterval(timer);
+      toast('영업지원 요청 화면을 준비하지 못했습니다. 고객번호 ' + (info.customerNo || '') + '를 직접 입력하세요.');
+    }
+  }, 100);
+}
+
+function openCustomerDetailEditFromExpand_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const customerNo = rowSummary.customerNo || '';
+  openDetailSafe_(rowNo, customerNo, { forceEdit: true });
+}
+function saveExpandedCustomerMemo(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  const memoEl = document.getElementById('expandedMemo_' + rowNo);
+  const btn = document.getElementById('expandedMemoSaveBtn_' + rowNo);
+  if (!memoEl) return;
+
+  const memoValue = memoEl.value || '';
+  const prevRow = findCustomerRowSummaryByRowNo_(rowNo);
+  const cachedForMemo = getCustomerDetailCache_(rowNo, prevRow && prevRow.customerNo);
+  const prevDetail = cachedForMemo ? JSON.parse(JSON.stringify(cachedForMemo)) : null;
+  const targetCustomerNo = String((prevDetail && prevDetail.customerNo) || (prevRow && prevRow.customerNo) || '').trim();
+  const prevMemo = prevRow ? (prevRow.memo || '') : (prevDetail ? prevDetail.memo || '' : '');
+
+  if (btn) { btn.disabled = true; btn.textContent = '저장 예약'; }
+  applyCustomerMemoOptimistic_(rowNo, memoValue);
+  renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+  toast('메모를 화면에 먼저 반영했습니다. 뒤에서 저장 중입니다.');
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      applyCustomerMemoOptimistic_(rowNo, memoValue);
+      toast('메모가 마스터시트에 저장되었습니다.');
+    })
+    .withFailureHandler(function(err) {
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      if (prevDetail) setCustomerDetailCache_(prevDetail); else applyCustomerMemoOptimistic_(rowNo, prevMemo);
+      updateCustomerRowMemoInCaches_(rowNo, prevMemo);
+      renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+      alert('메모 저장 실패: ' + getErrorMessage_(err));
+    })
+    .saveCustomerMemoFast({ rowNo: rowNo, customerNo: targetCustomerNo, memo: memoValue });
+}
+
+function resetExpandedCustomerMemo(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const memoEl = document.getElementById('expandedMemo_' + rowNo);
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo);
+  const detail = getCustomerDetailCache_(rowNo, rowSummary && rowSummary.customerNo);
+  if (!memoEl || !detail) return;
+  memoEl.value = getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '';
+}
+
+function updateCustomerRowMemoInCaches_(rowNo, memoValue) {
+  rowNo = Number(rowNo) || 0;
+  const updateRows = function(res) {
+    if (!res || !Array.isArray(res.rows)) return;
+    res.rows.forEach(function(row) {
+      if (Number(row.rowNo) === rowNo) row.memo = memoValue;
+    });
+  };
+
+  updateRows(lastCustomerResultResponse);
+  Object.keys(customerPageMemoryCache || {}).forEach(function(key) {
+    updateRows(customerPageMemoryCache[key]);
+  });
+}
+
+function getErrorMessage_(err) {
+  return err && err.message ? err.message : String(err || '알 수 없는 오류');
+}
+
+function shortenCustomerMemo_(value, maxLen) {
+  value = String(value || '').trim();
+  maxLen = Number(maxLen) || 90;
+  if (value.length <= maxLen) return value;
+  return value.slice(0, maxLen) + '...';
+}
+
+function escAttr(value) {
+  return esc(value).replace(/"/g, '&quot;');
+}
+
+
+function normalizePagedResponse_(response) {
+  if (Array.isArray(response)) {
+    return { rows: response, total: response.length, page: 0, pageSize: response.length || CUSTOMER_PAGE_SIZE, start: 0, end: response.length, hasPrev: false, hasNext: false };
+  }
+  response = response || {};
+  response.rows = response.rows || [];
+  response.page = Number(response.page || 0);
+  response.pageSize = Number(response.pageSize || CUSTOMER_PAGE_SIZE);
+  response.total = Number(response.total || response.rows.length || 0);
+  response.start = Number(response.start || response.page * response.pageSize || 0);
+  response.end = Number(response.end || Math.min(response.start + response.rows.length, response.total));
+  response.hasPrev = response.page > 0;
+  response.hasNext = response.end < response.total;
+  return response;
+}
+
+function renderPagerHtml_(res, fnName, fromCache) {
+  res = normalizePagedResponse_(res);
+  const pageText = res.total ? ((res.start + 1) + '-' + res.end + ' / 총 ' + res.total + '건') : '총 0건';
+  const cacheText = fromCache ? '<span class="cache-note">캐시 표시</span>' : '<span class="cache-note">최신 조회</span>';
+  return '<div class="pager">' +
+    '<div class="pager-left"><strong>' + esc(pageText) + '</strong>' + cacheText + '</div>' +
+    '<div>' +
+      '<button class="secondary" ' + (res.hasPrev ? '' : 'disabled') + ' onclick="' + fnName + '(' + Math.max(0, res.page - 1) + ')">이전 20건</button> ' +
+      '<button class="secondary" ' + (res.hasNext ? '' : 'disabled') + ' onclick="' + fnName + '(' + (res.page + 1) + ')">다음 20건</button>' +
+    '</div>' +
+  '</div>';
+}
+
+
+function hideCustomerTopPager_() {
+  const el = document.getElementById('customerTopPager');
+  if (!el) return;
+  el.classList.remove('active');
+  el.style.display = 'none';
+  el.innerHTML = '';
+}
+
+function updateCustomerTopPager_(res, fromCache) {
+  const el = document.getElementById('customerTopPager');
+  if (!el) return;
+  res = normalizePagedResponse_(res);
+  if (!res.total) {
+    hideCustomerTopPager_();
+    return;
+  }
+
+  const pageText = (res.start + 1) + '-' + res.end + ' / ' + res.total;
+  el.innerHTML = '' +
+    '<span class="customer-top-pager-info">' + esc(pageText) + '</span>' +
+    '<button type="button" title="현재 검색 조건의 이전 20건을 봅니다." class="secondary customer-top-pager-btn" ' + (res.hasPrev ? '' : 'disabled') + ' onclick="searchCustomerPage(' + Math.max(0, res.page - 1) + ')">이전 20건</button>' +
+    '<button type="button" title="현재 검색 조건의 다음 20건을 봅니다." class="secondary customer-top-pager-btn" ' + (res.hasNext ? '' : 'disabled') + ' onclick="searchCustomerPage(' + (res.page + 1) + ')">다음 20건</button>';
+  el.style.display = 'inline-flex';
+  el.classList.add('active');
+}
+
+function customerCacheKey_(keyword, page) {
+  const version = customerSearchIndexState.version || 'server';
+  const filterSig = encodeURIComponent(getCustomerFilterSignature_());
+  const sortSig = encodeURIComponent(String(customerSortModeV67 || CUSTOMER_SORT_DEFAULT_V67));
+  const scopeSig = encodeURIComponent(getEffectiveCustomerScopeP04_());
+  return 'portalCustomerPage:v67sort:' + version + ':scope' + scopeSig + ':f' + filterSig + ':sort' + sortSig + ':' + encodeURIComponent(String(keyword || '').trim().toLowerCase()) + ':p' + (Number(page) || 0) + ':s' + CUSTOMER_PAGE_SIZE;
+}
+
+function getCustomerPageFromCache_(keyword, page) {
+  const key = customerCacheKey_(keyword, page);
+  if (customerPageMemoryCache[key]) {
+    const cached = Object.assign({}, customerPageMemoryCache[key]);
+    if (Array.isArray(cached.rows)) cached.rows = filterCustomerRowsByCustomerScopeP04_(cached.rows);
+    return cached;
+  }
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.data || !obj.cachedAt) return null;
+    if (Date.now() - obj.cachedAt > 10 * 60 * 1000) return null;
+    const currentPermEmail = (getPortalPermission_() && getPortalPermission_().email) || '';
+    if (obj.permissionEmail && currentPermEmail && obj.permissionEmail !== currentPermEmail) return null;
+    if (obj.data && Array.isArray(obj.data.rows)) obj.data.rows = filterCustomerRowsByCustomerScopeP04_(obj.data.rows);
+    customerPageMemoryCache[key] = obj.data;
+    return obj.data;
+  } catch (err) {
+    return null;
+  }
+}
+
+function setCustomerPageCache_(keyword, page, data) {
+  const key = customerCacheKey_(keyword, page);
+  if (data && Array.isArray(data.rows)) data = Object.assign({}, data, { rows: filterCustomerRowsByCustomerScopeP04_(data.rows) });
+  customerPageMemoryCache[key] = data;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ cachedAt: Date.now(), permissionEmail: (getPortalPermission_() && getPortalPermission_().email) || '', data: data, rows: data && data.rows ? data.rows.length : 0 }));
+  } catch (err) {
+    // sessionStorage 용량 초과 시 메모리 캐시만 사용합니다.
+  }
+}
+
+function initializeCustomerSearchIndex(options) {
+  options = options || {};
+  if (options.useLocalFirst) {
+    loadCustomerSearchIndexFromLocalStorage_();
+  }
+  if (customerSearchIndexState.loading) return;
+  customerSearchIndexState.loading = true;
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      customerSearchIndexState.loading = false;
+
+      // v31 FIX: 서버에서 인덱스 생성중/잠금중이라 빈 rows를 반환한 경우,
+      // 기존 localStorage/메모리 인덱스를 빈 값으로 덮어쓰지 않습니다.
+      if (data && data.rebuilding && (!data.rows || !data.rows.length)) {
+        if (!options.silent) toast(data.message || '검색인덱스_DB 생성 중입니다. 잠시 후 다시 시도하세요.');
+        return;
+      }
+
+      setCustomerSearchIndexData_(data, 'server');
+      if (!options.silent) toast('검색인덱스_DB를 새로 불러왔습니다.');
+      if (customerSearchState) {
+        const current = buildCustomerPageFromIndex_(customerSearchState.keyword || '', customerSearchState.page || 0);
+        if (current && document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active')) {
+          renderResults(current, true);
+          scheduleDetailPrefetchFromResult_(current, customerSearchState.keyword || '', customerSearchState.page || 0);
+        }
+      }
+    })
+    .withFailureHandler(function(err) {
+      customerSearchIndexState.loading = false;
+      if (!customerSearchIndexState.ready) {
+        console.warn('검색인덱스 로딩 실패', err);
+      }
+    })
+    .getCustomerSearchIndexData();
+}
+
+function setCustomerSearchIndexData_(data, source) {
+  data = data || {};
+  // PATCH K-1: 서버/로컬 검색인덱스가 stale이어도, 현재 탭에서 마스터 full detail 또는
+  // 사용자 저장으로 확정된 authoritative patch를 덮어쓰지 못하게 병합합니다.
+  let rows = applyAuthoritativeCustomerPatchesToRowsK1_(Array.isArray(data.rows) ? data.rows : []);
+  rows = filterCustomerRowsByPermissionClient_(rows);
+  customerSearchIndexState = {
+    ready: true,
+    loading: false,
+    version: data.version || String(Date.now()),
+    builtAt: data.builtAt || '',
+    rows: rows,
+    loadedAt: Date.now(),
+    source: source || 'server'
+  };
+  customerPageMemoryCache = {};
+  saveCustomerSearchIndexToLocalStorage_();
+}
+
+function saveCustomerSearchIndexToLocalStorage_() {
+  try {
+    localStorage.setItem(CUSTOMER_INDEX_STORAGE_KEY, JSON.stringify({
+      version: customerSearchIndexState.version,
+      builtAt: customerSearchIndexState.builtAt,
+      loadedAt: customerSearchIndexState.loadedAt,
+      permissionEmail: (getPortalPermission_() && getPortalPermission_().email) || '',
+      rows: customerSearchIndexState.rows
+    }));
+  } catch (err) {
+    // localStorage 용량 초과 가능. 이 경우 현재 탭 메모리 캐시만 사용합니다.
+  }
+}
+
+function loadCustomerSearchIndexFromLocalStorage_() {
+  if (customerSearchIndexState.ready && customerSearchIndexState.rows && customerSearchIndexState.rows.length) return true;
+  try {
+    const raw = localStorage.getItem(CUSTOMER_INDEX_STORAGE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.rows) || !data.rows.length || !data.loadedAt) return false;
+    if (Date.now() - Number(data.loadedAt) > CUSTOMER_INDEX_MAX_AGE_MS) return false;
+    const currentPermEmail = (getPortalPermission_() && getPortalPermission_().email) || '';
+    if (data.permissionEmail && currentPermEmail && data.permissionEmail !== currentPermEmail) return false;
+    customerSearchIndexState = {
+      ready: true,
+      loading: false,
+      version: data.version || 'local',
+      builtAt: data.builtAt || '',
+      rows: filterCustomerRowsByPermissionClient_(applyAuthoritativeCustomerPatchesToRowsK1_(data.rows)),
+      loadedAt: Number(data.loadedAt),
+      source: 'localStorage'
+    };
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+
+function ensureCustomerFilterUi_() {
+  if (customerFilterInitializedP) {
+    updateCustomerFilterButton_();
+    updateCustomerFilterSummary_();
+    return;
+  }
+
+  const header = document.querySelector('#customerSearchSection .customer-search-header') || document.querySelector('.customer-search-header');
+  if (!header) return;
+
+  if (!document.getElementById('customerFilterPanel')) {
+    const panel = document.createElement('div');
+    panel.id = 'customerFilterPanel';
+    panel.className = 'customer-filter-panel';
+    panel.style.display = customerFilterPanelOpenP ? 'block' : 'none';
+    header.insertAdjacentElement('afterend', panel);
+  }
+
+  const controls = header.querySelector('.customer-search-controls');
+  if (controls && !document.getElementById('customerFilterToggleBtn')) {
+    const searchBtn = controls.querySelector('button');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'customerFilterToggleBtn';
+    btn.className = 'secondary customer-filter-toggle-btn';
+    btn.onclick = function() { toggleCustomerFilterPanel(); };
+    btn.textContent = customerFilterPanelOpenP ? '닫기' : '필터';
+    if (searchBtn && searchBtn.nextSibling) controls.insertBefore(btn, searchBtn.nextSibling);
+    else controls.appendChild(btn);
+  }
+
+  if (controls && !document.getElementById('customerFilterResetBtn')) {
+    const toggleBtn = document.getElementById('customerFilterToggleBtn');
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.id = 'customerFilterResetBtn';
+    resetBtn.className = 'secondary customer-filter-reset-btn';
+    resetBtn.onclick = function() { resetCustomerFilters_(); };
+    resetBtn.textContent = '초기화';
+    if (toggleBtn && toggleBtn.nextSibling) controls.insertBefore(resetBtn, toggleBtn.nextSibling);
+    else controls.appendChild(resetBtn);
+  }
+
+  if (controls && !document.getElementById('customerFilterSummary')) {
+    const summary = document.createElement('div');
+    summary.id = 'customerFilterSummary';
+    summary.className = 'customer-filter-summary';
+    summary.style.display = 'none';
+    const input = controls.querySelector('#keyword') || controls.querySelector('input');
+    if (input) controls.insertBefore(summary, input);
+    else controls.insertBefore(summary, controls.firstChild);
+  }
+
+  customerFilterInitializedP = true;
+  renderCustomerFilterPanel_();
+  updateCustomerFilterButton_();
+  updateCustomerFilterSummary_();
+}
+
+function toggleCustomerFilterPanel(forceOpen) {
+  ensureCustomerFilterUi_();
+  if (typeof forceOpen === 'boolean') customerFilterPanelOpenP = forceOpen;
+  else customerFilterPanelOpenP = !customerFilterPanelOpenP;
+  const panel = document.getElementById('customerFilterPanel');
+  if (panel) panel.style.display = customerFilterPanelOpenP ? 'block' : 'none';
+  renderCustomerFilterPanel_();
+  updateCustomerFilterButton_();
+  updateCustomerFilterSummary_();
+}
+
+function updateCustomerFilterButton_() {
+  const btn = document.getElementById('customerFilterToggleBtn');
+  if (btn) btn.textContent = customerFilterPanelOpenP ? '닫기' : '필터';
+}
+
+function getCustomerFilterDef_(key) {
+  for (let i = 0; i < CUSTOMER_FILTER_DEFS_P.length; i++) {
+    if (CUSTOMER_FILTER_DEFS_P[i].key === key) return CUSTOMER_FILTER_DEFS_P[i];
+  }
+  return null;
+}
+
+function getCustomerFilterCondition_(key) {
+  if (!customerFilterStateP[key]) customerFilterStateP[key] = { enabled: false, text: '', value: '', min: '', max: '' };
+  return customerFilterStateP[key];
+}
+
+function toggleCustomerFilterCondition_(key, checked) {
+  const cond = getCustomerFilterCondition_(key);
+  cond.enabled = !!checked;
+  renderCustomerFilterPanel_();
+  updateCustomerFilterSummary_();
+}
+
+function setCustomerFilterValue_(key, prop, value) {
+  const cond = getCustomerFilterCondition_(key);
+  cond[prop] = value;
+  updateCustomerFilterSummary_();
+}
+
+function resetCustomerFilters_() {
+  customerFilterStateP = {};
+  const input = document.getElementById('keyword');
+  if (input) input.value = '';
+  customerSortModeV67 = CUSTOMER_SORT_DEFAULT_V67;
+  renderCustomerFilterPanel_();
+  updateCustomerFilterSummary_();
+  renderCustomerSortMenuV67_();
+  searchCustomerPage(0);
+}
+
+function getEnabledCustomerFilterDefs_() {
+  return CUSTOMER_FILTER_DEFS_P.filter(function(def) {
+    return !!(customerFilterStateP[def.key] && customerFilterStateP[def.key].enabled);
+  });
+}
+
+function hasEnabledCustomerFilters_() {
+  return getEnabledCustomerFilterDefs_().length > 0;
+}
+
+function hasActiveCustomerFilterConditions_() {
+  return CUSTOMER_FILTER_DEFS_P.some(function(def) {
+    const c = customerFilterStateP[def.key];
+    if (!c || !c.enabled) return false;
+    if (def.type === 'range') return String(c.min || '').trim() !== '' || String(c.max || '').trim() !== '';
+    if (def.type === 'select') return String(c.value || '').trim() !== '';
+    return String(c.text || '').trim() !== '';
+  });
+}
+
+function getCustomerFilterSignature_() {
+  const active = {};
+  CUSTOMER_FILTER_DEFS_P.forEach(function(def) {
+    const c = customerFilterStateP[def.key];
+    if (!c || !c.enabled) return;
+    active[def.key] = { type: def.type, text: c.text || '', value: c.value || '', min: c.min || '', max: c.max || '' };
+  });
+  return JSON.stringify(active);
+}
+
+function updateCustomerFilterSummary_() {
+  const el = document.getElementById('customerFilterSummary');
+  if (!el) return;
+  const labels = getEnabledCustomerFilterDefs_().map(function(def) { return def.label; });
+  if (!labels.length) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  el.style.display = 'flex';
+  el.textContent = '[필터: ' + labels.join(', ') + ']';
+}
+
+function renderCustomerFilterPanel_() {
+  const panel = document.getElementById('customerFilterPanel');
+  if (!panel) return;
+  if (!customerFilterPanelOpenP) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+
+  const grouped = {};
+  CUSTOMER_FILTER_DEFS_P.forEach(function(def) {
+    if (!grouped[def.section]) grouped[def.section] = [];
+    grouped[def.section].push(def);
+  });
+
+  let html = '<div class="customer-filter-panel-inner">';
+  Object.keys(grouped).forEach(function(section) {
+    html += '<div class="customer-filter-section">' +
+      '<div class="customer-filter-section-title">' + esc(section) + '</div>' +
+      '<div class="customer-filter-grid">';
+    grouped[section].forEach(function(def) {
+      html += renderCustomerFilterItem_(def);
+    });
+    html += '</div></div>';
+  });
+  html += '<div class="customer-filter-help">체크한 조건만 검색에 적용됩니다. 조건을 바꾼 뒤 상단 [검색]을 누르면 반영됩니다.</div>';
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+function renderCustomerFilterItem_(def) {
+  const cond = getCustomerFilterCondition_(def.key);
+  const checked = !!cond.enabled;
+  const disabled = checked ? '' : ' disabled';
+  let control = '';
+  if (def.type === 'range') {
+    control = '<div class="customer-filter-range">' +
+      '<input type="text" placeholder="최소" value="' + escAttr(cond.min || '') + '"' + disabled + ' oninput="setCustomerFilterValue_(\'' + escAttr(def.key) + '\', \'min\', this.value)">' +
+      '<span>~</span>' +
+      '<input type="text" placeholder="최대" value="' + escAttr(cond.max || '') + '"' + disabled + ' oninput="setCustomerFilterValue_(\'' + escAttr(def.key) + '\', \'max\', this.value)">' +
+    '</div>';
+  } else if (def.type === 'select') {
+    const opts = getCustomerFilterOptions_(def);
+    control = '<select' + disabled + ' onchange="setCustomerFilterValue_(\'' + escAttr(def.key) + '\', \'value\', this.value)">' +
+      '<option value="">전체</option>' +
+      opts.map(function(opt) {
+        const selected = String(cond.value || '') === String(opt) ? ' selected' : '';
+        return '<option value="' + escAttr(opt) + '"' + selected + '>' + esc(opt) + '</option>';
+      }).join('') +
+    '</select>';
+  } else {
+    control = '<input type="text" placeholder="포함 검색" value="' + escAttr(cond.text || '') + '"' + disabled + ' oninput="setCustomerFilterValue_(\'' + escAttr(def.key) + '\', \'text\', this.value)">';
+  }
+
+  return '<div class="customer-filter-item ' + (checked ? 'active' : '') + '">' +
+    '<label class="customer-filter-check">' +
+      '<input type="checkbox" ' + (checked ? 'checked' : '') + ' onchange="toggleCustomerFilterCondition_(\'' + escAttr(def.key) + '\', this.checked)">' +
+      '<span>' + esc(def.label) + '</span>' +
+    '</label>' +
+    '<div class="customer-filter-control">' + control + '</div>' +
+  '</div>';
+}
+
+function getCustomerFilterOptions_(def) {
+  if (def.options && def.options.length) return def.options.slice();
+  const values = [];
+  const seen = {};
+  if (def.key === 'status' && typeof getPortalStatusOptionsForSelect_ === 'function') {
+    (getPortalStatusOptionsForSelect_('') || []).forEach(function(item) {
+      const v = String(item.value || item.label || '').trim();
+      if (v && !seen[v]) { seen[v] = true; values.push(v); }
+    });
+  }
+  const rows = customerSearchIndexState && Array.isArray(customerSearchIndexState.rows) ? customerSearchIndexState.rows : [];
+  rows.forEach(function(row) {
+    const v = String(getCustomerFilterRowValue_(row, def.key) || '').trim();
+    if (!v || seen[v]) return;
+    if (v.length > 60) return;
+    seen[v] = true;
+    values.push(v);
+  });
+  return values.slice(0, 80).sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
+}
+
+function waitCustomerFilterIndexThenSearch_(keywordValue, page) {
+  if (customerFilterWaitTimerP) clearInterval(customerFilterWaitTimerP);
+  const area = document.getElementById('resultArea') || resultArea;
+  if (area) area.innerHTML = '<div class="loading">필터 검색을 준비하는 중입니다.<br><span class="cache-note">검색인덱스_DB를 먼저 불러온 뒤 조건을 적용합니다.</span></div>';
+  let count = 0;
+  customerFilterWaitTimerP = setInterval(function() {
+    count++;
+    if (customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows)) {
+      clearInterval(customerFilterWaitTimerP);
+      customerFilterWaitTimerP = null;
+      fetchCustomerPage_(keywordValue, page, function(res, fromCache) {
+        renderResults(res, fromCache);
+        scheduleCustomerPrefetch_(keywordValue, customerSearchState.page + 1, 4);
+        scheduleDetailPrefetchFromResult_(res, keywordValue, customerSearchState.page);
+      }, showSearchError);
+    } else if (count > 40) {
+      clearInterval(customerFilterWaitTimerP);
+      customerFilterWaitTimerP = null;
+      if (area) area.innerHTML = '<div class="loading">검색인덱스_DB를 불러오지 못해 필터 검색을 완료하지 못했습니다.<br><span class="cache-note">새로고침 후 다시 시도하세요.</span></div>';
+    }
+  }, 250);
+}
+
+function doesCustomerRowMatchFiltersClient_(row) {
+  if (!hasActiveCustomerFilterConditions_()) return true;
+  return CUSTOMER_FILTER_DEFS_P.every(function(def) {
+    const c = customerFilterStateP[def.key];
+    if (!c || !c.enabled) return true;
+    const raw = getCustomerFilterRowValue_(row, def.key);
+    if (def.type === 'range') {
+      const hasMin = String(c.min || '').trim() !== '';
+      const hasMax = String(c.max || '').trim() !== '';
+      if (!hasMin && !hasMax) return true;
+      const num = parseCustomerFilterNumber_(raw);
+      if (isNaN(num)) return false;
+      if (hasMin && num < parseCustomerFilterNumber_(c.min)) return false;
+      if (hasMax && num > parseCustomerFilterNumber_(c.max)) return false;
+      return true;
+    }
+    if (def.type === 'select') {
+      const want = String(c.value || '').trim();
+      if (!want) return true;
+      return normalizeCustomerFilterText_(raw) === normalizeCustomerFilterText_(want);
+    }
+    const needle = normalizeCustomerFilterText_(c.text || '');
+    if (!needle) return true;
+    return normalizeCustomerFilterText_(raw).indexOf(needle) >= 0;
+  });
+}
+
+function getCustomerFilterRowValue_(row, key) {
+  row = row || {};
+  const map = {
+    customerNo: row.customerNo,
+    company: row.company,
+    salesRep: row.salesRep,
+    status: row.status,
+    customerRank: row.customerRank,
+    contact: row.contact,
+    phone: row.phone,
+    directPhone: row.directPhone,
+    email: row.email,
+    address: row.fullAddress || row.address,
+    area: row.area,
+    grade: row.grade,
+    buildingType: row.buildingType,
+    contractUnit: row.contractUnit,
+    appointment: row.appointment,
+    maintenance: row.maintenance,
+    performance: row.performance,
+    vat: row.vat,
+    discountRate: row.discountRate,
+    finalQuote: row.finalQuote,
+    specialTerms: row.specialTerms,
+    businessNo: row.businessNo || row.businessRegistrationNo || row['사업자등록번호'],
+    businessLegalName: row.businessLegalName || row.legalName || row['법인명'] || row['사업자등록증상 법인명'],
+    representativeName: row.representativeName || row.ceoName || row['대표자명']
+  };
+  if (key === 'businessRegistrationReceived') return String(map.businessNo || '').trim() ? 'O' : 'X';
+  if (key === 'serviceApplicationReceived') return normalizeCustomerFilterBooleanMark_(row.serviceApplicationReceived || row.serviceApplication || row['용역신청서']);
+  if (key === 'appointmentReportReceived') return normalizeCustomerFilterBooleanMark_(row.appointmentReportReceived || row.appointmentReport || row['선임신고서']);
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : row[key];
+}
+
+function normalizeCustomerFilterBooleanMark_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return 'X';
+  const upper = text.toUpperCase();
+  if (['TRUE','Y','YES','O','1','수취','완료','있음'].indexOf(upper) >= 0) return 'O';
+  if (text === '예' || text === '유' || text === 'ㅇ') return 'O';
+  if (['FALSE','N','NO','X','0','-','미수취','없음'].indexOf(upper) >= 0) return 'X';
+  if (text === '아니오' || text === '무' || text === 'ㄴ') return 'X';
+  return text;
+}
+
+function normalizeCustomerFilterText_(value) {
+  return String(value == null ? '' : value).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function parseCustomerFilterNumber_(value) {
+  const text = String(value == null ? '' : value).replace(/[^0-9.\-]/g, '');
+  if (!text || text === '-' || text === '.') return NaN;
+  return Number(text);
+}
+
+setTimeout(function() { try { ensureCustomerFilterUi_(); } catch (err) {} }, 0);
+
+function buildCustomerPageFromIndex_(keyword, page) {
+  if (!customerSearchIndexState.ready || !Array.isArray(customerSearchIndexState.rows)) return null;
+  keyword = String(keyword || '').trim().toLowerCase();
+  page = Math.max(0, Number(page) || 0);
+
+  const permittedRows = filterCustomerRowsByCustomerScopeP04_(customerSearchIndexState.rows);
+  let filtered = permittedRows.filter(function(row) {
+    return doesCustomerRowMatchFiltersClient_(row);
+  });
+  filtered = filterCustomerRowsByKeywordClientV67_(filtered, keyword);
+  filtered = sortCustomerRowsClientV67_(filtered, customerSortModeV67);
+
+  const start = page * CUSTOMER_PAGE_SIZE;
+  const rows = applyAuthoritativeCustomerPatchesToRowsK1_(filtered.slice(start, start + CUSTOMER_PAGE_SIZE));
+  return {
+    rows: rows,
+    total: filtered.length,
+    page: page,
+    pageSize: CUSTOMER_PAGE_SIZE,
+    start: start,
+    end: Math.min(start + rows.length, filtered.length),
+    hasPrev: page > 0,
+    hasNext: start + CUSTOMER_PAGE_SIZE < filtered.length,
+    keyword: keyword,
+    source: customerSearchIndexState.source || 'clientIndex',
+    version: customerSearchIndexState.version,
+    builtAt: customerSearchIndexState.builtAt
+  };
+}
+
+// v35 FIX: 브라우저 캐시/로컬 인덱스에서도 서버와 같은 엄격 검색 규칙을 적용합니다.
+// 메모요약/searchText는 검색 대상에서 제외하여, 메모 로그 안의 이름 때문에 다른 고객이 뜨는 문제를 막습니다.
+function doesCustomerRowMatchKeywordClient_(row, keyword) {
+  keyword = String(keyword || '').trim().toLowerCase();
+  if (!keyword) return true;
+
+  const fields = [
+    row && row.customerNo,
+    row && row.company,
+    row && (row.fullAddress || row.address),
+    row && row.contact,
+    row && row.phone,
+    row && row.directPhone,
+    row && row.email,
+    row && row.salesRep,
+    row && row.vendor,
+    row && row.status,
+    row && row.finalQuote,
+    row && row.region,
+    row && row.area,
+    row && row.grade,
+    row && row.buildingType,
+    row && row.contractUnit,
+    row && row.appointment,
+    row && row.maintenance,
+    row && row.performance,
+    row && row.vat
+  ];
+
+  const text = normalizeCustomerSearchTextClient_(fields.join(' '));
+  const compactText = compactCustomerSearchTextClient_(text);
+  const tokens = keyword.split(/\s+/).filter(Boolean);
+
+  return tokens.every(function(token) {
+    const t = normalizeCustomerSearchTextClient_(token);
+    const compact = compactCustomerSearchTextClient_(t);
+    return text.indexOf(t) >= 0 || (compact && compactText.indexOf(compact) >= 0);
+  });
+}
+
+
+function filterCustomerRowsByKeywordClientV67_(rows, keyword) {
+  keyword = String(keyword || '').trim().toLowerCase();
+  rows = Array.isArray(rows) ? rows : [];
+  if (!keyword) return rows;
+
+  if (isNumericOnlyCustomerKeywordV67_(keyword)) {
+    const exact = rows.filter(function(row) {
+      return normalizeCustomerNoForKey_(row && row.customerNo) === keyword;
+    });
+    if (exact.length) return exact;
+  }
+
+  return rows.filter(function(row) { return doesCustomerRowMatchKeywordClient_(row, keyword); });
+}
+
+function isNumericOnlyCustomerKeywordV67_(keyword) {
+  return /^[0-9]+$/.test(String(keyword || '').trim());
+}
+
+function sortCustomerRowsClientV67_(rows, mode) {
+  rows = Array.isArray(rows) ? rows.slice() : [];
+  mode = mode || CUSTOMER_SORT_DEFAULT_V67;
+  return rows.map(function(row, idx) { return { row: row, idx: idx }; }).sort(function(a, b) {
+    const cmp = compareCustomerRowsClientV67_(a.row, b.row, mode);
+    return cmp || (a.idx - b.idx);
+  }).map(function(item) { return item.row; });
+}
+
+function compareCustomerRowsClientV67_(a, b, mode) {
+  const headerSort = String(mode || '').match(/^header:([^:]+):(asc|desc)$/);
+  if (headerSort) return comparePortalSortValuesP15_(a && a[headerSort[1]], b && b[headerSort[1]], headerSort[2]);
+  if (mode === 'customerNoAsc') return compareNumberWithMissingLastV67_(parseCustomerNoNumberV67_(a && a.customerNo), parseCustomerNoNumberV67_(b && b.customerNo), true);
+  if (mode === 'customerNoDesc') return compareNumberWithMissingLastV67_(parseCustomerNoNumberV67_(a && a.customerNo), parseCustomerNoNumberV67_(b && b.customerNo), false);
+  if (mode === 'finalQuoteAsc') return compareNumberWithMissingLastV67_(parseMoneyNumberV67_(a && a.finalQuote), parseMoneyNumberV67_(b && b.finalQuote), true);
+  if (mode === 'finalQuoteDesc') return compareNumberWithMissingLastV67_(parseMoneyNumberV67_(a && a.finalQuote), parseMoneyNumberV67_(b && b.finalQuote), false);
+  if (mode === 'contactLatest') return compareNumberWithMissingLastV67_(parseLatestContactTimeV67_(a && a.memo), parseLatestContactTimeV67_(b && b.memo), false);
+  if (mode === 'contactOldest') return compareNumberWithMissingLastV67_(parseLatestContactTimeV67_(a && a.memo), parseLatestContactTimeV67_(b && b.memo), true);
+  return compareCustomerNoDigitsDescV67_(a && a.customerNo, b && b.customerNo);
+}
+
+function compareCustomerNoDigitsDescV67_(a, b) {
+  const pa = parseCustomerNoPartsV67_(a);
+  const pb = parseCustomerNoPartsV67_(b);
+  if (pa.missing && pb.missing) return 0;
+  if (pa.missing) return 1;
+  if (pb.missing) return -1;
+  if (pb.digits !== pa.digits) return pb.digits - pa.digits;
+  return pb.number - pa.number;
+}
+
+function parseCustomerNoPartsV67_(value) {
+  const raw = String(value == null ? '' : value).replace(/[^0-9]/g, '');
+  if (!raw) return { missing: true, digits: 0, number: 0 };
+  return { missing: false, digits: raw.length, number: Number(raw) || 0 };
+}
+
+function parseCustomerNoNumberV67_(value) {
+  const raw = String(value == null ? '' : value).replace(/[^0-9]/g, '');
+  return raw ? Number(raw) : NaN;
+}
+
+function parseMoneyNumberV67_(value) {
+  const raw = String(value == null ? '' : value).replace(/[^0-9.\-]/g, '');
+  if (!raw || raw === '-' || raw === '.') return NaN;
+  return Number(raw);
+}
+
+function compareNumberWithMissingLastV67_(a, b, asc) {
+  const ma = isNaN(a);
+  const mb = isNaN(b);
+  if (ma && mb) return 0;
+  if (ma) return 1;
+  if (mb) return -1;
+  return asc ? (a - b) : (b - a);
+}
+
+function parseLatestContactTimeV67_(memo) {
+  const text = String(memo == null ? '' : memo);
+  if (!text.trim()) return NaN;
+  const nowYear = new Date().getFullYear();
+  const candidates = [];
+  const patterns = [
+    /(?:^|[^0-9])((?:20)?\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/g,
+    /(?:^|[^0-9])(\d{1,2})[.\/-](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/g
+  ];
+  patterns.forEach(function(re, idx) {
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      let year, month, day, hour, minute;
+      if (idx === 0) {
+        year = Number(m[1]);
+        if (year < 100) year += 2000;
+        month = Number(m[2]);
+        day = Number(m[3]);
+        hour = Number(m[4] || 0);
+        minute = Number(m[5] || 0);
+      } else {
+        // 앞에 연도가 붙은 YY.MM.DD 패턴은 첫 번째 정규식에서 처리했으므로 여기서는 월/일만 보조 처리합니다.
+        year = nowYear;
+        month = Number(m[1]);
+        day = Number(m[2]);
+        hour = Number(m[3] || 0);
+        minute = Number(m[4] || 0);
+      }
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        const t = new Date(year, month - 1, day, hour || 0, minute || 0, 0, 0).getTime();
+        if (!isNaN(t)) candidates.push(t);
+      }
+    }
+  });
+  if (!candidates.length) return NaN;
+  return Math.max.apply(null, candidates);
+}
+
+function getCustomerSortLabelV67_() {
+  const headerInfo = getCustomerHeaderSortInfoP15_ ? getCustomerHeaderSortInfoP15_() : { key: '' };
+  if (headerInfo && headerInfo.key) {
+    const col = (CUSTOMER_RESULT_TABLE.columns || []).find(function(c) { return c && c.key === headerInfo.key; });
+    return (col ? col.label : headerInfo.key) + (headerInfo.dir === 'desc' ? ' 내림차순' : ' 오름차순');
+  }
+  const list = Array.isArray(CUSTOMER_SORT_OPTIONS_V67) ? CUSTOMER_SORT_OPTIONS_V67 : [];
+  const hit = list.find(function(opt) { return opt.value === customerSortModeV67; });
+  return hit ? hit.label : '정렬';
+}
+
+function renderCustomerSortMenuV67_() {
+  const btn = document.getElementById('customerSortButtonV67');
+  const menu = document.getElementById('customerSortMenuV67');
+  if (btn) btn.textContent = getCustomerSortLabelV67_();
+  if (!menu) return;
+  const opts = Array.isArray(CUSTOMER_SORT_OPTIONS_V67) ? CUSTOMER_SORT_OPTIONS_V67 : [];
+  menu.innerHTML = opts.map(function(opt) {
+    const active = opt.value === customerSortModeV67 ? ' active' : '';
+    return '<button type="button" class="customer-sort-option' + active + '" onclick="setCustomerSortModeV67_(\'' + escAttr(opt.value) + '\')">' + esc(opt.label) + '</button>';
+  }).join('');
+}
+
+function toggleCustomerSortMenuV67_(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  renderCustomerSortMenuV67_();
+  const menu = document.getElementById('customerSortMenuV67');
+  if (!menu) return;
+  menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+}
+
+function closeCustomerSortMenuV67_() {
+  const menu = document.getElementById('customerSortMenuV67');
+  if (menu) menu.style.display = 'none';
+}
+
+function setCustomerSortModeV67_(mode) {
+  customerSortModeV67 = mode || CUSTOMER_SORT_DEFAULT_V67;
+  closeCustomerSortMenuV67_();
+  renderCustomerSortMenuV67_();
+  searchCustomerPage(0);
+}
+
+setTimeout(function() {
+  try {
+    renderCustomerSortMenuV67_();
+    document.addEventListener('click', function(e) {
+      const wrap = document.querySelector('.customer-sort-wrap');
+      if (wrap && e && e.target && wrap.contains(e.target)) return;
+      closeCustomerSortMenuV67_();
+    });
+  } catch (err) {}
+}, 0);
+
+function normalizeCustomerSearchTextClient_(value) {
+  return String(value || '').toLowerCase().trim();
+}
+
+function compactCustomerSearchTextClient_(value) {
+  return normalizeCustomerSearchTextClient_(value).replace(/[\s\-_.()\[\]{}\/\\]+/g, '');
+}
+
+
+// PATCH K-1: 검색인덱스_DB는 마스터가 아니라 검색/빠른 표시용 snapshot입니다.
+// source 우선순위: optimistic/saveResult > master > localStorage full > index/summary/lite
+function getCustomerTargetKeyK1_(target) {
+  target = target || {};
+  const cno = normalizeCustomerNoForKey_(target.customerNo);
+  if (cno) return 'CNO:' + cno;
+  const rowNo = Number(target.rowNo) || 0;
+  return rowNo ? 'ROW:' + rowNo : '';
+}
+
+function normalizeCustomerPatchForIndexK1_(target, patchValues) {
+  target = target || {};
+  patchValues = patchValues || {};
+  const rowNo = Number(target.rowNo) || 0;
+  const cno = normalizeCustomerNoForKey_(target.customerNo);
+  const patch = {};
+  if (rowNo) patch.rowNo = rowNo;
+  if (cno) patch.customerNo = cno;
+
+  const keyMap = {
+    customerNo: 'customerNo',
+    company: 'company',
+    salesRep: 'salesRep',
+    status: 'status',
+    contact: 'contact',
+    phone: 'phone',
+    directPhone: 'directPhone',
+    email: 'email',
+    address: 'address',
+    vendor: 'vendor',
+    memo: 'memo',
+    finalQuote: 'finalQuote',
+    firstRegisteredAt: 'firstRegisteredAt',
+    region: 'region',
+    area: 'area',
+    grade: 'grade',
+    buildingType: 'buildingType',
+    contractUnit: 'contractUnit',
+    appointment: 'appointment',
+    maintenance: 'maintenance',
+    performance: 'performance',
+    vat: 'vat',
+    discountRate: 'discountRate',
+    specialTerms: 'specialTerms',
+    lastSent: 'lastSent',
+    sentAt: 'sentAt'
+  };
+
+  Object.keys(patchValues || {}).forEach(function(key) {
+    const mapped = keyMap[key];
+    if (!mapped) return;
+    const value = patchValues[key] == null ? '' : String(patchValues[key]);
+    patch[mapped] = value;
+    if (mapped === 'address') patch.fullAddress = value;
+  });
+
+  return patch;
+}
+
+function recomputeCustomerRowSearchTextK1_(row) {
+  row = row || {};
+  row.searchText = [
+    row.customerNo,
+    row.company,
+    row.fullAddress || row.address,
+    row.contact,
+    row.phone,
+    row.directPhone,
+    row.email,
+    row.salesRep,
+    row.vendor,
+    row.status,
+    row.finalQuote,
+    row.region,
+    row.area,
+    row.grade,
+    row.buildingType,
+    row.contractUnit,
+    row.appointment,
+    row.maintenance,
+    row.performance,
+    row.vat,
+    row.memo
+  ].join(' ').toLowerCase();
+  return row;
+}
+
+function rememberAuthoritativeCustomerPatchK1_(target, patchValues, source) {
+  const patch = normalizeCustomerPatchForIndexK1_(target, patchValues);
+  const key = getCustomerTargetKeyK1_(patch);
+  if (!key) return;
+  const current = customerAuthoritativePatchMapK1[key] || { patch: {}, rowNo: patch.rowNo || 0, customerNo: patch.customerNo || '' };
+  current.patch = Object.assign({}, current.patch || {}, patch);
+  current.rowNo = Number(current.rowNo || patch.rowNo) || 0;
+  current.customerNo = normalizeCustomerNoForKey_(current.customerNo || patch.customerNo);
+  current.source = source || 'authoritative';
+  current.updatedAt = Date.now();
+  customerAuthoritativePatchMapK1[key] = current;
+}
+
+function cleanupAuthoritativeCustomerPatchesK1_() {
+  const now = Date.now();
+  Object.keys(customerAuthoritativePatchMapK1 || {}).forEach(function(key) {
+    const item = customerAuthoritativePatchMapK1[key];
+    if (!item || now - Number(item.updatedAt || 0) > CUSTOMER_AUTHORITATIVE_PATCH_TTL_MS_K1) {
+      delete customerAuthoritativePatchMapK1[key];
+    }
+  });
+}
+
+function applyAuthoritativeCustomerPatchToRowK1_(row) {
+  row = row || {};
+  cleanupAuthoritativeCustomerPatchesK1_();
+  const cnoKey = normalizeCustomerNoForKey_(row.customerNo) ? ('CNO:' + normalizeCustomerNoForKey_(row.customerNo)) : '';
+  const rowKey = Number(row.rowNo) ? ('ROW:' + Number(row.rowNo)) : '';
+  const item = (cnoKey && customerAuthoritativePatchMapK1[cnoKey]) || (rowKey && customerAuthoritativePatchMapK1[rowKey]) || null;
+  if (!item || !item.patch) return row;
+  const next = Object.assign({}, row, item.patch);
+  return recomputeCustomerRowSearchTextK1_(next);
+}
+
+function applyAuthoritativeCustomerPatchesToRowsK1_(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map(function(row) { return applyAuthoritativeCustomerPatchToRowK1_(row); });
+}
+
+function isIndexLikeDetailK1_(detail) {
+  if (!detail) return false;
+  const src = String(detail.__source || '').toLowerCase();
+  return !!(detail.__summary || detail.__lite || src === 'index' || src === 'summary' || src === 'lite' || src === 'rowSummary'.toLowerCase());
+}
+
+function getDetailSourceRankK1_(detail, options) {
+  options = options || {};
+  if (!detail) return 0;
+  const src = String(options.source || detail.__source || '').toLowerCase();
+  if (detail.__pendingSave || src === 'optimistic' || src === 'saveresult') return 100;
+  if (detail.__masterBacked || src === 'master') return 80;
+  if (!isIndexLikeDetailK1_(detail) && src === 'localstorage') return 50;
+  if (!isIndexLikeDetailK1_(detail) && !src) return 40;
+  return 10;
+}
+
+function markDetailSourceK1_(detail, source, options) {
+  detail = detail || {};
+  options = options || {};
+  const src = source || detail.__source || '';
+  if (src) detail.__source = src;
+  if (src === 'master' || src === 'saveResult') {
+    detail.__masterBacked = true;
+    detail.__summary = false;
+    detail.__lite = false;
+  }
+  if (src === 'index' || src === 'summary' || src === 'lite') {
+    detail.__masterBacked = false;
+    detail.__summary = true;
+    detail.__lite = true;
+  }
+  if (!detail.__loadedAt) detail.__loadedAt = new Date().toISOString();
+  return detail;
+}
+
+function patchCustomerSearchIndexAndPagesK1_(target, patchValues, options) {
+  options = options || {};
+  const patch = normalizeCustomerPatchForIndexK1_(target, patchValues);
+  if (!patch.rowNo && !patch.customerNo) return;
+
+  if (options.remember !== false) {
+    rememberAuthoritativeCustomerPatchK1_(patch, patch, options.source || 'authoritative');
+  }
+
+  const matches = function(row) {
+    if (!row) return false;
+    if (patch.customerNo && normalizeCustomerNoForKey_(row.customerNo) === patch.customerNo) return true;
+    if (patch.rowNo && Number(row.rowNo) === Number(patch.rowNo)) return true;
+    return false;
+  };
+
+  let touchedIndex = false;
+  if (customerSearchIndexState && Array.isArray(customerSearchIndexState.rows)) {
+    customerSearchIndexState.rows.forEach(function(row, idx) {
+      if (!matches(row)) return;
+      customerSearchIndexState.rows[idx] = recomputeCustomerRowSearchTextK1_(Object.assign({}, row, patch));
+      touchedIndex = true;
+    });
+    if (!touchedIndex && patch.rowNo) {
+      customerSearchIndexState.rows.push(recomputeCustomerRowSearchTextK1_(Object.assign({}, patch)));
+      touchedIndex = true;
+    }
+  }
+
+  Object.keys(customerPageMemoryCache || {}).forEach(function(key) {
+    const res = customerPageMemoryCache[key];
+    if (!res || !Array.isArray(res.rows)) return;
+    res.rows.forEach(function(row, idx) {
+      if (!matches(row)) return;
+      res.rows[idx] = recomputeCustomerRowSearchTextK1_(Object.assign({}, row, patch));
+    });
+  });
+
+  if (lastCustomerResultResponse && Array.isArray(lastCustomerResultResponse.rows)) {
+    lastCustomerResultResponse.rows.forEach(function(row, idx) {
+      if (!matches(row)) return;
+      lastCustomerResultResponse.rows[idx] = recomputeCustomerRowSearchTextK1_(Object.assign({}, row, patch));
+    });
+  }
+
+  if (touchedIndex || options.forceSaveIndex) saveCustomerSearchIndexToLocalStorage_();
+}
+
+function fetchCustomerPage_(keyword, page, onSuccess, onError, options) {
+  options = options || {};
+  if (!options.forceNetwork) {
+    const fromIndex = buildCustomerPageFromIndex_(keyword, page);
+    if (fromIndex) {
+      setCustomerPageCache_(keyword, page, fromIndex);
+      onSuccess(fromIndex, true);
+      return;
+    }
+    if (hasActiveCustomerFilterConditions_()) {
+      onSuccess({ rows: [], total: 0, page: Math.max(0, Number(page) || 0), pageSize: CUSTOMER_PAGE_SIZE, start: 0, end: 0, hasPrev: false, hasNext: false, keyword: keyword, source: 'filterNoIndex' }, true);
+      return;
+    }
+  }
+
+  const cached = getCustomerPageFromCache_(keyword, page);
+  if (cached && !options.forceNetwork) {
+    onSuccess(cached, true);
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && Array.isArray(res.rows)) res.rows = applyAuthoritativeCustomerPatchesToRowsK1_(res.rows);
+      setCustomerPageCache_(keyword, page, res);
+      if (res && res.rows) {
+        mergeCustomerIndexRows_(res.rows, res.version || 'serverPage');
+      }
+      onSuccess(res, false);
+    })
+    .withFailureHandler(onError)
+    .searchCustomersPaged(keyword, page, CUSTOMER_PAGE_SIZE, customerSortModeV67, getCustomerScopeForRequestP04_());
+}
+
+function mergeCustomerIndexRows_(rows, version) {
+  rows = filterCustomerRowsByPermissionClient_(applyAuthoritativeCustomerPatchesToRowsK1_(Array.isArray(rows) ? rows : []));
+  if (!rows.length) return;
+  if (!customerSearchIndexState.ready) {
+    customerSearchIndexState = { ready: true, loading: false, version: version || 'partial', builtAt: '', rows: [], loadedAt: Date.now(), source: 'partialServer' };
+  }
+  const map = {};
+  customerSearchIndexState.rows.forEach(function(r, idx) { if (r && r.rowNo) map[Number(r.rowNo)] = idx; });
+  rows.forEach(function(r) {
+    const rowNo = Number(r && r.rowNo) || 0;
+    if (!rowNo) return;
+    const patched = applyAuthoritativeCustomerPatchToRowK1_(r);
+    if (Object.prototype.hasOwnProperty.call(map, rowNo)) customerSearchIndexState.rows[map[rowNo]] = Object.assign({}, customerSearchIndexState.rows[map[rowNo]], patched);
+    else customerSearchIndexState.rows.push(patched);
+  });
+}
+
+
+
+function findCustomerRowSummaryByRowNo_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  let hit = null;
+  const scan = function(res) {
+    if (hit || !res || !Array.isArray(res.rows)) return;
+    hit = res.rows.find(function(r) { return Number(r.rowNo) === rowNo; }) || null;
+  };
+  scan(lastCustomerResultResponse);
+  Object.keys(customerPageMemoryCache || {}).forEach(function(key) { scan(customerPageMemoryCache[key]); });
+  if (!hit && customerSearchIndexState && Array.isArray(customerSearchIndexState.rows)) {
+    hit = customerSearchIndexState.rows.find(function(r) { return Number(r.rowNo) === rowNo; }) || null;
+  }
+  return hit;
+}
+
+
+function findCustomerRowSummaryByCustomerNo_(customerNo) {
+  const cno = normalizeCustomerNoForKey_(customerNo);
+  if (!cno) return null;
+  let hit = null;
+  const scan = function(res) {
+    if (hit || !res || !Array.isArray(res.rows)) return;
+    hit = res.rows.find(function(r) { return normalizeCustomerNoForKey_(r && r.customerNo) === cno; }) || null;
+  };
+  scan(lastCustomerResultResponse);
+  Object.keys(customerPageMemoryCache || {}).forEach(function(key) { scan(customerPageMemoryCache[key]); });
+  if (!hit && customerSearchIndexState && Array.isArray(customerSearchIndexState.rows)) {
+    hit = customerSearchIndexState.rows.find(function(r) { return normalizeCustomerNoForKey_(r && r.customerNo) === cno; }) || null;
+  }
+  return hit;
+}
+
+function buildCustomerDetailFromRowSummary_(row, rowNo) {
+  row = row || {};
+  rowNo = Number(rowNo || row.rowNo) || 0;
+  const detail = {
+    rowNo: rowNo,
+    company: row.company || '',
+    customerNo: row.customerNo || '',
+    address: row.fullAddress || row.address || '',
+    contact: row.contact || '',
+    phone: row.phone || '',
+    directPhone: row.directPhone || '',
+    email: row.email || '',
+    salesRep: row.salesRep || '',
+    vendor: row.vendor || '',
+    status: row.status || '',
+    customerRank: row.customerRank || '',
+    statusOptions: [],
+    customerRankOptions: ['', 'A급', 'B급', 'C급', '보류', '제외'],
+    memo: row.memo || '',
+    lastSent: row.lastSent || '',
+    sentAt: row.sentAt || '',
+
+    // PATCH K-2: 검색인덱스_DB detail-lite 확장 필드
+    firstRegisteredAt: row.firstRegisteredAt || '',
+    region: row.region || '',
+    area: row.area || '',
+    grade: row.grade || '',
+    buildingType: row.buildingType || '',
+    finalQuote: row.finalQuote || '',
+    contractUnit: row.contractUnit || '',
+    appointment: row.appointment || '',
+    maintenance: row.maintenance || '',
+    performance: row.performance || '',
+    vat: row.vat || '',
+    discountRate: row.discountRate || '',
+    specialTerms: row.specialTerms || '',
+
+    contactRounds: [],
+    contactMethods: [],
+    contactLogs: [],
+    raw: {},
+    __summary: true,
+    __lite: true,
+    __source: 'index',
+    __masterBacked: false,
+    __indexUpdatedAt: row.indexUpdatedAt || '',
+    __masterVersion: row.masterVersion || '',
+    __loadedAt: new Date().toISOString()
+  };
+  detail.detailFields = buildDetailFieldsFromFlatDetail_(detail);
+  return detail;
+}
+
+function buildDetailFieldsFromFlatDetail_(detail) {
+  const basicDefs = [
+    ['customerNo','고객번호',false,'text'], ['company','회사명',true,'text'], ['salesRep','영업담당자',true,'text'], ['firstRegisteredAt','마스터시트 최초등록일',false,'text'],
+    ['region','지역구분',true,'text'], ['vendor','수행사',true,'select'], ['grade','관리등급',false,'text'], ['status','현재 영업 진행 상황',true,'select'], ['customerRank','고객등급',true,'select'],
+    ['contact','고객사 담당자',true,'text'], ['phone','대표전화번호',true,'text'], ['directPhone','직통번호',true,'text'], ['email','담당자 이메일 주소',true,'email'],
+    ['address','고객사 상세 주소',true,'text',true], ['memo','마스터시트 메모',true,'textarea',true]
+  ];
+  const contractDefs = [
+    ['area','연면적',true,'numberText'], ['buildingType','건물 유형',true,'select'], ['finalQuote','최종 견적가',false,'money'], ['contractUnit','계약단위',true,'select'],
+    ['appointment','관리자 선임 여부',true,'select'], ['maintenance','유지점검',true,'select'], ['performance','성능점검',true,'select'], ['vat','부가세',true,'select'],
+    ['discountRate','할인율',true,'numberText'], ['specialTerms','용역신청서특약사항',true,'textarea',true]
+  ];
+  const make = function(def) {
+    const field = { key:def[0], label:def[1], editable:def[2], type:def[3], wide:!!def[4], value: detail[def[0]] || '' };
+    if (field.key === 'customerRank') field.options = ['', 'A급', 'B급', 'C급', '보류', '제외'];
+    return field;
+  };
+  return { basic: basicDefs.map(make), contract: contractDefs.map(make) };
+}
+
+function saveCustomerDetailToLocalStorage_(detail) {
+  if (!detail || !detail.rowNo) return;
+  // PATCH K-1: 검색인덱스/요약 detail은 localStorage full detail cache에 저장하지 않습니다.
+  // 과거 요약 캐시가 다음 진입 시 마스터 최신값처럼 쓰이는 문제를 막습니다.
+  if (isIndexLikeDetailK1_(detail)) return;
+  try {
+    const slim = Object.assign({}, detail);
+    delete slim.raw;
+    slim.__storedAt = Date.now();
+    const primaryKey = getCustomerDetailCacheKeyFromDetail_(detail);
+    if (primaryKey) localStorage.setItem(CUSTOMER_DETAIL_STORAGE_KEY_PREFIX + primaryKey, JSON.stringify(slim));
+    // PATCH B 호환: 고객번호 없는 행 및 기존 rowNo 흐름 fallback용 row key도 함께 저장합니다.
+    localStorage.setItem(CUSTOMER_DETAIL_STORAGE_KEY_PREFIX + 'ROW:' + Number(detail.rowNo), JSON.stringify(slim));
+  } catch (err) {}
+}
+
+function loadCustomerDetailFromLocalStorage_(rowNo, customerNo) {
+  rowNo = Number(rowNo) || 0;
+  const keys = [];
+  const primaryKey = makeCustomerDetailCacheKey_(rowNo, customerNo);
+  if (primaryKey) keys.push(primaryKey);
+  if (rowNo) keys.push('ROW:' + rowNo);
+  // PATCH B 호환: 과거 v45 rowNo-only 저장값 fallback
+  if (rowNo) keys.push(String(rowNo));
+
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    try {
+      let raw = localStorage.getItem(CUSTOMER_DETAIL_STORAGE_KEY_PREFIX + key);
+      if (!raw && key === String(rowNo)) raw = localStorage.getItem('salesPortal.customerDetail.v45.' + rowNo);
+      if (!raw) continue;
+      const detail = JSON.parse(raw);
+      if (!detail || Number(detail.rowNo) !== rowNo) continue;
+      const expectedCno = normalizeCustomerNoForKey_(customerNo);
+      if (expectedCno && normalizeCustomerNoForKey_(detail.customerNo) && normalizeCustomerNoForKey_(detail.customerNo) !== expectedCno) continue;
+      const storedAt = Number(detail.__storedAt) || 0;
+      if (storedAt && Date.now() - storedAt > CUSTOMER_DETAIL_STORAGE_MAX_AGE_MS) {
+        try { localStorage.removeItem(CUSTOMER_DETAIL_STORAGE_KEY_PREFIX + key); } catch (e) {}
+        continue;
+      }
+      markDetailSourceK1_(detail, isIndexLikeDetailK1_(detail) ? 'summary' : 'localStorage');
+      return detail;
+    } catch (err) {}
+  }
+  return null;
+}
+
+function fetchCustomerDetailFromServer_(rowNo, onSuccess, onError, options) {
+  options = options || {};
+  rowNo = Number(rowNo) || 0;
+  const summary = findCustomerRowSummary_(rowNo, options.customerNo) || {};
+  const cached = getCustomerDetailCache_(rowNo, options.customerNo || summary.customerNo) || {};
+  const targetCustomerNo = normalizeCustomerNoForKey_(options.customerNo || cached.customerNo || summary.customerNo);
+
+  const runner = google.script.run
+    .withSuccessHandler(function(detail) {
+      if (detail && detail.rowNo) markDetailSourceK1_(detail, 'master');
+      setCustomerDetailCache_(detail, { source: 'master', allowIndexPatch: true, allowPagePatch: true, allowStorageWrite: true });
+      if (typeof onSuccess === 'function') onSuccess(detail, false);
+    })
+    .withFailureHandler(function(err) {
+      if (typeof onError === 'function') onError(err);
+    });
+
+  if (targetCustomerNo) runner.getCustomerDetailByCustomerNo(targetCustomerNo, rowNo);
+  else runner.getCustomerDetail(rowNo);
+}
+
+function applyCustomerMemoOptimistic_(rowNo, memoValue) {
+  rowNo = Number(rowNo) || 0;
+  updateCustomerRowMemoInCaches_(rowNo, memoValue);
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  let detail = getCustomerDetailCache_(rowNo, rowSummary.customerNo) || buildCustomerDetailFromRowSummary_(rowSummary, rowNo);
+  detail.memo = memoValue;
+  if (detail.detailFields && detail.detailFields.basic) {
+    detail.detailFields.basic.forEach(function(f) { if (f && f.key === 'memo') f.value = memoValue; });
+  }
+  setCustomerDetailCache_(detail, { source: 'optimistic', force: true, patchValues: { memo: memoValue }, allowIndexPatch: true });
+}
+
+function applyDetailValuesToDetailObject_(detail, values) {
+  detail = detail || {};
+  values = values || {};
+
+  // v85 FIX:
+  // 상세정보수정 저장 직후 고객 상세 펼침 카드의 `상세 계약조건`이 늦게 바뀌던 원인 보정.
+  // 기존에는 detailFields.contract 값만 바꾸고 detail.area/detail.contractUnit 같은
+  // 최상위 필드는 그대로 남아 있었습니다. 그런데 펼침 카드의 getCustomerExpandFieldValue_()는
+  // 최상위 directMap 값을 먼저 읽기 때문에, 마스터 재조회가 끝날 때까지 예전 값이 보였습니다.
+  // 따라서 기본정보 + 계약조건 + 서류/사업자 정보 key를 모두 최상위에도 즉시 반영합니다.
+  const directKeys = [
+    'customerNo',
+    'company',
+    'salesRep',
+    'status',
+    'contact',
+    'phone',
+    'directPhone',
+    'email',
+    'address',
+    'memo',
+    'vendor',
+    'firstRegisteredAt',
+    'region',
+    'area',
+    'grade',
+    'buildingType',
+    'contractUnit',
+    'appointment',
+    'maintenance',
+    'performance',
+    'vat',
+    'discountRate',
+    'finalQuote',
+    'specialTerms',
+    'businessRegistrationReceived',
+    'serviceApplicationReceived',
+    'appointmentReportReceived',
+    'businessNo',
+    'businessLegalName',
+    'representativeName'
+  ];
+
+  Object.keys(values).forEach(function(key) {
+    const value = values[key] == null ? '' : String(values[key]);
+
+    if (directKeys.indexOf(key) >= 0) {
+      detail[key] = value;
+    }
+
+    ['basic','contract','extra','docs','business'].forEach(function(section) {
+      const arr = detail.detailFields && detail.detailFields[section] ? detail.detailFields[section] : [];
+      arr.forEach(function(f) {
+        if (f && f.key === key) f.value = value;
+      });
+    });
+  });
+
+  detail.__pendingSave = true;
+  detail.__source = 'optimistic';
+  detail.__loadedAt = new Date().toISOString();
+  return detail;
+}
+
+function scheduleCustomerPrefetch_(keyword, startPage, count) {
+  prefetchTimers.forEach(function(t){ clearTimeout(t); });
+  prefetchTimers = [];
+  for (let i = 0; i < count; i++) {
+    const page = startPage + i;
+    const timer = setTimeout(function() {
+      const fromIndex = buildCustomerPageFromIndex_(keyword, page);
+      if (fromIndex) {
+        setCustomerPageCache_(keyword, page, fromIndex);
+        scheduleDetailPrefetchFromResult_(fromIndex, keyword, page);
+        return;
+      }
+      if (getCustomerPageFromCache_(keyword, page)) return;
+      google.script.run
+        .withSuccessHandler(function(res) {
+          setCustomerPageCache_(keyword, page, res);
+          scheduleDetailPrefetchFromResult_(res, keyword, page);
+        })
+        .withFailureHandler(function(){})
+        .searchCustomersPaged(keyword, page, CUSTOMER_PAGE_SIZE, customerSortModeV67, getCustomerScopeForRequestP04_());
+    }, 350 + i * 650);
+    prefetchTimers.push(timer);
+  }
+}
+
+function scheduleDetailPrefetchFromResult_(res, keyword, page) {
+  res = normalizePagedResponse_(res);
+  const rows = (res.rows || []).slice();
+  const next = buildCustomerPageFromIndex_(keyword, (Number(page) || 0) + 1);
+  if (next && next.rows) rows.push.apply(rows, next.rows);
+  prefetchCustomerDetailsForRows_(rows, { delayBase: 500 });
+}
+
+function prefetchCustomerDetailsForRows_(rows, options) {
+  options = options || {};
+  rows = Array.isArray(rows) ? rows : [];
+  const rowNos = [];
+  const seen = {};
+  rows.forEach(function(r) {
+    const rowNo = Number(r && r.rowNo) || 0;
+    const cno = normalizeCustomerNoForKey_(r && r.customerNo);
+    const cachedDetail = getCustomerDetailCache_(rowNo, cno);
+    if (!rowNo || seen[rowNo] || isCustomerDetailFreshFromMasterP112_(cachedDetail, CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112)) return;
+    seen[rowNo] = true;
+    rowNos.push(rowNo);
+  });
+  if (!rowNos.length) return;
+
+  customerDetailPrefetchTimers.forEach(function(t){ clearTimeout(t); });
+  customerDetailPrefetchTimers = [];
+  const chunks = [];
+  for (let i = 0; i < rowNos.length; i += CUSTOMER_DETAIL_PREFETCH_BATCH_SIZE) chunks.push(rowNos.slice(i, i + CUSTOMER_DETAIL_PREFETCH_BATCH_SIZE));
+  chunks.forEach(function(chunk, idx) {
+    const timer = setTimeout(function() {
+      google.script.run
+        .withSuccessHandler(function(details) {
+          let touchedVisible = false;
+          let anyMasterDetail = false;
+          const visibleRows = (lastCustomerResultResponse && Array.isArray(lastCustomerResultResponse.rows)) ? lastCustomerResultResponse.rows : [];
+          const visibleMap = {};
+          visibleRows.forEach(function(r) { if (r && r.rowNo) visibleMap[Number(r.rowNo)] = true; });
+          (details || []).forEach(function(detail) {
+            if (detail && detail.rowNo && !detail.error) {
+              markDetailSourceK1_(detail, 'master');
+              setCustomerDetailCache_(detail, { source: 'master', allowIndexPatch: true, allowPagePatch: true, allowStorageWrite: true });
+              anyMasterDetail = true;
+              if (visibleMap[Number(detail.rowNo)]) touchedVisible = true;
+            }
+          });
+          if (!(typeof isPortalUserEditingNow_ === 'function' && isPortalUserEditingNow_())) {
+            if (touchedVisible) {
+              try { renderResults(lastCustomerResultResponse, lastCustomerResultFromCache); } catch (err) {}
+            }
+            try {
+              const favSection = document.getElementById('customerFavoritesSection');
+              if (anyMasterDetail && favSection && favSection.classList.contains('active') && typeof renderFavoritePage === 'function') renderFavoritePage();
+            } catch (err) {}
+          }
+        })
+        .withFailureHandler(function(){})
+        .getCustomerDetailsBatch(chunk);
+    }, (options.delayBase || 0) + idx * CUSTOMER_DETAIL_PREFETCH_DELAY_MS);
+    customerDetailPrefetchTimers.push(timer);
+  });
+}
+
+function getCustomerDetailFast_(rowNo, onSuccess, onError, options) {
+  options = options || {};
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+
+  const rowSummary = findCustomerRowSummary_(rowNo, options.customerNo);
+  const targetCustomerNo = normalizeCustomerNoForKey_(options.customerNo || (rowSummary && rowSummary.customerNo));
+  const cached = getCustomerDetailCache_(rowNo, targetCustomerNo) || loadCustomerDetailFromLocalStorage_(rowNo, targetCustomerNo);
+  if (cached) {
+    setCustomerDetailCache_(cached, { source: cached.__source || 'localStorage', skipStorage: true, allowIndexPatch: false });
+    setTimeout(function(){ if (typeof onSuccess === 'function') onSuccess(cached, true); }, 0);
+    const fresh = isCustomerDetailFreshFromMasterP112_(cached, CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112);
+    if (!options.forceFull && !cached.__summary && !cached.__lite && fresh) return;
+    // 캐시는 즉시 표시하되, 오래된 master/localStorage 값이면 단건 서버 재조회로 최신 계약조건/수식값을 보강합니다.
+    fetchCustomerDetailFromServer_(rowNo, function(detail) {
+      if (typeof onSuccess === 'function') onSuccess(detail, false);
+    }, onError, { customerNo: targetCustomerNo });
+    return;
+  }
+
+  if (rowSummary && options.allowSummary !== false) {
+    const summaryDetail = buildCustomerDetailFromRowSummary_(rowSummary, rowNo);
+    setCustomerDetailCache_(summaryDetail, { source: 'index', skipStorage: true, allowIndexPatch: false });
+    setTimeout(function(){ if (typeof onSuccess === 'function') onSuccess(summaryDetail, true); }, 0);
+    fetchCustomerDetailFromServer_(rowNo, function(detail) {
+      if (typeof onSuccess === 'function') onSuccess(detail, false);
+    }, onError, { customerNo: targetCustomerNo });
+    return;
+  }
+
+  fetchCustomerDetailFromServer_(rowNo, onSuccess, onError, { customerNo: targetCustomerNo });
+}
+
+function setCustomerDetailCache_(detail, options) {
+  options = options || {};
+  if (!detail || !detail.rowNo) return;
+
+  const source = options.source || detail.__source || '';
+  markDetailSourceK1_(detail, source, options);
+  detail = options.skipPendingMerge ? detail : applyPendingSaveToIncomingDetail_(detail);
+
+  const rowNo = Number(detail.rowNo);
+  const primaryKey = getCustomerDetailCacheKeyFromDetail_(detail);
+  const prev = getCustomerDetailCache_(rowNo, detail.customerNo);
+
+  const incomingRank = getDetailSourceRankK1_(detail, options);
+  const prevRank = getDetailSourceRankK1_(prev || null, {});
+
+  // PATCH K-1: 검색인덱스/summary/lite/localStorage가 마스터 full detail 또는 optimistic 값을 덮지 못하게 합니다.
+  if (!options.force && prev && prevRank > incomingRank) return;
+  if (!options.force && prev && !prev.__summary && isIndexLikeDetailK1_(detail)) return;
+
+  if (primaryKey) customerDetailInlineCache[primaryKey] = detail;
+  // PATCH B 호환: 기존 rowNo 기반 호출부가 남아 있어도 같은 객체를 보게 합니다.
+  customerDetailInlineCache['ROW:' + rowNo] = detail;
+  customerDetailInlineCache[rowNo] = detail;
+
+  // PATCH K-1: 인덱스/요약 detail은 검색결과/검색인덱스를 역패치하지 않습니다.
+  if (options.allowIndexPatch === true && !isIndexLikeDetailK1_(detail)) {
+    if (options.patchValues) {
+      patchCustomerSearchIndexAndPagesK1_(detail, options.patchValues, { source: source || detail.__source || 'authoritative' });
+    } else if (detail.__masterBacked || detail.__pendingSave || source === 'master' || source === 'saveResult' || source === 'optimistic') {
+      updateCustomerSearchIndexRowFromDetail_(detail, { source: source || detail.__source || 'authoritative' });
+    }
+  }
+
+  if (!options.skipStorage && options.allowStorageWrite !== false) saveCustomerDetailToLocalStorage_(detail);
+}
+
+function updateCustomerSearchIndexRowFromDetail_(detail, options) {
+  options = options || {};
+  if (!detail || !detail.rowNo) return;
+  // PATCH K-1: 검색인덱스/요약/lite detail은 절대 검색인덱스를 다시 덮어쓰지 않습니다.
+  if (isIndexLikeDetailK1_(detail)) return;
+
+  const rowNo = Number(detail.rowNo);
+  const patch = {
+    rowNo: rowNo,
+    customerNo: detail.customerNo || '',
+    company: detail.company || '',
+    address: detail.address || '',
+    fullAddress: detail.address || '',
+    contact: detail.contact || '',
+    phone: detail.phone || '',
+    directPhone: detail.directPhone || '',
+    email: detail.email || '',
+    salesRep: detail.salesRep || '',
+    vendor: detail.vendor || '',
+    status: detail.status || '',
+    memo: detail.memo || '',
+    firstRegisteredAt: detail.firstRegisteredAt || fieldVal(detail, 'basic', 'firstRegisteredAt') || '',
+    region: detail.region || fieldVal(detail, 'basic', 'region') || '',
+    grade: detail.grade || fieldVal(detail, 'basic', 'grade') || '',
+    area: detail.area || fieldVal(detail, 'contract', 'area') || '',
+    buildingType: detail.buildingType || fieldVal(detail, 'contract', 'buildingType') || '',
+    contractUnit: detail.contractUnit || fieldVal(detail, 'contract', 'contractUnit') || '',
+    appointment: detail.appointment || fieldVal(detail, 'contract', 'appointment') || '',
+    maintenance: detail.maintenance || fieldVal(detail, 'contract', 'maintenance') || '',
+    performance: detail.performance || fieldVal(detail, 'contract', 'performance') || '',
+    vat: detail.vat || fieldVal(detail, 'contract', 'vat') || '',
+    discountRate: detail.discountRate || fieldVal(detail, 'contract', 'discountRate') || '',
+    specialTerms: detail.specialTerms || fieldVal(detail, 'contract', 'specialTerms') || '',
+    lastSent: detail.lastSent || '',
+    sentAt: detail.sentAt || ''
+  };
+  patch.finalQuote = detail.finalQuote || fieldVal(detail, 'contract', 'finalQuote') || '';
+  patchCustomerSearchIndexAndPagesK1_(patch, patch, { source: options.source || detail.__source || 'master', forceSaveIndex: true });
+}
+
+function invalidateCustomerSearchCaches_() {
+  customerPageMemoryCache = {};
+  try {
+    Object.keys(sessionStorage).forEach(function(k) { if (k.indexOf('portalCustomerPage:v31:') === 0 || k.indexOf('portalCustomerPage:v26:') === 0) sessionStorage.removeItem(k); });
+  } catch (err) {}
+}
+
+const SEND_FILE_OPTIONS = [
+  { key:'quote', label:'견적서요청' },
+  { key:'serviceApplication', label:'용역신청서요청' },
+  { key:'appointmentDoc', label:'선임신고서 및 위임장 요청' },
+  { key:'termsGuide', label:'약관, 안내문, 법령요약' },
+  { key:'contractorInfo', label:'수행사 정보' },
+  { key:'sampleReport', label:'샘플보고서' },
+  { key:'compareQuote', label:'비교견적서' },
+  { key:'serviceStandardContract', label:'수행사 용역표준계약서' }
+];
+</script>

@@ -1,0 +1,1125 @@
+<script>
+// v57 FIX + PATCH B: 상세 모달 비동기 보강 응답이 사용자의 정보수정 상태를 되돌리지 않도록 요청 세대를 추적합니다.
+let customerDetailModalRequestSeq = 0;
+let contactSelectedTagsP11 = [];
+
+function openNewCustomer() {
+  document.getElementById('modalBackdrop').style.display = 'flex';
+  const modalTitleEl = document.getElementById('modalTitle');
+  modalTitleEl.classList.remove('company-title-mode');
+  modalTitleEl.textContent = '신규 고객 등록';
+  document.getElementById('modalBody').innerHTML = '<div class="loading">등록 화면 불러오는 중...</div>';
+  google.script.run.withSuccessHandler(renderDetail).withFailureHandler(showModalError).getNewCustomerTemplate();
+}
+
+function openDetail(rowNo, customerNo, options) {
+  options = options || {};
+  rowNo = Number(rowNo) || 0;
+  const rowSummary = findCustomerRowSummary_(rowNo, customerNo) || {};
+  const targetCustomerNo = normalizeCustomerNoForKey_(customerNo || rowSummary.customerNo);
+  currentDetailCustomerNo = targetCustomerNo;
+  const requestSeq = ++customerDetailModalRequestSeq;
+  const forceEditMode = !!options.forceEdit;
+
+  document.getElementById('modalBackdrop').style.display = 'flex';
+  const modalTitleEl = document.getElementById('modalTitle');
+  modalTitleEl.classList.remove('company-title-mode');
+  modalTitleEl.textContent = '고객 상세';
+
+  const cached = getCustomerDetailCache_(rowNo, targetCustomerNo) || loadCustomerDetailFromLocalStorage_(rowNo, targetCustomerNo) || buildCustomerDetailFromRowSummary_(rowSummary, rowNo);
+  if (cached && cached.rowNo) {
+    currentDetailCustomerNo = normalizeCustomerNoForKey_(cached.customerNo || targetCustomerNo);
+    renderDetail(cached, forceEditMode ? { preserveEditMode: true, reason: 'openDetailForceEdit' } : undefined);
+    if (cached.__summary || cached.__lite) toast('기본 정보를 먼저 표시했습니다. 상세정보를 보강 중입니다.');
+  } else {
+    document.getElementById('modalBody').innerHTML = '<div class="loading">상세정보 불러오는 중...</div>';
+  }
+
+  getCustomerDetailFast_(rowNo, function(detail) {
+    // 캐시 표시 후 전체 상세가 도착하면 조용히 갱신합니다.
+    // 단, 사용자가 그 사이 '정보 수정'을 눌렀다면 수정 모드와 입력 중인 값을 절대 되돌리지 않습니다.
+    if (requestSeq !== customerDetailModalRequestSeq) return;
+    if (!detail || Number(detail.rowNo) !== rowNo) return;
+    if (targetCustomerNo && normalizeCustomerNoForKey_(detail.customerNo) && normalizeCustomerNoForKey_(detail.customerNo) !== targetCustomerNo) return;
+    if (currentDetail && Number(currentDetail.rowNo) !== rowNo) return;
+
+    const preserveEditMode = !!isDetailEditMode || forceEditMode;
+    const draftValues = preserveEditMode ? collectCurrentDetailInputValues_() : null;
+    const nextDetail = preserveEditMode ? mergeDetailDraftValues_(detail, draftValues) : detail;
+    renderDetail(nextDetail, {
+      preserveEditMode: preserveEditMode,
+      draftValues: draftValues,
+      reason: 'asyncDetailHydration'
+    });
+  }, showModalError, { forceFull: true, customerNo: targetCustomerNo });
+}
+
+function openDetailReadOnly(rowNo, customerNo) {
+  openDetail(rowNo, customerNo, { forceEdit: false });
+}
+
+function openDetailEdit(rowNo, customerNo) {
+  openDetail(rowNo, customerNo, { forceEdit: true });
+}
+
+function openDetailSafe_(rowNo, customerNo, options) {
+  try {
+    openDetail(rowNo, customerNo, options || {});
+  } catch (err) {
+    console.error('상세 모달 열기 실패', err);
+    alert('상세 모달을 열지 못했습니다: ' + (err && err.message ? err.message : err));
+  }
+}
+
+function renderDetail(d, options) {
+  options = options || {};
+  const preserveEditMode = !!options.preserveEditMode && !d.isNew;
+  const draftValues = options.draftValues || null;
+
+  currentDetail = d;
+  currentDetailCustomerNo = normalizeCustomerNoForKey_(d && d.customerNo);
+  isDetailEditMode = preserveEditMode;
+  if (!preserveEditMode) {
+    lastCalcResult = null;
+    discountTargetMode = false;
+  }
+  registrationMode = !!d.isNew;
+  registrationApplied = d.isNew ? false : registrationApplied;
+  registrationCalcResult = d.isNew ? null : registrationCalcResult;
+  savedRegistrationMode = false;
+  if (d.isNew) {
+    modalTitle.classList.remove('company-title-mode');
+    modalTitle.textContent = '신규 고객 등록';
+  } else {
+    modalTitle.classList.add('company-title-mode');
+    modalTitle.innerHTML = renderDetailModalTitle_(d);
+  }
+
+  let html = '';
+  if (d.__summary || d.__lite) html += '<div class="section-card" style="border-color:#bae6fd;background:#f0f9ff;color:#075985;font-weight:800;">기본 정보를 먼저 표시했습니다. 전체 상세정보와 최근 이력은 뒤에서 보강 중입니다.</div>';
+  html += renderCustomerBasicSection(d);
+  html += renderContractSection(d);
+  if (!d.isNew) html += renderContactQuickPanel(d);
+  if (!d.isNew) html += renderTempMemoPanel();
+  html += '<div class="section-card"><div class="section-title">최근 이력</div>' + renderTimeline(d.contactLogs || []) + '</div>';
+
+  modalBody.innerHTML = html;
+  modalActionFooter.style.display = 'flex';
+
+  if (d.isNew) {
+    renderRegistrationFooter('newEditing');
+    toggleDetailEdit(true);
+    applyNewCustomerRegistrationDefaults_();
+    applyContractDefaultsOnRender_({ onlyBlank: true });
+    bindContractDefaultHandlers_();
+    bindCustomerAddressAutoRegionVendor_();
+    enforceRegionReadonly_();
+    applyPortalStatusControlStyles_();
+    setRegistrationSaveEnabled(true);
+  } else {
+    renderExistingFooter();
+    if (draftValues) restoreDetailInputValues_(draftValues);
+    toggleDetailEdit(preserveEditMode);
+    applyContractDefaultsOnRender_({ onlyBlank: true });
+    bindContractDefaultHandlers_();
+    bindCustomerAddressAutoRegionVendor_();
+    enforceRegionReadonly_();
+    applyPortalStatusControlStyles_();
+    setTempMemoDefaultTime();
+    if (preserveEditMode) toast('상세정보 보강 완료. 수정 모드는 유지했습니다.');
+  }
+}
+
+function collectCurrentDetailInputValues_() {
+  const values = {};
+  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
+    const key = el.getAttribute('data-key');
+    if (key) values[key] = el.value || '';
+  });
+  return values;
+}
+
+// PATCH J: 저장 payload는 전체 editable input이 아니라 실제 변경된 필드만 보냅니다.
+// 상세정보가 아직 __summary/__lite 상태일 때 보이지 않던 계약조건 빈값이 마스터시트 값을 덮어쓰는 사고를 막습니다.
+function normalizeDetailSaveCompareValue_(value) {
+  return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
+}
+function getDirtyDetailInputValues_() {
+  const currentValues = collectCurrentDetailInputValues_();
+  const baseline = detailEditBaselineValues || {};
+  const dirty = {};
+  Object.keys(currentValues).forEach(function(key) {
+    const cur = normalizeDetailSaveCompareValue_(currentValues[key]);
+    const base = normalizeDetailSaveCompareValue_(baseline[key]);
+    if (cur !== base) dirty[key] = currentValues[key] || '';
+  });
+  return dirty;
+}
+
+function setDetailEditBaselineFromCurrentInputs_() {
+  detailEditBaselineValues = collectCurrentDetailInputValues_();
+}
+
+function clearDetailEditBaseline_() {
+  detailEditBaselineValues = null;
+}
+
+function restoreDetailInputValues_(values) {
+  values = values || {};
+  Object.keys(values).forEach(function(key) {
+    const selector = '.detail-edit-input[data-key="' + String(key).replace(/"/g, '\"') + '"]';
+    const el = document.querySelector(selector);
+    if (el) el.value = values[key] || '';
+  });
+}
+
+function mergeDetailDraftValues_(detail, values) {
+  detail = detail || {};
+  values = values || {};
+  try {
+    return applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(detail)), values);
+  } catch (err) {
+    const next = Object.assign({}, detail);
+    Object.keys(values).forEach(function(key) {
+      next[key] = values[key] || '';
+      ['basic', 'contract'].forEach(function(section) {
+        const arr = next.detailFields && next.detailFields[section] ? next.detailFields[section] : [];
+        arr.forEach(function(f) {
+          if (f && f.key === key) f.value = values[key] || '';
+        });
+      });
+    });
+    return next;
+  }
+}
+
+function renderExistingFooter() {
+  modalActionFooter.innerHTML = '' +
+    '<button class="secondary" id="footerEditDetail" onclick="toggleDetailEdit(true)">정보 수정</button>' +
+    '<button id="footerSaveDetail" onclick="saveDetailFields()" disabled>저장</button>' +
+    '<button class="secondary" onclick="goToSupportForCurrentDetailP19_()">영업지원요청</button>' +
+    '<button class="secondary" id="footerTemp" onclick="toggleTempMemoPanel()">임시메모 추가</button>' +
+    '<button class="secondary" onclick="closeModal()">닫기</button>';
+}
+
+function renderRegistrationFooter(mode) {
+  if (mode === 'saved') {
+    modalActionFooter.innerHTML = '' +
+      '<button id="registrationSendBtn" onclick="goToSendForSavedRegistrationCustomer()">견적/자료 발송으로 이동</button>' +
+      '<button class="secondary" id="registrationEditBtn" onclick="editSavedRegistrationCustomer()">수정</button>' +
+      '<button class="secondary" onclick="closeModal()">닫기</button>';
+    return;
+  }
+  modalActionFooter.innerHTML = '' +
+    '<button id="registrationSaveBtn" onclick="saveRegistrationCustomerFromModal()">저장</button>' +
+    '<button class="secondary" onclick="closeModal()">닫기</button>';
+}
+
+function setRegistrationSaveEnabled(enabled) {
+  const btn = document.getElementById('registrationSaveBtn');
+  if (btn) btn.disabled = !enabled;
+}
+
+function getFieldMap(section) {
+  const arr = (currentDetail && currentDetail.detailFields && currentDetail.detailFields[section]) || [];
+  const map = {};
+  arr.forEach(f => map[f.key] = f);
+  return map;
+}
+
+function renderDetailModalTitle_(d) {
+  const company = String((d && d.company) || '').trim();
+  if (!company) return '고객 상세';
+  return '<span class="modal-title-prefix">[회사명]</span><span class="modal-title-company">' + esc(company) + '</span>';
+}
+
+function renderCustomerBasicSection(d) {
+  const f = getFieldMap('basic');
+  let html = '<div class="section-card section-card-basic"><div class="section-title">고객사 기본 정보</div><div class="field-grid">';
+  ['customerNo','company','salesRep','firstRegisteredAt','region','vendor','grade','status','customerRank','contact','phone','directPhone','email'].forEach(k => html += renderDetailField(f[k], 'basic'));
+  html += renderDetailField(f.address, 'basic', true);
+  html += renderDetailField(f.memo, 'basic', true, 'master-memo-input');
+  html += '</div></div>';
+  return html;
+}
+
+function renderContractSection(d) {
+  const b = getFieldMap('basic');
+  const f = getFieldMap('contract');
+  let html = '<div class="section-card section-card-contract"><div class="section-title">상세 계약조건</div><div class="field-grid">';
+  html += renderDetailField(f.area, 'contract');
+  html += renderDetailField(f.buildingType, 'contract');
+  html += renderButtonCell('견적가 계산', 'calculateFinalQuoteFromCurrent()', 'soft');
+  html += renderDetailField(f.finalQuote, 'contract');
+  html += renderDetailField(f.contractUnit, 'contract');
+  html += renderDetailField(f.appointment, 'contract');
+  html += renderDetailField(f.maintenance, 'contract');
+  html += renderDetailField(f.performance, 'contract');
+  html += renderDetailField(f.vat, 'contract');
+  html += renderDetailField(f.discountRate, 'contract');
+  html += renderButtonCell('할인율 계산하기', 'handleDiscountModeClick()', 'soft', 'discountModeBtn');
+  html += '<div class="field-item"><div class="field-label">목표 최종견적가</div><input id="calcTargetFinal" disabled placeholder="원하는 최종견적가를 입력하세요"><div class="readonly-note">할인율 계산하기 클릭 후 입력</div></div>';
+  html += renderDetailField(f.specialTerms, 'contract', true);
+  html += '</div></div>';
+  return html;
+}
+
+
+function getDetailButtonHelpTextP13_(text) {
+  text = String(text || '');
+  if (text === '견적가 계산') return '현재 계약 조건으로 최종 견적가를 다시 계산합니다.';
+  if (text === '할인율 계산하기') return '목표 최종견적가를 기준으로 필요한 할인율을 계산합니다.';
+  return '';
+}
+
+function renderButtonCell(text, onclick, cls, id) {
+  const help = getDetailButtonHelpTextP13_(text);
+  return '<div class="field-item button-cell"><button ' + (id ? 'id="' + escAttr(id) + '" ' : '') + (help ? 'title="' + escAttr(help) + '" ' : '') + 'class="' + escAttr(cls || '') + '" onclick="' + onclick + '">' + esc(text) + '</button></div>';
+}
+
+
+function getDetailFieldHelpTextP13_(key) {
+  key = String(key || '');
+  const map = {
+    customerNo: '행 번호가 아니라 고객을 식별하는 고유번호입니다.',
+    status: '현재 영업 진행현황입니다. 목록에서도 글자 더블클릭으로 빠르게 수정할 수 있습니다.',
+    memo: '마스터시트 메모입니다. 고객 접촉 내용과 특이사항을 누적해서 확인합니다.',
+    finalQuote: '계약기간, 할인율, 선임/유지/성능 조건을 반영한 최종 견적가입니다.',
+    discountRate: '최종 견적가 산정에 반영되는 할인율입니다.',
+    specialTerms: '용역신청서에 별도로 반영할 특약사항입니다.'
+  };
+  return map[key] || '';
+}
+
+function renderDetailFieldLabelP13_(f) {
+  const label = esc((f && f.label) || '');
+  const help = getDetailFieldHelpTextP13_(f && f.key);
+  if (!help) return label;
+  return label + ' <span class="portal-guide-help" title="' + escAttr(help) + '">?</span>';
+}
+
+function renderDetailField(f, sectionKey, forceWide, extraClass) {
+  if (!f) return '<div class="field-item"><div class="field-label">-</div><input disabled value="-"></div>';
+  const wide = forceWide || f.wide ? ' wide' : '';
+  const cls = extraClass ? ' ' + extraClass : '';
+  const key = String(f.key || '');
+  let fieldItemClass = 'field-item' + wide;
+  if (key === 'discountRate' || key === 'finalQuote') fieldItemClass += ' field-item-emphasis';
+  if (key === 'discountRate') fieldItemClass += ' field-item-discount';
+  if (key === 'finalQuote') fieldItemClass += ' field-item-final-quote';
+  let html = '<div class="' + fieldItemClass + '"><div class="field-label">' + renderDetailFieldLabelP13_(f) + '</div>';
+  const editableFlag = key === 'region' ? 'N' : (f.editable !== false ? 'Y' : 'N');
+  const data = ' data-section="' + escAttr(sectionKey) + '" data-key="' + escAttr(f.key) + '" data-editable="' + editableFlag + '"';
+  if (f.type === 'textarea') {
+    html += '<textarea class="detail-edit-input' + cls + '"' + data + ' disabled>' + esc(f.value || '') + '</textarea>';
+  } else if (f.type === 'select') {
+    if (f.key === 'status') {
+      html += '<select class="detail-edit-input portal-status-select"' + data + ' disabled>' + renderStatusOptionsForDetail_(f.value || '') + '</select>';
+    } else {
+      html += '<select class="detail-edit-input"' + data + ' disabled>' + renderGenericOptions(f.options || [], f.value || '') + '</select>';
+    }
+  } else {
+    const inputType = f.type === 'email' ? 'email' : 'text';
+    html += '<input class="detail-edit-input' + cls + '" type="' + inputType + '" value="' + escAttr(f.value || '') + '"' + data + ' disabled>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderGenericOptions(options, current) {
+  options = options || []; current = current || '';
+  const seen = {}; let html = '';
+  if (current && options.indexOf(current) < 0) options.unshift(current);
+  options.forEach(opt => { if (seen[opt]) return; seen[opt]=true; html += '<option value="' + escAttr(opt) + '"' + (String(opt)===String(current)?' selected':'') + '>' + esc(opt || '-') + '</option>'; });
+  return html;
+}
+
+function toggleDetailEdit(enable) {
+  const wasEditMode = !!isDetailEditMode;
+  isDetailEditMode = !!enable;
+  document.querySelectorAll('.detail-edit-input').forEach(el => {
+    const editable = el.getAttribute('data-editable') === 'Y';
+    el.disabled = !(enable && editable);
+  });
+  enforceRegionReadonly_();
+
+  const editBtn = document.getElementById('footerEditDetail');
+  const saveBtn = document.getElementById('footerSaveDetail');
+  if (editBtn) editBtn.disabled = !!enable;
+  if (saveBtn) saveBtn.disabled = !enable;
+
+  // PATCH J: 처음 정보수정에 진입한 순간의 값을 저장 기준선으로 둡니다.
+  // 비동기 상세정보 보강으로 renderDetail(... preserveEditMode)이 다시 실행되어도 기존 기준선은 유지합니다.
+  if (enable && !wasEditMode && !detailEditBaselineValues) {
+    setDetailEditBaselineFromCurrentInputs_();
+  }
+
+  if (!enable) {
+    clearDetailEditBaseline_();
+    const target = document.getElementById('calcTargetFinal');
+    const btn = document.getElementById('discountModeBtn');
+    if (target) { target.disabled = true; target.value = ''; }
+    if (btn) btn.textContent = '할인율 계산하기';
+    discountTargetMode = false;
+  }
+}
+
+
+// PATCH P1-12: 계약조건 필수값 검증 + 할인율 공란 0 보정
+const DETAIL_CONTRACT_REQUIRED_KEYS_P112 = ['area','contractUnit','appointment','maintenance','performance','vat'];
+const DETAIL_CONTRACT_REQUIRED_LABELS_P112 = {
+  area:'연면적',
+  contractUnit:'계약단위',
+  appointment:'관리자 선임 여부',
+  maintenance:'유지점검 횟수',
+  performance:'성능점검 횟수',
+  vat:'부가세 여부'
+};
+const DETAIL_CONTRACT_SAVE_KEYS_P112 = DETAIL_CONTRACT_REQUIRED_KEYS_P112.concat(['discountRate','grade','finalQuote','targetFinalPrice']);
+
+function isDetailContractValueBlankP112_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return true;
+  if (text === '-' || text === '–' || text === '—') return true;
+  if (/^(선택|미선택|입력필요|변수입력부족|변수 입력 부족)$/i.test(text)) return true;
+  return false;
+}
+
+function isDetailContractSaveTouchedP112_(values) {
+  values = values || {};
+  return DETAIL_CONTRACT_SAVE_KEYS_P112.some(function(key){ return Object.prototype.hasOwnProperty.call(values, key); });
+}
+
+function prepareDetailContractValuesForClientSaveP112_(values, options) {
+  options = options || {};
+  values = Object.assign({}, values || {});
+  const requireFull = !!options.requireFull;
+  if (!requireFull && !isDetailContractSaveTouchedP112_(values)) return values;
+
+  const currentValues = collectCurrentDetailInputValues_ ? collectCurrentDetailInputValues_() : gatherRegistrationValues();
+  const effective = Object.assign({}, currentValues || {}, values || {});
+  if (isDetailContractValueBlankP112_(effective.discountRate)) {
+    effective.discountRate = '0';
+    values.discountRate = '0';
+    const discountEl = getDetailInputByKey_ ? getDetailInputByKey_('discountRate') : null;
+    if (discountEl) discountEl.value = '0';
+  }
+
+  const missing = [];
+  DETAIL_CONTRACT_REQUIRED_KEYS_P112.forEach(function(key) {
+    if (isDetailContractValueBlankP112_(effective[key])) missing.push(DETAIL_CONTRACT_REQUIRED_LABELS_P112[key] || key);
+  });
+  if (missing.length) {
+    throw new Error('계약조건 저장 불가: ' + missing.join(', ') + '을(를) 입력해야 합니다. 할인율은 공란이면 0으로 저장됩니다.');
+  }
+  return values;
+}
+
+function applyServerDetailAfterSaveP112_(detail, rowNo) {
+  if (!detail || !detail.rowNo) return false;
+  try { markDetailSourceK1_(detail, 'master'); } catch (err) {}
+  setCustomerDetailCache_(detail, {
+    force: true,
+    skipPendingMerge: true,
+    source: 'master',
+    allowIndexPatch: true,
+    allowPagePatch: true,
+    allowStorageWrite: true
+  });
+  currentDetail = detail;
+  renderDetail(detail);
+  toggleDetailEdit(false);
+  repaintCustomerResultsIfVisible_();
+  try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
+  return true;
+}
+
+function saveDetailFields() {
+  if (!currentDetail || !currentDetail.rowNo) return;
+  const rowNo = Number(currentDetail.rowNo);
+  const targetCustomerNo = normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo);
+
+  // PATCH J: 전체 input이 아니라 정보수정 진입 후 실제 변경된 필드만 저장합니다.
+  // 로딩 중이던 계약조건 빈값이 payload에 섞여 마스터시트를 덮어쓰는 문제를 차단합니다.
+  let values = getDirtyDetailInputValues_();
+  try {
+    values = prepareDetailContractValuesForClientSaveP112_(values, { requireFull: false });
+  } catch (err) {
+    showModalError(err);
+    return;
+  }
+  if (!Object.keys(values).length) {
+    toast('변경된 항목이 없습니다.');
+    toggleDetailEdit(false);
+    return;
+  }
+
+  const prevDetail = currentDetail ? JSON.parse(JSON.stringify(currentDetail)) : null;
+  const saveSeq = ++customerDetailSaveSeq;
+  const optimisticDetail = applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(currentDetail)), values);
+  optimisticDetail.__pendingSave = true;
+  optimisticDetail.__pendingSaveSeq = saveSeq;
+  optimisticDetail.__optimisticSavedAt = new Date().toISOString();
+
+  registerCustomerDetailPendingSave_(optimisticDetail, values, saveSeq);
+
+  // PATCH K2-FIX1:
+  // 상세 팝업 저장 직후 뒤쪽 고객검색 행도 즉시 바뀌어야 합니다.
+  // K-1/K-2 이후 setCustomerDetailCache_는 allowIndexPatch:true가 있어야
+  // customerSearchIndexState / lastCustomerResultResponse / page cache까지 패치합니다.
+  // 예: 대표전화번호 phone만 수정해도 검색결과 행의 전화번호 칸이 즉시 변경됩니다.
+  setCustomerDetailCache_(optimisticDetail, {
+    force: true,
+    skipPendingMerge: true,
+    source: 'optimistic',
+    allowIndexPatch: true,
+    patchValues: values
+  });
+
+  currentDetail = optimisticDetail;
+  repaintCustomerResultsIfVisible_();
+  try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
+
+  renderDetail(optimisticDetail);
+  toggleDetailEdit(false);
+  toast('수정사항을 화면과 리스트에 먼저 반영했습니다. 뒤에서 마스터시트에 저장 중입니다.');
+
+  google.script.run.withSuccessHandler(function(res){
+    // 저장 성공 후에도 잠시 pending을 유지하여 저장 전에 출발한 상세보강/프리패치 응답이 최신값을 되돌리지 못하게 합니다.
+    if (res && res.detail && res.refreshedFromMaster) {
+      applyServerDetailAfterSaveP112_(res.detail, rowNo);
+    } else if (currentDetail && Number(currentDetail.rowNo) === rowNo) {
+      currentDetail.__pendingSave = false;
+      // 서버 저장 성공 후에도 검색결과 행/상세 캐시를 한 번 더 확정 패치합니다.
+      setCustomerDetailCache_(currentDetail, {
+        force: true,
+        skipPendingMerge: true,
+        source: 'saveResult',
+        allowIndexPatch: true,
+        patchValues: values
+      });
+      repaintCustomerResultsIfVisible_();
+    }
+    setTimeout(function(){ clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq); }, 20000);
+    toast((res && res.message) || '마스터시트 저장 완료');
+    setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
+  }).withFailureHandler(function(err){
+    clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq);
+    if (prevDetail) {
+      setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
+      if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
+      repaintCustomerResultsIfVisible_();
+    }
+    showModalError(err);
+    alert('상세정보 저장 실패: ' + getErrorMessage_(err));
+  }).saveCustomerDetailFast({ rowNo: rowNo, customerNo: targetCustomerNo, values: values });
+}
+
+function gatherValuesForCalc(targetFinalPrice) {
+  const obj = {};
+  document.querySelectorAll('.detail-edit-input').forEach(el => obj[el.getAttribute('data-key')] = el.value || '');
+  obj.targetFinalPrice = targetFinalPrice || '';
+  return obj;
+}
+
+function calculateFinalQuoteFromCurrent() {
+  clearModalErrorBox();
+  const payload = gatherValuesForCalc('');
+  google.script.run.withSuccessHandler(function(res){
+    lastCalcResult = res;
+    setInputValueByKey('finalQuote', res.finalPriceText || '');
+    if (res.contractUnit) {
+      setInputValueByKey('contractUnit', res.contractUnit);
+      applyContractUnitDefaults_(res.contractUnit, { onlyBlank: true });
+    }
+    toast(res.message || ('견적가 계산 완료: ' + (res.finalPriceText || '-')));
+  }).withFailureHandler(showModalError).calculateQuoteDiscount(payload);
+}
+
+function handleDiscountModeClick() {
+  clearModalErrorBox();
+  if (!isDetailEditMode) toggleDetailEdit(true);
+  const target = document.getElementById('calcTargetFinal');
+  const btn = document.getElementById('discountModeBtn');
+  if (!discountTargetMode) {
+    discountTargetMode = true;
+    target.disabled = false;
+    target.focus();
+    btn.textContent = '할인율 적용';
+    toast('목표 최종견적가를 입력한 뒤 할인율 적용을 누르세요.');
+    return;
+  }
+  const targetValue = target.value || '';
+  if (!targetValue.trim()) { toast('목표 최종견적가를 입력하세요.'); target.focus(); return; }
+  const payload = gatherValuesForCalc(targetValue);
+  google.script.run.withSuccessHandler(function(res){
+    lastCalcResult = res;
+    setInputValueByKey('discountRate', String(res.discountRate));
+    setInputValueByKey('finalQuote', res.finalPriceText || targetValue);
+    if (res.contractUnit) {
+      setInputValueByKey('contractUnit', res.contractUnit);
+      applyContractUnitDefaults_(res.contractUnit, { onlyBlank: true });
+    }
+    toast('할인율을 적용했습니다. 저장 버튼을 눌러 마스터시트에 반영하세요.');
+  }).withFailureHandler(showModalError).calculateQuoteDiscount(payload);
+}
+
+function setInputValueByKey(key, value) {
+  const el = document.querySelector('.detail-edit-input[data-key="' + key + '"]');
+  if (el) el.value = value || '';
+  if (key === 'status') applyPortalStatusControlStyles_();
+}
+
+
+// PATCH P1-4B: 신규 고객 등록 기본값/주소 기반 지역·수행사 자동 입력
+// - 영업담당자: 현재 로그인 사용자명 자동 입력, 직접 수정 가능
+// - 지역구분: 주소 기반 자동 입력 전용으로 비활성화
+// - 고객사 상세 주소 blur 시 주소 표준화 + 지역구분 + 수행사 자동 입력
+// - 계약단위: 신규 등록 기본값 12개월
+function getPortalCurrentUserNameForSalesRep_() {
+  let raw = '';
+  try {
+    const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
+    raw = (p && (p.name || p.userName || p.salesRepName || p.displayName || p.email)) || '';
+    if (!raw || raw === '권한 확인 중') return '';
+    const rawText = String(raw || '').replace(/·.*$/g, '').trim();
+    if (rawText && !/@/.test(rawText) && (/[\s()]/.test(rawText) || /영업팀|기획팀|관리자|서무|ADMIN|SALES/i.test(rawText))) {
+      let text = rawText.replace(/\([^)]*\)/g, ' ').trim();
+      const skip = /^(영업팀|기획팀|관리자|서무|ADMIN|SALES|대리|차장|과장|부장|팀장|책임|대표|실장|사원|주임)$/i;
+      const tokens = text.split(/\s+/).filter(Boolean).filter(function(t){ return !skip.test(t); });
+      const nameToken = tokens.find(function(t){ return /^[가-힣]{2,4}$/.test(t); });
+      if (nameToken) return nameToken;
+      return tokens[0] || text;
+    }
+    return rawText;
+  } catch (err) {
+    return '';
+  }
+}
+
+function applyNewCustomerRegistrationDefaults_() {
+  if (!currentDetail || !currentDetail.isNew) return;
+  const salesEl = getDetailInputByKey_('salesRep');
+  if (salesEl && !String(salesEl.value || '').trim()) {
+    const name = getPortalCurrentUserNameForSalesRep_();
+    if (name) salesEl.value = name;
+    else if (typeof loadPortalCurrentPermission_ === 'function') {
+      try {
+        loadPortalCurrentPermission_({ silent: true }, function(){
+          const retryName = getPortalCurrentUserNameForSalesRep_();
+          const retryEl = getDetailInputByKey_('salesRep');
+          if (retryEl && !String(retryEl.value || '').trim() && retryName) retryEl.value = retryName;
+        });
+      } catch (err) {}
+    }
+  }
+
+  setInputValueByKeyIfExists_('contractUnit', '12개월', { onlyBlank: true });
+  updateRegionVendorFromAddress_({ onlyIfAddress: true, onlyBlankVendor: true, normalizeAddress: false });
+  enforceRegionReadonly_();
+}
+
+function enforceRegionReadonly_() {
+  const regionEl = getDetailInputByKey_('region');
+  if (!regionEl) return;
+  regionEl.disabled = true;
+  regionEl.classList.add('portal-auto-region-input');
+  regionEl.title = '고객사 상세 주소를 기준으로 자동 입력됩니다.';
+}
+
+function bindCustomerAddressAutoRegionVendor_() {
+  const addressEl = getDetailInputByKey_('address');
+  if (!addressEl || addressEl.__portalAddressAutoBound) return;
+  addressEl.__portalAddressAutoBound = true;
+  addressEl.addEventListener('blur', function(){
+    updateRegionVendorFromAddress_({ onlyIfAddress: false, onlyBlankVendor: false, normalizeAddress: true });
+  });
+  addressEl.addEventListener('change', function(){
+    updateRegionVendorFromAddress_({ onlyIfAddress: false, onlyBlankVendor: false, normalizeAddress: true });
+  });
+}
+
+function normalizePortalAddressClient_(address) {
+  let text = String(address || '').trim().replace(/\s+/g, ' ');
+  if (!text) return '';
+  const rules = [
+    [/^서울시(?=\s|$)/, '서울특별시'], [/^서울(?=\s|$)/, '서울특별시'],
+    [/^부산시(?=\s|$)/, '부산광역시'], [/^부산(?=\s|$)/, '부산광역시'],
+    [/^대구시(?=\s|$)/, '대구광역시'], [/^대구(?=\s|$)/, '대구광역시'],
+    [/^인천시(?=\s|$)/, '인천광역시'], [/^인천(?=\s|$)/, '인천광역시'],
+    [/^광주시(?=\s|$)/, '광주광역시'], [/^광주(?=\s|$)/, '광주광역시'],
+    [/^대전시(?=\s|$)/, '대전광역시'], [/^대전(?=\s|$)/, '대전광역시'],
+    [/^울산시(?=\s|$)/, '울산광역시'], [/^울산(?=\s|$)/, '울산광역시'],
+    [/^세종시(?=\s|$)/, '세종특별자치시'], [/^세종(?=\s|$)/, '세종특별자치시'],
+    [/^경기(?=\s|$)/, '경기도'], [/^강원도(?=\s|$)/, '강원특별자치도'], [/^강원(?=\s|$)/, '강원특별자치도'],
+    [/^충남(?=\s|$)/, '충청남도'], [/^충북(?=\s|$)/, '충청북도'],
+    [/^경남(?=\s|$)/, '경상남도'], [/^경북(?=\s|$)/, '경상북도'],
+    [/^제주도(?=\s|$)/, '제주특별자치도'], [/^제주(?=\s|$)/, '제주특별자치도']
+  ];
+  rules.some(function(pair){
+    if (pair[0].test(text)) {
+      text = text.replace(pair[0], pair[1]);
+      return true;
+    }
+    return false;
+  });
+  return text;
+}
+
+function derivePortalRegionFromAddressClient_(address) {
+  const text = normalizePortalAddressClient_(address);
+  if (!text) return '';
+  if (/^(서울특별시|경기도|인천광역시)\b/.test(text)) return '수도권';
+  if (/^강원특별자치도\b/.test(text)) return '강원권';
+  if (/^(대전광역시|세종특별자치시|충청남도|충청북도)\b/.test(text)) return '충청권';
+  if (/^(부산광역시|울산광역시|경상남도)\b/.test(text)) return '부울경권';
+  if (/^(대구광역시|경상북도)\b/.test(text)) return '대구경북권';
+  return '';
+}
+
+function derivePortalVendorFromAddressClient_(address, region) {
+  const text = normalizePortalAddressClient_(address);
+  if (!String(text || '').trim()) return '';
+  if (/^제주특별자치도\b/.test(text)) return '삼구';
+  if (region === '부울경권' || /^(부산광역시|울산광역시|경상남도)\b/.test(text)) return '일신';
+  return 'KJ';
+}
+
+function updateRegionVendorFromAddress_(options) {
+  options = options || {};
+  const addressEl = getDetailInputByKey_('address');
+  if (!addressEl) return;
+  const rawAddress = String(addressEl.value || '').trim();
+  if (options.onlyIfAddress && !rawAddress) return;
+
+  const normalizedAddress = normalizePortalAddressClient_(rawAddress);
+  if (options.normalizeAddress && normalizedAddress && normalizedAddress !== rawAddress) {
+    addressEl.value = normalizedAddress;
+  }
+
+  const sourceAddress = normalizedAddress || rawAddress;
+  const region = derivePortalRegionFromAddressClient_(sourceAddress);
+  const regionEl = getDetailInputByKey_('region');
+  if (regionEl) {
+    regionEl.value = region || '';
+    enforceRegionReadonly_();
+  }
+
+  const vendor = derivePortalVendorFromAddressClient_(sourceAddress, region);
+  const vendorEl = getDetailInputByKey_('vendor');
+  if (vendorEl && vendor && !(options.onlyBlankVendor && String(vendorEl.value || '').trim() && String(vendorEl.value || '').trim() !== '-')) {
+    vendorEl.value = vendor;
+  }
+}
+
+
+// PATCH E: 계약단위별 표준 계약조건 자동 기입
+// - 12개월: 선임 / 유지 2회 / 성능 1회 / 부가세 별도
+// - 6개월: 선임 / 유지 1회 / 성능점검 미선택 / 부가세 별도
+// 사용자가 자동 기입 후 각 항목을 직접 수정하는 것은 그대로 허용합니다.
+function getDetailInputByKey_(key) {
+  return document.querySelector('.detail-edit-input[data-key="' + String(key).replace(/"/g, '\\"') + '"]');
+}
+
+function setInputValueByKeyIfExists_(key, value, options) {
+  options = options || {};
+  const el = getDetailInputByKey_(key);
+  if (!el) return;
+  if (options.onlyBlank && String(el.value || '').trim()) return;
+  el.value = value == null ? '' : String(value);
+}
+
+function normalizeContractUnitValue_(value) {
+  const text = String(value || '').trim();
+  if (text === '12개월' || text === '1년') return '12개월';
+  if (text === '6개월' || text === '반년') return '6개월';
+  return text;
+}
+
+function applyContractUnitDefaults_(contractUnit, options) {
+  options = options || {};
+  const unit = normalizeContractUnitValue_(contractUnit);
+  if (!unit) {
+    setInputValueByKeyIfExists_('vat', '별도', { onlyBlank: true });
+    return;
+  }
+
+  if (unit === '12개월') {
+    setInputValueByKeyIfExists_('appointment', '선임', options);
+    setInputValueByKeyIfExists_('maintenance', '2회', options);
+    setInputValueByKeyIfExists_('performance', '1회', options);
+    setInputValueByKeyIfExists_('vat', '별도', options.onlyBlank ? { onlyBlank: true } : options);
+    return;
+  }
+
+  if (unit === '6개월') {
+    setInputValueByKeyIfExists_('appointment', '선임', options);
+    setInputValueByKeyIfExists_('maintenance', '1회', options);
+    // 6개월은 성능점검 0회/1회가 모두 쓰이므로 미리 선택하지 않습니다.
+    setInputValueByKeyIfExists_('performance', '', options);
+    setInputValueByKeyIfExists_('vat', '별도', options.onlyBlank ? { onlyBlank: true } : options);
+  }
+}
+
+function applyContractDefaultsOnRender_(options) {
+  options = options || {};
+  setInputValueByKeyIfExists_('vat', '별도', { onlyBlank: true });
+  const unitEl = getDetailInputByKey_('contractUnit');
+  if (currentDetail && currentDetail.isNew && unitEl && !String(unitEl.value || '').trim()) {
+    unitEl.value = '12개월';
+  }
+  if (unitEl && String(unitEl.value || '').trim()) {
+    applyContractUnitDefaults_(unitEl.value, { onlyBlank: true });
+  }
+}
+
+function bindContractDefaultHandlers_() {
+  const unitEl = getDetailInputByKey_('contractUnit');
+  if (!unitEl || unitEl.__portalContractDefaultBound) return;
+  unitEl.__portalContractDefaultBound = true;
+  unitEl.addEventListener('change', function() {
+    applyContractUnitDefaults_(unitEl.value, { onlyBlank: false });
+    toast('계약단위 기준 표준 조건을 자동 기입했습니다. 필요 시 직접 수정하세요.');
+  });
+}
+
+
+function applyPortalStatusControlStyles_() {
+  const el = getDetailInputByKey_('status');
+  if (!el || typeof getPortalStatusStyle_ !== 'function') return;
+  const st = getPortalStatusStyle_(el.value || '');
+  el.style.background = st.bg;
+  el.style.color = st.fg;
+  el.style.borderColor = st.bg;
+  el.style.fontWeight = '900';
+  if (!el.__portalStatusStyleBound) {
+    el.__portalStatusStyleBound = true;
+    el.addEventListener('change', applyPortalStatusControlStyles_);
+  }
+}
+
+
+function gatherRegistrationValues() {
+  const values = {};
+  document.querySelectorAll('.detail-edit-input').forEach(el => {
+    values[el.getAttribute('data-key')] = el.value || '';
+  });
+  return values;
+}
+
+function applyRegistrationCalculation() {
+  clearModalErrorBox();
+  const values = gatherRegistrationValues();
+  const applyBtn = document.getElementById('registrationApplyBtn');
+  if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = '적용 중...'; }
+
+  google.script.run.withSuccessHandler(function(res) {
+    registrationApplied = true;
+    registrationCalcResult = res;
+    setInputValueByKey('grade', res.grade || '');
+    setInputValueByKey('finalQuote', res.finalQuote || '');
+    setRegistrationSaveEnabled(true);
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '적용'; }
+    toast(res.message || '계산값을 적용했습니다.');
+  }).withFailureHandler(function(err) {
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '적용'; }
+    showModalError(err);
+  }).applyCustomerRegistrationCalculation({ values: values });
+}
+
+function saveRegistrationCustomerFromModal() {
+  clearModalErrorBox();
+  let values = gatherRegistrationValues();
+  try {
+    values = prepareDetailContractValuesForClientSaveP112_(values, { requireFull: true });
+  } catch (err) {
+    showModalError(err);
+    return;
+  }
+  const saveBtn = document.getElementById('registrationSaveBtn');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '계산 및 저장 중...'; }
+
+  google.script.run.withSuccessHandler(function(res) {
+    alert('저장했습니다.');
+    registrationMode = false;
+    savedRegistrationMode = true;
+    registrationApplied = false;
+    registrationCalcResult = null;
+    if (res && res.calculation) {
+      setInputValueByKey('grade', res.calculation.grade || '');
+      setInputValueByKey('finalQuote', res.calculation.finalQuote || '');
+    }
+    loadDashboard();
+    search();
+    renderDetail(res.detail || currentDetail);
+    // 신규 저장 직후에는 바로 다시 저장되지 않도록 읽기 전용 + 수정 버튼 상태로 전환합니다.
+    toggleDetailEdit(false);
+    renderRegistrationFooter('saved');
+  }).withFailureHandler(function(err) {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '저장'; }
+    showModalError(err);
+  }).saveRegistrationCustomer({
+    rowNo: currentDetail && currentDetail.rowNo ? currentDetail.rowNo : 0,
+    values: values,
+    calculation: registrationCalcResult || {},
+    autoCalculate: true
+  });
+}
+
+function goToSendForSavedRegistrationCustomer() {
+  const rowNo = Number(currentDetail && currentDetail.rowNo ? currentDetail.rowNo : 0);
+  if (!rowNo) {
+    toast('저장된 고객 행 정보를 찾지 못했습니다. 고객 상세 검색에서 고객을 다시 선택해 주세요.');
+    return;
+  }
+  try {
+    closeModal();
+  } catch (err) {}
+  if (typeof openSendForCustomer === 'function') {
+    openSendForCustomer(rowNo);
+    return;
+  }
+  if (typeof switchPage === 'function') {
+    switchPage('send', true);
+    setTimeout(function() {
+      if (typeof selectSendCustomer === 'function') selectSendCustomer(rowNo);
+    }, 120);
+  }
+}
+
+function editSavedRegistrationCustomer() {
+  registrationMode = true;
+  savedRegistrationMode = false;
+  registrationApplied = false;
+  registrationCalcResult = null;
+  renderRegistrationFooter('newEditing');
+  toggleDetailEdit(true);
+  setRegistrationSaveEnabled(true);
+}
+
+
+function buildSupportCustomerInfoFromCurrentDetailP19_() {
+  const d = currentDetail || {};
+  const basic = getFieldMap('basic');
+  const contract = getFieldMap('contract');
+  function val(sectionMap, key, fallback) {
+    const f = sectionMap && sectionMap[key];
+    const v = f && f.value != null ? f.value : '';
+    return String(v || fallback || '').trim();
+  }
+  const info = {
+    rowNo: Number(d.rowNo) || 0,
+    customerNo: val(basic, 'customerNo', d.customerNo),
+    customerName: val(basic, 'company', d.company),
+    contractUnit: val(contract, 'contractUnit', d.contractUnit),
+    appointment: val(contract, 'appointment', d.appointment),
+    maintenance: val(contract, 'maintenance', d.maintenance),
+    performance: val(contract, 'performance', d.performance),
+    discountRate: val(contract, 'discountRate', d.discountRate),
+    vat: val(contract, 'vat', d.vat),
+    quoteAmount: val(contract, 'finalQuote', d.finalQuote),
+    status: val(basic, 'status', d.status),
+    area: val(contract, 'area', d.area),
+    region: val(basic, 'region', d.region),
+    contactName: val(basic, 'contact', d.contact),
+    contactEmail: val(basic, 'email', d.email),
+    masterMemo: val(basic, 'memo', d.memo)
+  };
+  if (typeof buildSupportInlineContractSummaryClient_ === 'function') {
+    info.contractSummary = buildSupportInlineContractSummaryClient_(info);
+  }
+  return info;
+}
+
+function goToSupportForCurrentDetailP19_() {
+  const info = buildSupportCustomerInfoFromCurrentDetailP19_();
+  if (!info.rowNo && !info.customerNo) return toast('고객 정보를 찾지 못했습니다.');
+  closeModal();
+  switchPage('support');
+  let tries = 0;
+  const timer = setInterval(function() {
+    tries++;
+    const input = document.getElementById('supportInlineCustomerNo');
+    const name = document.getElementById('supportInlineCustomerName');
+    if (input && name) {
+      clearInterval(timer);
+      if (typeof fillSupportInlineCustomerInfo_ === 'function') {
+        fillSupportInlineCustomerInfo_(info, { fromCustomerDetail: true });
+      } else {
+        input.value = info.customerNo || '';
+        name.value = info.customerName || '';
+      }
+      const type = document.getElementById('supportInlineRequestType');
+      if (type && !type.value) type.focus();
+      toast('영업지원 요청 화면에 고객 정보를 적용했습니다.');
+      return;
+    }
+    if (tries > 30) {
+      clearInterval(timer);
+      toast('영업지원 요청 화면을 준비하지 못했습니다. 고객번호 ' + (info.customerNo || '') + '를 직접 입력하세요.');
+    }
+  }, 100);
+}
+
+function renderContactQuickPanel(d) {
+  return '<div class="section-card"><div class="section-title" style="font-size:17px;margin-bottom:8px;">컨택 이력 추가</div>' +
+    '<div class="section-sub">컨택내용을 저장하면 마스터시트 메모 하단과 컨택이력_DB에 동시에 반영됩니다. <span class="portal-guide-help" title="통화/문자/메일 등 고객 접촉 내역을 시간순으로 남깁니다.">?</span></div>' +
+    '<button type="button" title="이 고객의 통화, 문자, 메일, 방문 내용을 새 이력으로 저장합니다." onclick="openContactHistoryModal(' + Number(d.rowNo || 0) + ')">컨택이력 추가</button></div>';
+}
+
+function openContactHistoryModal(rowNo, customerNo) {
+  contactHistoryTargetRowNo = Number(rowNo || (currentDetail && currentDetail.rowNo) || 0);
+  const summary = findCustomerRowSummaryByRowNo_(contactHistoryTargetRowNo) || {};
+  currentDetailCustomerNo = normalizeCustomerNoForKey_(customerNo || (currentDetail && currentDetail.customerNo) || summary.customerNo || currentDetailCustomerNo);
+  if (!contactHistoryTargetRowNo) return toast('고객 행 번호를 찾지 못했습니다.');
+
+  const backdrop = document.getElementById('contactHistoryBackdrop');
+  if (!backdrop) return;
+
+  fillSelectOptions_(document.getElementById('contactRoundSelect'), ['', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'], function(v){ return v ? v + '차' : '몇 차인지 선택'; });
+  fillSelectOptions_(document.getElementById('contactMethodSelect'), ['', '전화', '문자', '메일', '방문', '팩스', '기타'], function(v){ return v || '연락수단 선택'; });
+  fillSelectOptions_(document.getElementById('contactNextActionSelect'), ['', '전화하기', '자료 발송', '견적서 발송', '재확인', '방문/미팅', '계약서류 요청', '보류 확인', '기타'], function(v){ return v || '다음 액션 선택'; });
+  contactSelectedTagsP11 = [];
+  renderContactQuickTagsP11_();
+
+  document.getElementById('contactAtInput').value = toLocalDateTimeInputValue(new Date());
+  document.getElementById('contactNextAtInput').value = '';
+  document.getElementById('contactContentInput').value = '';
+  document.getElementById('contactNextMemoInput').value = '';
+  document.getElementById('contactAuthorInput').value = '';
+  const btn = document.getElementById('contactSaveBtn');
+  if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+  backdrop.style.display = 'flex';
+  setTimeout(function(){ const el = document.getElementById('contactContentInput'); if (el) el.focus(); }, 80);
+}
+
+function closeContactHistoryModal() {
+  const backdrop = document.getElementById('contactHistoryBackdrop');
+  if (backdrop) backdrop.style.display = 'none';
+  contactHistoryTargetRowNo = 0;
+  contactSelectedTagsP11 = [];
+}
+
+function normalizeContactAtForSaveP12_() {
+  const input = document.getElementById('contactAtInput');
+  let value = input ? String(input.value || '').trim() : '';
+  if (!value) {
+    value = toLocalDateTimeInputValue(new Date());
+    if (input) input.value = value;
+  }
+  return value;
+}
+
+function saveContactHistoryFromModal() {
+  const rowNo = Number(contactHistoryTargetRowNo || 0);
+  if (!rowNo) return toast('고객 행 번호를 찾지 못했습니다.');
+
+  const roundNo = document.getElementById('contactRoundSelect').value;
+  const method = document.getElementById('contactMethodSelect').value;
+  const contactAt = normalizeContactAtForSaveP12_();
+  let content = document.getElementById('contactContentInput').value;
+  const author = document.getElementById('contactAuthorInput').value;
+  const nextActionBase = document.getElementById('contactNextActionSelect').value;
+  const nextMemo = document.getElementById('contactNextMemoInput').value;
+  const nextActionAt = document.getElementById('contactNextAtInput').value;
+  const selectedTags = (contactSelectedTagsP11 || []).filter(function(v){ return String(v || '').trim(); });
+  const contactTagText = selectedTags.join(', ');
+  if (!String(content || '').trim() && contactTagText) content = contactTagText;
+  const nextAction = [nextActionBase, nextMemo].filter(function(v){ return String(v || '').trim(); }).join(' - ');
+
+  if (!roundNo) return toast('몇 차인지 선택하세요.');
+  if (!method) return toast('연락수단을 선택하세요.');
+  if (!String(content || '').trim() && !contactTagText) return toast('컨택 내용을 입력하거나 태그를 선택하세요.');
+
+  const btn = document.getElementById('contactSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      toast('컨택이력이 저장되었습니다.');
+      closeContactHistoryModal();
+      const updatedMemo = res && res.updatedMemo ? res.updatedMemo : '';
+      if (updatedMemo) applyCustomerMemoOptimistic_(rowNo, updatedMemo);
+      if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+      if (currentDetail && Number(currentDetail.rowNo) === rowNo && updatedMemo) {
+        currentDetail.memo = updatedMemo;
+        renderDetail(currentDetail);
+      }
+      fetchCustomerDetailFromServer_(rowNo, function(detail){
+        if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+        if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
+      }, function(){}, { customerNo: normalizeCustomerNoForKey_(((getCustomerDetailCache_(rowNo, currentDetailCustomerNo) || currentDetail || {}).customerNo) || currentDetailCustomerNo) });
+      setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
+      if (document.getElementById('todaySection') && document.getElementById('todaySection').classList.contains('active')) loadTodayPage();
+    })
+    .withFailureHandler(function(err) {
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      alert('컨택이력 저장 실패: ' + getErrorMessage_(err));
+    })
+    .addContactHistory({ rowNo: rowNo, customerNo: normalizeCustomerNoForKey_(((getCustomerDetailCache_(rowNo, currentDetailCustomerNo) || currentDetail || {}).customerNo) || currentDetailCustomerNo), roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, author: author, nextAction: nextAction, nextActionAt: nextActionAt });
+}
+
+
+function getContactQuickTagListP11_() {
+  return [
+    '견적서 발송 요청',
+    '견적서 발송 완료',
+    '용역신청서 발송 요청',
+    '양식 보내기',
+    '담당자 부재',
+    '담당자 전달 요청',
+    '재통화 예정',
+    '내부 검토 중',
+    '타사 계약 중',
+    '거절',
+    '계약서 취합 필요',
+    '계약 진행 중'
+  ];
+}
+
+function renderContactQuickTagsP11_() {
+  const panel = document.getElementById('contactQuickTagPanel');
+  if (!panel) return;
+  const tags = getContactQuickTagListP11_();
+  panel.innerHTML = tags.map(function(tag) {
+    return '<button type="button" class="contact-tag-btn" data-tag="' + escAttr(tag) + '" onmousedown="event.preventDefault()" onclick="insertContactQuickTagP11_(this.getAttribute(\'data-tag\'))">' + esc(tag) + '</button>';
+  }).join('');
+}
+
+function insertContactQuickTagP11_(tag) {
+  tag = String(tag || '').trim();
+  if (!tag) return;
+  const input = document.getElementById('contactContentInput');
+  if (!input) return;
+  if ((contactSelectedTagsP11 || []).indexOf(tag) < 0) contactSelectedTagsP11.push(tag);
+  const panel = document.getElementById('contactQuickTagPanel');
+  if (panel) {
+    Array.prototype.forEach.call(panel.querySelectorAll('.contact-tag-btn'), function(btn) {
+      if (btn.getAttribute('data-tag') === tag) btn.classList.add('selected');
+    });
+  }
+  insertTextAtTextareaCursorP11_(input, tag + ' ');
+}
+
+function insertTextAtTextareaCursorP11_(textarea, text) {
+  if (!textarea) return;
+  text = String(text || '');
+  textarea.focus({ preventScroll: true });
+  const value = String(textarea.value || '');
+  let start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : value.length;
+  let end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
+  const needsLeadingSpace = start > 0 && value.charAt(start - 1) && !/\s/.test(value.charAt(start - 1));
+  const insertText = (needsLeadingSpace ? ' ' : '') + text;
+  textarea.value = value.slice(0, start) + insertText + value.slice(end);
+  const pos = start + insertText.length;
+  try { textarea.setSelectionRange(pos, pos); } catch (e) {}
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function fillSelectOptions_(select, values, labelFn) {
+  if (!select) return;
+  select.innerHTML = (values || []).map(function(v) {
+    return '<option value="' + escAttr(v) + '">' + esc(labelFn ? labelFn(v) : v) + '</option>';
+  }).join('');
+}
+</script>

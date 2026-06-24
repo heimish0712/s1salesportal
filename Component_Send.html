@@ -1,0 +1,1090 @@
+<script>
+// v51: 자료발송 수신/참조 수동 편집 보호
+// - 고객 기본정보/상세정보가 비동기로 늦게 도착해도 사용자가 이미 삭제/추가한 수신·참조 목록을 덮어쓰지 않습니다.
+// - 고객이 바뀔 때만 수동 편집 상태를 초기화합니다.
+var sendRecipientTouchedV51 = { to: false, cc: false };
+var sendRecipientOwnerKeyV51 = '';
+
+// v75: 포털 자료발송에서도 기존 메일자동화의 [파일 확인/수정] 세션을 보존합니다.
+var sendReviewSessionIdV75 = '';
+var sendReviewFolderUrlV75 = '';
+var sendReviewRequestNoV75 = '';
+
+function getSendRecipientOwnerKeyV51_(detail) {
+  detail = detail || sendSelectedDetail || {};
+  const customerNo = normalizeCustomerNoForKey_(detail.customerNo || fieldVal(detail, 'basic', 'customerNo') || sendSelectedCustomerNoV50);
+  const rowNo = Number(detail.rowNo || sendSelectedRowNoV50 || 0) || 0;
+  return customerNo ? ('CNO:' + customerNo) : (rowNo ? ('ROW:' + rowNo) : '');
+}
+
+function resetSendRecipientManualStateV51_() {
+  sendRecipientTouchedV51 = { to: false, cc: false };
+  sendRecipientOwnerKeyV51 = '';
+}
+
+function clearSendReviewSessionV75_(reason) {
+  sendReviewSessionIdV75 = '';
+  sendReviewFolderUrlV75 = '';
+  sendReviewRequestNoV75 = '';
+  if (reason && typeof console !== 'undefined') console.log('[sendReviewSession cleared]', reason);
+}
+
+function markSendRecipientTouchedV51_(type) {
+  if (type === 'to') sendRecipientTouchedV51.to = true;
+  if (type === 'cc') sendRecipientTouchedV51.cc = true;
+}
+
+function renderSendPage(forceReset) {
+  const placeholder = document.querySelector('#placeholderSection .placeholder-panel');
+  if (!placeholder) return;
+
+  // v50: 다른 메뉴로 이동했다가 돌아와도 발송 화면/선택 고객/진행상황을 유지합니다.
+  // 단, 초기화 버튼 또는 placeholder가 다른 화면으로 덮인 경우에는 다시 그립니다.
+  const existingSendPage = placeholder.querySelector && placeholder.querySelector('#sendKeyword');
+  if (existingSendPage && !forceReset) {
+    restoreSendPageStateV50_();
+    return;
+  }
+
+  placeholder.innerHTML = '' +
+    '<div class="send-workspace">' +
+      '<div class="send-big-box">' +
+        '<div class="send-top-search">' +
+          '<div class="send-step-title">1. 발송 고객 검색 <span class="portal-guide-help" title="자료를 보낼 고객을 검색하고 선택합니다.">?</span></div>' +
+          '<input id="sendKeyword" placeholder="회사명, 고객번호, 주소, 담당자, 전화번호 검색" title="회사명, 고객번호, 주소, 담당자, 전화번호로 발송 대상 고객을 검색합니다.">' +
+          '<button onclick="searchSendCustomers()">검색</button>' +
+          '<button class="secondary" onclick="resetSendPageAllV50()">초기화</button>' +
+        '</div>' +
+        '<div id="sendResultArea" style="margin-top:14px;"><div class="send-empty-box"></div></div>' +
+      '</div>' +
+      '<div class="send-big-box">' +
+        '<div class="send-step-title" style="margin-bottom:16px;">2. 선택 고객 <span class="portal-guide-help" title="선택한 고객의 수신자, 회사명, 계약 조건이 발송 자료에 반영됩니다.">?</span></div>' +
+        '<div id="sendSelectedPanel"><div class="send-empty-box">선택된 고객이 없습니다.</div></div>' +
+      '</div>' +
+      '<div class="send-two-col">' +
+        '<div class="send-big-box send-tall-card">' +
+          '<div class="send-step-title" style="margin-bottom:16px;">3. 발송자료 선택 <span class="portal-guide-help" title="체크한 자료만 생성/첨부 또는 링크 발송 대상이 됩니다.">?</span></div>' +
+          renderSendFileQuickPresetPanel_() +
+          '<div class="send-file-grid">' + renderSendFileCheckboxes() + '</div>' +
+        '</div>' +
+        '<div class="send-big-box send-tall-card">' +
+          '<div class="send-step-title" style="margin-bottom:16px;">4. 발송내용 확인 <span class="portal-guide-help" title="고객명, 담당자명, 계약 조건, 선택 자료가 맞는지 확인합니다.">?</span></div>' +
+          '<div id="sendPreviewArea"><div class="send-empty-box">고객/자료 선택 시 발송내용이 자동 표시됩니다.</div></div>' +
+          '<div id="sendResultMessage" class="send-warning" style="display:none;"></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="send-big-box">' +
+        '<div class="send-step-title" style="margin-bottom:16px;">5. 메일 발송 진행상황 <span class="portal-guide-help" title="파일 생성, 테스트 발송, 실제 발송 진행률과 실패 여부를 표시합니다.">?</span></div>' +
+        '<div id="sendInlineProgress" class="send-inline-progress"></div>' +
+      '</div>' +
+      '<div class="send-fixed-footer">' +
+        '<button class="secondary" onclick="preparePortalMailFilesForReviewFromUi()" title="선택한 견적서, 용역신청서 등 수정 가능한 파일을 먼저 확인합니다.">파일 확인/수정</button>' +
+        '<button onclick="sendPortalMailFromUi(\'TEST\')" title="고객에게 보내기 전에 내 메일로 먼저 확인합니다.">나에게 테스트 발송</button>' +
+        '<button onclick="sendPortalMailFromUi(\'CUSTOMER\')" title="현재 선택된 고객에게 실제 메일을 발송합니다.">고객에게 발송</button>' +
+      '</div>' +
+    '</div>';
+  sendPageRenderedV50 = true;
+  const kw = document.getElementById('sendKeyword');
+  if (kw) {
+    kw.value = sendSearchState && sendSearchState.keyword ? sendSearchState.keyword : '';
+    kw.addEventListener('keydown', function(e){ if(e.key==='Enter') searchSendCustomers(); });
+  }
+  document.querySelectorAll('.send-file-check').forEach(function(el){
+    el.addEventListener('change', function(){
+      syncSendSelectedFileKeysV50_();
+      clearSendReviewSessionV75_('file selection changed');
+      renderSendPreview();
+    });
+  });
+  restoreSendPageStateV50_();
+  setTimeout(function(){ const kw2=document.getElementById('sendKeyword'); if(kw2) kw2.focus(); }, 80);
+}
+
+function restoreSendPageStateV50_() {
+  const kw = document.getElementById('sendKeyword');
+  if (kw && sendSearchState && sendSearchState.keyword && !kw.value) kw.value = sendSearchState.keyword;
+  restoreSendFileChecksV50_();
+  if (sendSelectedDetail) {
+    renderSendSelectedPanel(sendSelectedDetail);
+    renderSendPreview();
+  } else {
+    const selectedPanel = document.getElementById('sendSelectedPanel');
+    if (selectedPanel && !selectedPanel.textContent.trim()) selectedPanel.innerHTML = '<div class="send-empty-box">선택된 고객이 없습니다.</div>';
+    const preview = document.getElementById('sendPreviewArea');
+    if (preview && !preview.textContent.trim()) preview.innerHTML = '<div class="send-empty-box">고객/자료 선택 시 발송내용이 자동 표시됩니다.</div>';
+  }
+  renderInlineMailProgress_();
+}
+
+function syncSendSelectedFileKeysV50_() {
+  const els = Array.from(document.querySelectorAll('.send-file-check'));
+  if (!els.length) return sendSelectedFileKeysV50.slice();
+  sendSelectedFileKeysV50 = els.filter(function(el){ return el.checked; }).map(function(el){ return el.value; });
+  return sendSelectedFileKeysV50.slice();
+}
+
+function restoreSendFileChecksV50_() {
+  const keySet = {};
+  (sendSelectedFileKeysV50 || []).forEach(function(k){ keySet[k] = true; });
+  document.querySelectorAll('.send-file-check').forEach(function(el){ el.checked = !!keySet[el.value]; });
+}
+
+function resetSendFilesAndProgressForCustomerChangeV50_() {
+  resetSendRecipientManualStateV51_();
+  clearSendReviewSessionV75_('customer changed');
+  sendSelectedFileKeysV50 = [];
+  document.querySelectorAll('.send-file-check').forEach(function(el){ el.checked = false; });
+  setSendMessage('', false);
+  const preview = document.getElementById('sendPreviewArea');
+  if (preview) preview.innerHTML = '<div class="send-empty-box">고객/자료 선택 시 발송내용이 자동 표시됩니다.</div>';
+
+  // 발송 중인 건은 백그라운드에서 계속 두고, 완료/실패/대기 상태만 새 고객 선택 시 정리합니다.
+  if (!mailSendInFlight) {
+    resetSendProgressV50_(false);
+  }
+}
+
+function resetSendProgressV50_(force) {
+  if (mailSendInFlight && !force) return;
+  if (mailProgressPollTimer) { clearTimeout(mailProgressPollTimer); mailProgressPollTimer = null; }
+  mailSendInFlight = false;
+  currentMailRunId = '';
+  mailProgressState = null;
+  renderInlineMailProgress_();
+}
+
+function resetSendPageAllV50() {
+  clearSendReviewSessionV75_('send page reset');
+  sendSelectedDetail = null;
+  sendSelectedRowNoV50 = 0;
+  sendSelectedCustomerNoV50 = '';
+  resetSendRecipientManualStateV51_();
+  sendToList = [];
+  sendCcList = [];
+  sendDefaultCcList = [];
+  sendSelectedFileKeysV50 = [];
+  sendSearchState = { keyword: '', page: 0 };
+  resetSendProgressV50_(true);
+  const area = document.getElementById('sendResultArea');
+  if (area) area.innerHTML = '<div class="send-empty-box"></div>';
+  const kw = document.getElementById('sendKeyword');
+  if (kw) kw.value = '';
+  renderSendPage(true);
+  toast('발송 화면을 초기화했습니다.');
+}
+
+
+function renderSendFileCheckboxes() {
+  return SEND_FILE_OPTIONS.map(function(f){
+    return '<label class="send-file-item"><input type="checkbox" class="send-file-check" value="' + escAttr(f.key) + '"><span>' + esc(f.label) + '</span></label>';
+  }).join('');
+}
+
+
+// P1-6: 발송자료 빠른 선택 프리셋
+function renderSendFileQuickPresetPanel_() {
+  return '' +
+    '<div class="send-file-preset-popover" aria-label="발송자료 빠른 선택">' +
+      '<div class="send-file-preset-label">빠른 선택!</div>' +
+      '<div class="send-file-preset-actions">' +
+        '<button type="button" class="send-file-preset-btn" onclick="applySendFileQuickPreset_(&quot;all&quot;)">#전체</button>' +
+        '<button type="button" class="send-file-preset-btn" onclick="applySendFileQuickPreset_(&quot;first&quot;)">#최초</button>' +
+        '<button type="button" class="send-file-preset-btn" onclick="applySendFileQuickPreset_(&quot;required&quot;)">#필수</button>' +
+        '<button type="button" class="send-file-preset-btn" onclick="applySendFileQuickPreset_(&quot;contractor&quot;)">#수행사</button>' +
+      '</div>' +
+    '</div>';
+}
+
+function getSendFileQuickPresetKeys_(preset) {
+  if (preset === 'all') {
+    return SEND_FILE_OPTIONS.map(function(f) { return f.key; });
+  }
+  if (preset === 'first') {
+    return ['quote', 'serviceApplication', 'appointmentDoc', 'termsGuide', 'contractorInfo'];
+  }
+  if (preset === 'required') {
+    return ['quote', 'serviceApplication', 'appointmentDoc'];
+  }
+  if (preset === 'contractor') {
+    return ['contractorInfo', 'sampleReport'];
+  }
+  return [];
+}
+
+function applySendFileQuickPreset_(preset) {
+  const allowed = {};
+  SEND_FILE_OPTIONS.forEach(function(f) { allowed[f.key] = true; });
+  const selected = getSendFileQuickPresetKeys_(preset).filter(function(k) { return !!allowed[k]; });
+  const keySet = {};
+  selected.forEach(function(k) { keySet[k] = true; });
+  document.querySelectorAll('.send-file-check').forEach(function(el) {
+    el.checked = !!keySet[el.value];
+  });
+  sendSelectedFileKeysV50 = selected.slice();
+  clearSendReviewSessionV75_('file quick preset changed');
+  renderSendPreview();
+}
+
+// PATCH N: 견적/자료 발송 고객검색은 화면 부담을 줄이기 위해 5건 단위로 표시합니다.
+// - 고객 상세 검색 화면의 20건 페이지와 분리하여, 발송 화면 전용 페이지 크기를 사용합니다.
+// - 검색인덱스_DB가 준비되어 있으면 브라우저 인덱스에서 즉시 5건 단위로 표시하고,
+//   없으면 서버 searchCustomersPaged(keyword, page, 5)를 호출합니다.
+const SEND_CUSTOMER_PAGE_SIZE = 5;
+
+function searchSendCustomers() { searchSendCustomersPage(0); }
+
+function searchSendCustomersPage(page) {
+  const keyword = (document.getElementById('sendKeyword') && document.getElementById('sendKeyword').value) || '';
+  sendSearchState = { keyword: keyword, page: Math.max(0, Number(page) || 0), pageSize: SEND_CUSTOMER_PAGE_SIZE };
+  const area = document.getElementById('sendResultArea');
+  if (area) area.innerHTML = '<div class="loading">고객 데이터를 불러오는 중입니다...</div>';
+
+  // 검색인덱스가 아직 없으면 먼저 로컬/서버 인덱스 로딩을 걸어둡니다.
+  try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: true }); } catch (err) {}
+
+  fetchSendCustomerPage_(keyword, sendSearchState.page, function(res, fromCache){
+    renderSendResults(res, fromCache);
+    if (typeof prefetchCustomerDetailsForRows_ === 'function') {
+      prefetchCustomerDetailsForRows_((res && res.rows) || [], { delayBase: 250 });
+    }
+  }, function(err){
+    if (area) area.innerHTML = '<div class="loading" style="color:#b42318;">오류: ' + esc(err && err.message ? err.message : err) + '</div>';
+  });
+}
+
+function fetchSendCustomerPage_(keyword, page, onSuccess, onError, options) {
+  options = options || {};
+  page = Math.max(0, Number(page) || 0);
+
+  if (!options.forceNetwork) {
+    const fromIndex = buildSendCustomerPageFromIndex_(keyword, page);
+    if (fromIndex) {
+      onSuccess(fromIndex, true);
+      return;
+    }
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      res = normalizeSendPagedResponse_(res, page);
+      if (res && Array.isArray(res.rows) && typeof mergeCustomerIndexRows_ === 'function') {
+        mergeCustomerIndexRows_(res.rows, res.version || 'sendServerPage');
+      }
+      onSuccess(res, false);
+    })
+    .withFailureHandler(onError)
+    .searchCustomersPaged(keyword, page, SEND_CUSTOMER_PAGE_SIZE);
+}
+
+function buildSendCustomerPageFromIndex_(keyword, page) {
+  if (!customerSearchIndexState || !customerSearchIndexState.ready || !Array.isArray(customerSearchIndexState.rows)) return null;
+  keyword = String(keyword || '').trim().toLowerCase();
+  page = Math.max(0, Number(page) || 0);
+
+  const filtered = customerSearchIndexState.rows.filter(function(row) {
+    return doesCustomerRowMatchKeywordClient_(row, keyword);
+  });
+  const start = page * SEND_CUSTOMER_PAGE_SIZE;
+  const rows = filtered.slice(start, start + SEND_CUSTOMER_PAGE_SIZE);
+  return {
+    rows: rows,
+    total: filtered.length,
+    page: page,
+    pageSize: SEND_CUSTOMER_PAGE_SIZE,
+    start: start,
+    end: Math.min(start + rows.length, filtered.length),
+    hasPrev: page > 0,
+    hasNext: start + SEND_CUSTOMER_PAGE_SIZE < filtered.length,
+    keyword: keyword,
+    source: customerSearchIndexState.source || 'clientIndex',
+    version: customerSearchIndexState.version,
+    builtAt: customerSearchIndexState.builtAt
+  };
+}
+
+function normalizeSendPagedResponse_(response, fallbackPage) {
+  response = response || {};
+  if (Array.isArray(response)) response = { rows: response };
+  const page = Math.max(0, Number(response.page != null ? response.page : fallbackPage) || 0);
+  const rows = Array.isArray(response.rows) ? response.rows.slice(0, SEND_CUSTOMER_PAGE_SIZE) : [];
+  const total = Number(response.total != null ? response.total : rows.length) || 0;
+  const start = Number(response.start != null ? response.start : page * SEND_CUSTOMER_PAGE_SIZE) || 0;
+  const end = Number(response.end != null ? response.end : Math.min(start + rows.length, total)) || 0;
+  return Object.assign({}, response, {
+    rows: rows,
+    total: total,
+    page: page,
+    pageSize: SEND_CUSTOMER_PAGE_SIZE,
+    start: start,
+    end: end,
+    hasPrev: page > 0,
+    hasNext: end < total
+  });
+}
+
+function renderSendResults(response, fromCache) {
+  const area = document.getElementById('sendResultArea');
+  if (!area) return;
+  const res = normalizeSendPagedResponse_(response, sendSearchState && sendSearchState.page);
+  const rows = res.rows || [];
+  if (!rows.length) {
+    area.innerHTML = '<div class="send-empty-box">검색 결과가 없습니다.</div>' + renderSendPagerHtml_(res, fromCache);
+    return;
+  }
+  let html = '<table class="send-result-table"><thead><tr>';
+  html += '<th>고객번호</th><th>회사명</th><th>상태</th><th>영업담당자</th><th>수행사</th><th>수신자</th>';
+  html += '</tr></thead><tbody>';
+  rows.forEach(function(r){
+    const rowNo = Number(r.rowNo) || 0;
+    const statusValue = disp(r.status);
+    const statusHtml = (typeof renderStatusChip_ === 'function')
+      ? renderStatusChip_(statusValue)
+      : '<span class="status">' + esc(statusValue) + '</span>';
+    html += '<tr id="sendRow_' + rowNo + '" onclick="selectSendCustomer(' + rowNo + ')">';
+    html += '<td>' + esc(disp(r.customerNo)) + '</td>';
+    html += '<td><strong>' + esc(disp(r.company)) + '</strong><br><span style="color:#667085;font-size:12px;">' + esc(disp(r.address || r.fullAddress)) + '</span></td>';
+    html += '<td>' + statusHtml + '</td>';
+    html += '<td>' + esc(disp(r.salesRep)) + '</td>';
+    html += '<td>' + esc(disp(r.vendor)) + '</td>';
+    html += '<td>' + esc(disp(r.email)) + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table>' + renderSendPagerHtml_(res, fromCache);
+  area.innerHTML = html;
+}
+
+function renderSendPagerHtml_(res, fromCache) {
+  res = normalizeSendPagedResponse_(res, res && res.page);
+  const pageText = res.total ? ((res.start + 1) + '-' + res.end + ' / 총 ' + res.total + '건') : '총 0건';
+  const cacheText = fromCache ? '<span class="cache-note">캐시 표시 · 5건씩</span>' : '<span class="cache-note">최신 조회 · 5건씩</span>';
+  return '<div class="pager">' +
+    '<div class="pager-left"><strong>' + esc(pageText) + '</strong>' + cacheText + '</div>' +
+    '<div>' +
+      '<button class="secondary" ' + (res.hasPrev ? '' : 'disabled') + ' onclick="searchSendCustomersPage(' + Math.max(0, res.page - 1) + ')">이전 5건</button> ' +
+      '<button class="secondary" ' + (res.hasNext ? '' : 'disabled') + ' onclick="searchSendCustomersPage(' + (res.page + 1) + ')">다음 5건</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function selectSendCustomer(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const summary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const targetCustomerNo = normalizeCustomerNoForKey_(summary.customerNo || (sendSelectedDetail && sendSelectedDetail.customerNo) || sendSelectedCustomerNoV50);
+  const prevRowNo = Number(sendSelectedRowNoV50 || (sendSelectedDetail && sendSelectedDetail.rowNo) || 0);
+  const prevCustomerNo = normalizeCustomerNoForKey_(sendSelectedCustomerNoV50 || (sendSelectedDetail && sendSelectedDetail.customerNo));
+  const isDifferentCustomer = !!((prevCustomerNo && targetCustomerNo && prevCustomerNo !== targetCustomerNo) || (prevRowNo && rowNo && prevRowNo !== rowNo));
+  sendSelectedRowNoV50 = rowNo;
+  sendSelectedCustomerNoV50 = targetCustomerNo;
+  if (isDifferentCustomer) resetSendFilesAndProgressForCustomerChangeV50_();
+
+  document.querySelectorAll('.send-result-table tr').forEach(function(el){ el.classList.remove('selected'); });
+  const rowEl = document.getElementById('sendRow_' + rowNo);
+  if (rowEl) rowEl.classList.add('selected');
+  const panel = document.getElementById('sendSelectedPanel');
+
+  const cached = getCustomerDetailCache_(rowNo, targetCustomerNo) || loadCustomerDetailFromLocalStorage_(rowNo, targetCustomerNo) || (summary ? buildCustomerDetailFromRowSummary_(summary, rowNo) : null);
+  if (cached) {
+    sendSelectedDetail = cached;
+    sendSelectedCustomerNoV50 = normalizeCustomerNoForKey_(cached.customerNo || targetCustomerNo);
+    initializeSendRecipients(cached, { preserveManual: !isDifferentCustomer });
+    renderSendSelectedPanel(cached);
+    renderSendPreview();
+    if (cached.__summary || cached.__lite) toast('고객 기본정보를 먼저 표시했습니다. 발송 상세정보를 보강 중입니다.');
+  } else if (panel) {
+    panel.innerHTML = '<div class="loading" style="padding:18px;text-align:left;">고객 정보를 불러오는 중...</div>';
+  }
+
+  getCustomerDetailFast_(rowNo, function(detail){
+    if (Number(sendSelectedRowNoV50 || 0) !== rowNo) return;
+    if (!detail || Number(detail.rowNo) !== rowNo) return;
+    const detailCustomerNo = normalizeCustomerNoForKey_(detail.customerNo || targetCustomerNo);
+    if (targetCustomerNo && detailCustomerNo && targetCustomerNo !== detailCustomerNo) return;
+    sendSelectedDetail = detail;
+    sendSelectedCustomerNoV50 = detailCustomerNo;
+    initializeSendRecipients(detail, { preserveManual: true });
+    renderSendSelectedPanel(detail);
+    renderSendPreview();
+  }, function(err){
+    if (panel && !sendSelectedDetail) panel.innerHTML = '<div style="color:#b42318;">오류: ' + esc(err && err.message ? err.message : err) + '</div>';
+  }, { forceFull: true, customerNo: targetCustomerNo });
+}
+
+function fieldVal(detail, section, key) {
+  const arr = detail && detail.detailFields && detail.detailFields[section] ? detail.detailFields[section] : [];
+  const hit = arr.find(function(f){ return f.key === key; });
+  return hit ? (hit.value || '') : '';
+}
+
+function initializeSendRecipients(d, options) {
+  options = options || {};
+  d = d || {};
+
+  const ownerKey = getSendRecipientOwnerKeyV51_(d);
+  const sameOwner = !!(ownerKey && sendRecipientOwnerKeyV51 && ownerKey === sendRecipientOwnerKeyV51);
+  const preserveManual = options.preserveManual === true && sameOwner;
+
+  if (ownerKey && !sameOwner) {
+    sendRecipientOwnerKeyV51 = ownerKey;
+    sendRecipientTouchedV51 = { to: false, cc: false };
+  } else if (ownerKey && !sendRecipientOwnerKeyV51) {
+    sendRecipientOwnerKeyV51 = ownerKey;
+  }
+
+  const email = fieldVal(d,'basic','email');
+  const salesRep = fieldVal(d,'basic','salesRep');
+  const nextToList = normalizeEmailListForUi_(email);
+  const nextDefaultCcList = buildDefaultCcList_(salesRep);
+
+  if (!preserveManual || !sendRecipientTouchedV51.to) {
+    sendToList = nextToList;
+  }
+
+  // sendDefaultCcList는 removedCc 계산 기준이므로 최신 영업담당자 기준으로 갱신합니다.
+  // 단, 사용자가 이미 참조를 삭제/추가했다면 sendCcList 자체는 유지합니다.
+  sendDefaultCcList = nextDefaultCcList;
+  if (!preserveManual || !sendRecipientTouchedV51.cc) {
+    sendCcList = nextDefaultCcList.slice();
+  }
+}
+
+function renderSendSelectedPanel(d) {
+  const panel = document.getElementById('sendSelectedPanel');
+  if (!panel) return;
+  const customerNo = fieldVal(d,'basic','customerNo');
+  const company = fieldVal(d,'basic','company') || d.company;
+  const salesRep = fieldVal(d,'basic','salesRep');
+  const vendor = fieldVal(d,'basic','vendor');
+  const email = fieldVal(d,'basic','email');
+  const status = fieldVal(d,'basic','status');
+  let html = '<div class="send-selected-grid">';
+  html += '<div class="send-selected-head">고객번호</div><div class="send-selected-head">회사명</div><div class="send-selected-head">상태</div><div class="send-selected-head">영업담당자</div><div class="send-selected-head">수행사</div><div class="send-selected-head">수신자</div>';
+  html += '<div class="send-selected-val">' + esc(disp(customerNo)) + '</div>';
+  html += '<div class="send-selected-val">' + esc(disp(company)) + '</div>';
+  html += '<div class="send-selected-val"><span class="status">' + esc(disp(status)) + '</span></div>';
+  html += '<div class="send-selected-val">' + esc(disp(salesRep)) + '</div>';
+  html += '<div class="send-selected-val">' + esc(disp(vendor)) + '</div>';
+  html += '<div class="send-selected-val">' + esc(disp(email)) + '</div>';
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+function getSelectedSendFiles() {
+  const allChecks = Array.from(document.querySelectorAll('.send-file-check'));
+  let keys = [];
+  if (allChecks.length) {
+    keys = allChecks.filter(function(el){ return el.checked; }).map(function(el){ return el.value; });
+    sendSelectedFileKeysV50 = keys.slice();
+  } else {
+    keys = (sendSelectedFileKeysV50 || []).slice();
+  }
+  return keys.map(function(key){
+    const opt = SEND_FILE_OPTIONS.find(function(f){ return f.key === key; });
+    return opt || { key: key, label: key };
+  });
+}
+
+function renderSendPreview() {
+  const area = document.getElementById('sendPreviewArea');
+  if (!area) return;
+  const oldTestInput = document.getElementById('sendTestInput') ? document.getElementById('sendTestInput').value : '';
+  if (!sendSelectedDetail) {
+    area.innerHTML = '<div class="send-empty-box">고객/자료 선택 시 발송내용이 자동 표시됩니다.</div>';
+    return;
+  }
+  const model = buildCurrentSendPreviewModel_('PREVIEW');
+  let html = '<div class="send-preview-panel">';
+  html += '<div class="send-preview-grid">';
+  html += '<div class="send-preview-label">선택 행</div><div class="send-preview-value">' + esc(model.rowNo + '행') + '</div>';
+  html += '<div class="send-preview-label">고객사</div><div class="send-preview-value">' + esc(disp(model.company)) + '</div>';
+  html += '<div class="send-preview-label">계약조건</div><div class="send-preview-value">' + esc(model.contractText) + '</div>';
+  html += '<div class="send-preview-label">수신</div><div class="send-preview-value">' + renderRecipientEditor('to') + '</div>';
+  html += '<div class="send-preview-label">참조</div><div class="send-preview-value">' + renderRecipientEditor('cc') + '</div>';
+  html += '<div class="send-preview-label">영업담당자</div><div class="send-preview-value">' + esc(disp(model.salesRep)) + '</div>';
+  html += '<div class="send-preview-label">예상시간</div><div class="send-preview-value">' + (model.estimatedSeconds ? ('예상 ' + esc(model.estimatedSeconds) + '초') : '-') + '</div>';
+  html += '<div class="send-preview-label">첨부</div><div class="send-preview-value"><div class="send-chip-row">' + (model.labels.length ? model.labels.map(chipHtml_).join('') : '<span class="send-chip-muted">발송자료를 선택하세요.</span>') + '</div></div>';
+  html += '<div class="send-preview-label">테스트 수신</div><div class="send-preview-value"><input id="sendTestInput" placeholder="예: bang 또는 bang@s1samsung.com" style="width:100%;"></div>';
+  html += '</div>';
+  if (sendReviewSessionIdV75) {
+    const folderLink = sendReviewFolderUrlV75 ? (' · <a href="' + escAttr(sendReviewFolderUrlV75) + '" target="_blank" rel="noopener">Drive 폴더 열기</a>') : '';
+    html += '<div class="send-preview-warn" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;">파일 확인/수정 세션 적용 중' + (sendReviewRequestNoV75 ? ' · 접수번호 ' + esc(sendReviewRequestNoV75) : '') + folderLink + '<br>수정 후 발송하면 Drive 폴더의 최종 수정본 기준으로 첨부됩니다.</div>';
+  }
+  if (model.warnings.length) html += '<div class="send-preview-warn">' + model.warnings.map(esc).join('<br>') + '</div>';
+  html += '</div>';
+  area.innerHTML = html;
+  const newTestInput = document.getElementById('sendTestInput');
+  if (newTestInput && oldTestInput) newTestInput.value = oldTestInput;
+}
+
+function renderRecipientEditor(type) {
+  const list = type === 'to' ? sendToList : sendCcList;
+  const label = type === 'to' ? '수신' : '참조';
+  let html = '<div class="recipient-line"><div class="recipient-line-label">' + label + '</div><div class="send-chip-row">';
+  if (list.length) {
+    list.forEach(function(email, idx){
+      html += '<span class="send-chip editable">' + esc(email) + '<button type="button" class="chip-x" onclick="removeSendRecipient(\'' + type + '\',' + idx + ')">×</button></span>';
+    });
+  } else {
+    html += '<span class="send-chip-muted">-</span>';
+  }
+  html += '</div><button type="button" class="mini-add-btn" onclick="promptAddRecipient(\'' + type + '\')">추가</button></div>';
+  return html;
+}
+
+function promptAddRecipient(type) {
+  const label = type === 'to' ? '수신자' : '참조자';
+  const value = prompt(label + ' 이메일을 입력하세요.\n사내 아이디만 입력하면 @s1samsung.com으로 처리합니다.');
+  if (value == null) return;
+  const emails = normalizeEmailListForUi_(value);
+  if (!emails.length) return;
+  const target = type === 'to' ? sendToList : sendCcList;
+  let changed = false;
+  emails.forEach(function(email){
+    if (target.map(function(v){return v.toLowerCase();}).indexOf(email.toLowerCase()) < 0) {
+      target.push(email);
+      changed = true;
+    }
+  });
+  if (changed) markSendRecipientTouchedV51_(type);
+  renderSendPreview();
+}
+
+function removeSendRecipient(type, idx) {
+  const target = type === 'to' ? sendToList : sendCcList;
+  target.splice(idx, 1);
+  markSendRecipientTouchedV51_(type);
+  renderSendPreview();
+}
+
+function normalizeEmailListForUi_(value) {
+  let arr = Array.isArray(value) ? value : String(value || '').split(/[;,\s]+/);
+  const out = [];
+  arr.forEach(function(v){
+    v = String(v || '').trim();
+    if (!v || v === '-') return;
+    if (v.indexOf('@') < 0) v = v + '@s1samsung.com';
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v) && out.map(function(x){return x.toLowerCase();}).indexOf(v.toLowerCase()) < 0) out.push(v);
+  });
+  return out;
+}
+
+
+function normalizeInternalTestEmailForUi_(value) {
+  let email = String(value || '').trim();
+  if (!email) return '';
+  if (email.indexOf('@') < 0) email += '@s1samsung.com';
+  return email;
+}
+
+function isInternalTestEmail_(value) {
+  const email = normalizeInternalTestEmailForUi_(value);
+  return /^[^@\s]+@s1samsung\.com$/i.test(email);
+}
+
+function getSendAttachmentDisplayLabel(file) {
+  const map = { quote:'견적서', serviceApplication:'용역신청서', appointmentDoc:'선임신고서/위임장', termsGuide:'약관/안내문/법령요약', contractorInfo:'수행사 정보', sampleReport:'샘플 보고서', compareQuote:'비교견적서', serviceStandardContract:'수행사 용역표준계약서' };
+  return map[file.key] || file.label || file.key;
+}
+
+function buildDefaultCcList_(salesRep) {
+  const map = { '방수원':'bang@s1samsung.com', '김경아':'kim@s1samsung.com', '이옥희':'ok@s1samsung.com', '최보람':'choi@s1samsung.com', '윤철영':'yoon@s1samsung.com', '김마리아':'maria@s1samsung.com' };
+  const cc = [];
+  const repMail = map[String(salesRep || '').trim()];
+  if (repMail) cc.push(repMail);
+  cc.push('master@s1samsung.com');
+  return normalizeEmailListForUi_(cc);
+}
+
+function buildRemovedDefaultCc_() {
+  const current = sendCcList.map(function(v){ return String(v || '').toLowerCase(); });
+  return sendDefaultCcList.filter(function(email){ return current.indexOf(String(email || '').toLowerCase()) < 0; });
+}
+
+function estimateSendSeconds_(files) {
+  const keys = files.map(function(f){ return f.key; });
+  let sec = 20;
+  files.forEach(function(f){ if (f.key === 'quote' || f.key === 'compareQuote') sec += 8; else if (f.key === 'serviceApplication' || f.key === 'appointmentDoc') sec += 10; else sec += 4; });
+  if (keys.indexOf('contractorInfo') >= 0 && keys.indexOf('sampleReport') >= 0) sec += 4;
+  return sec;
+}
+
+function chipHtml_(text) { return '<span class="send-chip">' + esc(disp(text)) + '</span>'; }
+
+
+function buildCurrentSendPreviewModel_(mode) {
+  if (!sendSelectedDetail) return null;
+  const files = getSelectedSendFiles();
+  const rowNo = sendSelectedDetail.rowNo || '-';
+  const customerNo = normalizeCustomerNoForKey_(sendSelectedDetail.customerNo || sendSelectedCustomerNoV50);
+  const company = fieldVal(sendSelectedDetail,'basic','company') || sendSelectedDetail.company || '-';
+  const salesRep = fieldVal(sendSelectedDetail,'basic','salesRep') || '-';
+  const grade = fieldVal(sendSelectedDetail,'basic','grade') || '-';
+  const discount = fieldVal(sendSelectedDetail,'contract','discountRate') || '0';
+  const contractUnit = fieldVal(sendSelectedDetail,'contract','contractUnit') || '-';
+  const appointmentRaw = fieldVal(sendSelectedDetail,'contract','appointment') || '-';
+  const maintenance = fieldVal(sendSelectedDetail,'contract','maintenance') || '-';
+  const performance = fieldVal(sendSelectedDetail,'contract','performance') || '-';
+  const vat = fieldVal(sendSelectedDetail,'contract','vat') || '-';
+  const finalQuote = fieldVal(sendSelectedDetail,'contract','finalQuote') || '-';
+  const appointmentText = appointmentRaw === '선임' ? '선임 O' : (appointmentRaw && appointmentRaw !== '-' ? '선임 X' : '-');
+  const vatText = vat === '별도' ? '부별' : (vat === '포함' ? '부포함' : vat);
+  const contractText = [grade, discount + '% 할인', contractUnit, appointmentText, '유지 ' + maintenance, '성능 ' + performance, vatText, finalQuote]
+    .filter(function(v){ return String(v || '').trim() && String(v).trim() !== '-'; }).join(' / ') || '-';
+  const keys = files.map(function(f){ return f.key; });
+  const labels = files.map(function(f){ return getSendAttachmentDisplayLabel(f); });
+  const warnings = [];
+  if (keys.indexOf('contractorInfo') >= 0 && keys.indexOf('sampleReport') >= 0) warnings.push('수행사 정보 + 샘플보고서는 첨부 대신 Google Drive 링크로 전환될 수 있습니다.');
+  
+  const estimatedSeconds = files.length ? estimateSendSeconds_(files) : 0;
+  return { rowNo, customerNo, company, salesRep, contractText, keys, labels, warnings, estimatedSeconds, files, mode: mode || '' };
+}
+
+
+
+function getPortalClientIdV48_() {
+  try {
+    const key = 'salesPortal.clientId.v48';
+    let id = localStorage.getItem(key);
+    if (!id) {
+      id = 'client_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+      localStorage.setItem(key, id);
+    }
+    return id;
+  } catch (err) {
+    return 'client_memory_' + Math.random().toString(16).slice(2);
+  }
+}
+
+function ensureMailCompleteSoundLoadedV48_() {
+  if (mailCompleteAudioV48) return mailCompleteAudioV48;
+
+  mailCompleteAudioV48 = new Audio(MAIL_COMPLETE_SOUND_DIRECT_URL_V48);
+  mailCompleteAudioV48.preload = 'auto';
+  mailCompleteAudioV48.volume = 1;
+  mailCompleteAudioV48.addEventListener('canplaythrough', function(){
+    mailCompleteSoundReadyV48 = true;
+    if (mailCompleteSoundPendingRunIdV48) {
+      const pending = mailCompleteSoundPendingRunIdV48;
+      mailCompleteSoundPendingRunIdV48 = '';
+      playMailCompleteSoundForRunV48_(pending);
+    }
+  });
+  mailCompleteAudioV48.addEventListener('error', function(){
+    loadMailCompleteSoundFromServerV48_();
+  });
+
+  try { mailCompleteAudioV48.load(); } catch (err) {}
+  return mailCompleteAudioV48;
+}
+
+function loadMailCompleteSoundFromServerV48_() {
+  if (mailCompleteSoundLoadingV48) return;
+  mailCompleteSoundLoadingV48 = true;
+  google.script.run
+    .withSuccessHandler(function(res){
+      mailCompleteSoundLoadingV48 = false;
+      if (!res || !res.ok || !res.dataUrl) return;
+      mailCompleteAudioV48 = new Audio(res.dataUrl);
+      mailCompleteAudioV48.preload = 'auto';
+      mailCompleteAudioV48.volume = 1;
+      mailCompleteAudioV48.addEventListener('canplaythrough', function(){
+        mailCompleteSoundReadyV48 = true;
+        if (mailCompleteSoundPendingRunIdV48) {
+          const pending = mailCompleteSoundPendingRunIdV48;
+          mailCompleteSoundPendingRunIdV48 = '';
+          playMailCompleteSoundForRunV48_(pending);
+        }
+      });
+      try { mailCompleteAudioV48.load(); } catch (err) {}
+    })
+    .withFailureHandler(function(){
+      mailCompleteSoundLoadingV48 = false;
+    })
+    .getPortalMailCompleteSoundDataUrlV48();
+}
+
+function primeMailCompleteSoundV48_() {
+  // 브라우저 자동재생 차단 완화용: 발송 버튼 클릭 이벤트 안에서 오디오를 미리 초기화합니다.
+  const audio = ensureMailCompleteSoundLoadedV48_();
+  if (!audio) return;
+  try {
+    const oldVolume = audio.volume;
+    audio.volume = 0;
+    const p = audio.play();
+    if (p && typeof p.then === 'function') {
+      p.then(function(){
+        try { audio.pause(); audio.currentTime = 0; audio.volume = oldVolume || 1; } catch (e) {}
+      }).catch(function(){
+        try { audio.volume = oldVolume || 1; } catch (e) {}
+      });
+    } else {
+      try { audio.pause(); audio.currentTime = 0; audio.volume = oldVolume || 1; } catch (e) {}
+    }
+  } catch (err) {}
+}
+
+function playMailCompleteSoundForRunV48_(runId) {
+  runId = String(runId || currentMailRunId || '').trim();
+  if (!runId) return;
+  if (mailCompleteSoundPlayedRunIdsV48[runId]) return;
+
+  // 중요: 현재 브라우저에서 시작한 발송 건만 재생합니다.
+  const ownerId = mailProgressState && mailProgressState.ownerClientId;
+  if (ownerId && ownerId !== getPortalClientIdV48_()) return;
+
+  const audio = ensureMailCompleteSoundLoadedV48_();
+  if (!audio) return;
+
+  mailCompleteSoundPlayedRunIdsV48[runId] = true;
+  try {
+    audio.volume = 1;
+    audio.currentTime = 0;
+    const p = audio.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch(function(){
+        mailCompleteSoundPendingRunIdV48 = runId;
+        loadMailCompleteSoundFromServerV48_();
+      });
+    }
+  } catch (err) {
+    mailCompleteSoundPendingRunIdV48 = runId;
+    loadMailCompleteSoundFromServerV48_();
+  }
+}
+
+function getMailProgressStateLabel_(state) {
+  state = state || {};
+  const status = String(state.status || 'RUNNING').toUpperCase();
+  if (status === 'DONE') return '발송 완료';
+  if (status === 'FAIL') return '발송 실패';
+  if (status === 'CANCEL') return '취소 요청됨';
+  return '발송 진행 중';
+}
+
+function renderInlineMailProgress_() {
+  const panel = document.getElementById('sendInlineProgress');
+  if (!panel) return;
+  const state = mailProgressState || null;
+  if (!state) {
+    panel.className = 'send-inline-progress active idle';
+    panel.innerHTML = '<div class="send-empty-box">발송 대기 중입니다. 발송을 시작하면 현재 작업과 진행률이 여기에 표시됩니다.</div>';
+    return;
+  }
+
+  const percent = Math.max(0, Math.min(100, Number(state.percent || 0)));
+  const elapsed = state.elapsedSec != null ? state.elapsedSec : Math.max(0, Math.floor((Date.now() - (state.startedAt || Date.now())) / 1000));
+  const remaining = state.remainingSec != null ? state.remainingSec : null;
+  const status = String(state.status || 'RUNNING').toUpperCase();
+  const isDone = status === 'DONE';
+  const isFail = status === 'FAIL';
+  const resultClass = isDone ? 'ok' : (isFail ? 'err' : '');
+  const resultText = state.resultText || (isDone ? '메일 발송 완료' : (isFail ? '메일 발송 실패' : ''));
+  const extra = state.progressError ? (' · 조회오류 재시도 중') : '';
+  const currentMessage = state.message || (isDone ? '메일 발송 완료' : (isFail ? '메일 발송 실패' : '발송 준비 중'));
+
+  let html = '';
+  html += '<div class="send-inline-progress-head">';
+  html += '<div class="send-inline-progress-title">현재 작업</div>';
+  html += '<div class="send-inline-progress-status">' + esc(getMailProgressStateLabel_(state)) + '</div>';
+  html += '</div>';
+  html += '<div class="send-inline-progress-message">' + esc(currentMessage) + '</div>';
+  html += '<div class="progress-track"><div class="progress-bar" style="width:' + percent + '%"></div></div>';
+  html += '<div class="send-inline-progress-sub">' + esc(percent + '% · 경과 ' + elapsed + '초' + (remaining == null ? ' · 남은 시간 계산 중' : ' · 남은 예상 ' + remaining + '초') + extra) + '</div>';
+  html += '<div class="send-inline-progress-result ' + resultClass + '">' + esc(resultText) + '</div>';
+  panel.className = 'send-inline-progress active';
+  panel.innerHTML = html;
+}
+
+function openMailProgressModal(mode, model, runId, testInput) {
+  // v47: 더 이상 blocking 팝업을 띄우지 않습니다.
+  // 자료 선택 영역 하단의 inline 진행률만 갱신하므로, 사용자는 다른 메뉴/화면에서 계속 작업할 수 있습니다.
+  currentMailRunId = runId || '';
+  mailSendInFlight = true;
+  mailProgressState = {
+    runId: currentMailRunId,
+    ownerClientId: getPortalClientIdV48_(),
+    mode: mode || '',
+    startedAt: Date.now(),
+    status: 'RUNNING',
+    percent: 1,
+    message: '발송 준비 중',
+    elapsedSec: 0,
+    remainingSec: model && model.estimatedSeconds ? Number(model.estimatedSeconds) : null,
+    resultText: '',
+    progressError: ''
+  };
+  renderInlineMailProgress_();
+  toast('메일 발송을 시작했습니다. 다른 메뉴로 이동해도 발송은 계속 진행됩니다.');
+}
+
+function closeMailProgressModal() {
+  // v47: 팝업은 사용하지 않습니다. 완료 후 진행률 박스를 숨기고 싶을 때만 호출됩니다.
+  if (mailSendInFlight) return;
+  if (mailProgressPollTimer) { clearTimeout(mailProgressPollTimer); mailProgressPollTimer = null; }
+  mailProgressState = null;
+  renderInlineMailProgress_();
+}
+
+function updateMailProgressUi(progress) {
+  progress = progress || {};
+  const status = String(progress.status || 'RUNNING').toUpperCase();
+  const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  const msg = progress.message || '처리 중';
+  const elapsed = progress.elapsedSec != null ? progress.elapsedSec : (mailProgressState && mailProgressState.startedAt ? Math.max(0, Math.floor((Date.now() - mailProgressState.startedAt) / 1000)) : 0);
+  const remaining = progress.remainingSec != null ? progress.remainingSec : null;
+
+  mailProgressState = Object.assign({}, mailProgressState || {}, {
+    status: status,
+    percent: percent,
+    message: msg,
+    elapsedSec: elapsed,
+    remainingSec: remaining,
+    progressError: progress.progressError || ''
+  });
+  renderInlineMailProgress_();
+
+  if (status === 'DONE') {
+    finishMailProgressModal(true, msg || '메일 발송 완료');
+  } else if (status === 'FAIL') {
+    finishMailProgressModal(false, msg || '메일 발송 실패');
+  }
+}
+
+function pollMailProgress(runId) {
+  if (!runId || !mailSendInFlight) return;
+  google.script.run
+    .withSuccessHandler(function(progress){
+      updateMailProgressUi(progress);
+      if (mailSendInFlight) mailProgressPollTimer = setTimeout(function(){ pollMailProgress(runId); }, 1200);
+    })
+    .withFailureHandler(function(err){
+      if (!mailSendInFlight) return;
+      const msg = err && err.message ? err.message : String(err || '진행률 조회 오류');
+      const currentPercent = mailProgressState && mailProgressState.percent ? Number(mailProgressState.percent) : 1;
+      mailProgressState = Object.assign({}, mailProgressState || {}, {
+        status: 'RUNNING',
+        percent: Math.max(currentPercent, 12),
+        message: '진행률 조회 재시도 중 · 실제 발송은 계속 진행 중',
+        elapsedSec: mailProgressState && mailProgressState.startedAt ? Math.max(0, Math.floor((Date.now() - mailProgressState.startedAt) / 1000)) : 0,
+        progressError: msg.slice(0, 160)
+      });
+      renderInlineMailProgress_();
+      if (mailProgressPollTimer) clearTimeout(mailProgressPollTimer);
+      mailProgressPollTimer = setTimeout(function(){ pollMailProgress(runId); }, 1800);
+    })
+    .getMailRunProgress(runId);
+}
+
+function finishMailProgressModal(ok, message, detailText) {
+  mailSendInFlight = false;
+  if (mailProgressPollTimer) { clearTimeout(mailProgressPollTimer); mailProgressPollTimer = null; }
+  const currentPercent = mailProgressState && mailProgressState.percent ? Number(mailProgressState.percent) : 0;
+  mailProgressState = Object.assign({}, mailProgressState || {}, {
+    status: ok ? 'DONE' : 'FAIL',
+    percent: ok ? 100 : currentPercent,
+    message: message || (ok ? '메일 발송 완료' : '메일 발송 실패'),
+    resultText: detailText || message || (ok ? '메일 발송 완료' : '메일 발송 실패'),
+    elapsedSec: mailProgressState && mailProgressState.startedAt ? Math.max(0, Math.floor((Date.now() - mailProgressState.startedAt) / 1000)) : 0,
+    remainingSec: ok ? 0 : (mailProgressState ? mailProgressState.remainingSec : null)
+  });
+  renderInlineMailProgress_();
+  if (ok) playMailCompleteSoundForRunV48_(currentMailRunId);
+}
+
+function cancelCurrentMailSend() {
+  if (!mailSendInFlight || !currentMailRunId) return;
+  mailProgressState = Object.assign({}, mailProgressState || {}, {
+    status: 'CANCEL',
+    message: '메일 발송 취소 요청 중입니다.',
+    resultText: ''
+  });
+  renderInlineMailProgress_();
+  google.script.run
+    .withSuccessHandler(function(res){
+      mailProgressState = Object.assign({}, mailProgressState || {}, {
+        status: 'CANCEL',
+        message: (res && res.message) || '취소 요청을 보냈습니다. 하이웍스 발송 전 단계에서 중단됩니다.',
+        resultText: (res && res.message) || '취소 요청을 보냈습니다.'
+      });
+      renderInlineMailProgress_();
+    })
+    .withFailureHandler(function(err){
+      mailProgressState = Object.assign({}, mailProgressState || {}, {
+        status: 'RUNNING',
+        message: '취소 요청 실패',
+        progressError: err && err.message ? err.message : String(err || '')
+      });
+      renderInlineMailProgress_();
+    })
+    .cancelMailRun(currentMailRunId);
+}
+
+function setSendMessage(text, isError) {
+  const box = document.getElementById('sendResultMessage');
+  if (!box) return;
+  box.style.display = text ? 'block' : 'none';
+  box.style.borderColor = isError ? '#fecaca' : '#bbf7d0';
+  box.style.background = isError ? '#fff5f5' : '#f0fdf4';
+  box.style.color = isError ? '#b42318' : '#166534';
+  box.textContent = text || '';
+}
+
+function setSendMessageHtmlV75_(html, isError) {
+  const box = document.getElementById('sendResultMessage');
+  if (!box) return;
+  box.style.display = html ? 'block' : 'none';
+  box.style.borderColor = isError ? '#fecaca' : '#bbf7d0';
+  box.style.background = isError ? '#fff5f5' : '#f0fdf4';
+  box.style.color = isError ? '#b42318' : '#166534';
+  box.innerHTML = html || '';
+}
+
+
+function finishPortalReviewProgressV75_(ok, message, detailText) {
+  mailSendInFlight = false;
+  if (mailProgressPollTimer) { clearTimeout(mailProgressPollTimer); mailProgressPollTimer = null; }
+  const currentPercent = mailProgressState && mailProgressState.percent ? Number(mailProgressState.percent) : 0;
+  mailProgressState = Object.assign({}, mailProgressState || {}, {
+    status: ok ? 'DONE' : 'FAIL',
+    percent: ok ? 100 : currentPercent,
+    message: message || (ok ? '파일 확인/수정용 폴더 생성 완료' : '파일 확인/수정 실패'),
+    resultText: detailText || message || (ok ? '파일 확인/수정용 폴더 생성 완료' : '파일 확인/수정 실패'),
+    elapsedSec: mailProgressState && mailProgressState.startedAt ? Math.max(0, Math.floor((Date.now() - mailProgressState.startedAt) / 1000)) : 0,
+    remainingSec: ok ? 0 : (mailProgressState ? mailProgressState.remainingSec : null)
+  });
+  renderInlineMailProgress_();
+}
+
+function preparePortalMailFilesForReviewFromUi() {
+  setSendMessage('', false);
+  if (mailSendInFlight) {
+    setSendMessage('현재 메일/파일 생성 작업이 진행 중입니다. 완료 후 다시 실행하세요.', true);
+    renderInlineMailProgress_();
+    return;
+  }
+  if (!sendSelectedDetail) { setSendMessage('파일 확인/수정할 고객을 먼저 선택하세요.', true); return; }
+  const files = getSelectedSendFiles();
+  if (!files.length) { setSendMessage('확인/수정할 발송자료를 하나 이상 선택하세요.', true); return; }
+
+  const model = buildCurrentSendPreviewModel_('REVIEW');
+  const selectedKeys = files.map(function(f){ return f.key; });
+  const runId = 'portal_review_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+
+  currentMailRunId = runId;
+  mailSendInFlight = true;
+  mailProgressState = {
+    runId: currentMailRunId,
+    ownerClientId: getPortalClientIdV48_(),
+    mode: 'REVIEW',
+    startedAt: Date.now(),
+    status: 'RUNNING',
+    percent: 1,
+    message: '파일 확인/수정용 파일 생성 요청 중',
+    elapsedSec: 0,
+    remainingSec: model && model.estimatedSeconds ? Number(model.estimatedSeconds) : null,
+    resultText: '',
+    progressError: ''
+  };
+  renderInlineMailProgress_();
+  pollMailProgress(runId);
+
+  google.script.run
+    .withSuccessHandler(function(res){
+      finishPortalReviewProgressV75_(true, '파일 확인/수정용 Drive 폴더 생성 완료', '파일 확인/수정용 Drive 폴더 생성 완료');
+      sendReviewSessionIdV75 = (res && res.reviewSessionId) || '';
+      sendReviewFolderUrlV75 = (res && res.folderUrl) || '';
+      sendReviewRequestNoV75 = (res && res.requestNo) || '';
+      // v84: 상단 미리보기 영역의 "파일 확인/수정 세션 적용 중" 안내와 중복되므로
+      // 별도 결과 메시지 초록 박스는 띄우지 않습니다.
+      setSendMessage('', false);
+      renderSendPreview();
+      if (sendReviewFolderUrlV75) {
+        setTimeout(function(){
+          const opened = window.open(sendReviewFolderUrlV75, '_blank', 'noopener');
+          if (!opened) toast('브라우저가 새 창을 차단했습니다. 화면의 Drive 폴더 열기 링크를 눌러주세요.');
+        }, 150);
+      }
+    })
+    .withFailureHandler(function(err){
+      const msg = '파일 확인/수정 실패: ' + (err && err.message ? err.message : String(err || '알 수 없는 오류'));
+      finishPortalReviewProgressV75_(false, '파일 확인/수정 실패', msg);
+      setSendMessage(msg, true);
+    })
+    .preparePortalMailFilesForReview({
+      rowNo: sendSelectedDetail.rowNo,
+      customerNo: normalizeCustomerNoForKey_(sendSelectedDetail.customerNo || sendSelectedCustomerNoV50),
+      selectedKeys: selectedKeys,
+      runId: runId
+    });
+}
+
+function sendPortalMailFromUi(mode) {
+  setSendMessage('', false);
+  primeMailCompleteSoundV48_();
+  if (mailSendInFlight) {
+    setSendMessage('현재 메일 발송이 진행 중입니다. 다른 메뉴 작업은 가능하지만, 같은 화면에서 새 발송은 완료 후 진행하세요.', true);
+    renderInlineMailProgress_();
+    return;
+  }
+  if (!sendSelectedDetail) { setSendMessage('발송할 고객을 먼저 선택하세요.', true); return; }
+  const files = getSelectedSendFiles();
+  if (!files.length) { setSendMessage('발송자료를 하나 이상 선택하세요.', true); return; }
+  const model = buildCurrentSendPreviewModel_(mode);
+  const selectedKeys = files.map(function(f){ return f.key; });
+  const testInputEl = document.getElementById('sendTestInput');
+  let testInput = (testInputEl && testInputEl.value || '').trim();
+  if (mode === 'TEST') {
+    if (!testInput) { setSendMessage('나에게 테스트 발송할 이메일 또는 아이디를 입력하세요.', true); return; }
+    testInput = normalizeInternalTestEmailForUi_(testInput);
+    if (!isInternalTestEmail_(testInput)) {
+      setSendMessage('테스트 발송은 @s1samsung.com 메일만 가능합니다. 외부 메일 테스트는 고객발송 모드에서 수신자를 직접 추가해 주세요.', true);
+      return;
+    }
+    if (testInputEl) testInputEl.value = testInput;
+  }
+  if (mode === 'CUSTOMER' && !sendToList.length) { setSendMessage('고객에게 발송하려면 수신자를 하나 이상 입력하세요.', true); return; }
+
+  const runId = 'portal_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+  openMailProgressModal(mode, model, runId, testInput);
+  pollMailProgress(runId);
+  setTimeout(function(){
+    if (mailSendInFlight && currentMailRunId === runId) {
+      mailProgressState = Object.assign({}, mailProgressState || {}, {
+        message: '서버 발송 응답을 기다리는 중입니다.',
+        progressError: '90초 이상 대기 중 · Apps Script 실행 로그 확인 권장'
+      });
+      renderInlineMailProgress_();
+    }
+  }, 90000);
+
+  google.script.run.withSuccessHandler(function(res){
+    const msg = (res && res.message) || ((mode === 'TEST' ? '테스트 발송' : '고객 발송') + ' 완료');
+    finishMailProgressModal(true, msg, msg);
+    setSendMessage(msg, false);
+    clearSendReviewSessionV75_('mail sent');
+    renderSendPreview();
+  }).withFailureHandler(function(err){
+    const msg = '오류: ' + (err && err.message ? err.message : String(err || '알 수 없는 오류'));
+    finishMailProgressModal(false, '메일 발송 실패', msg);
+    setSendMessage(msg, true);
+  }).sendPortalSingleMail({
+    rowNo: sendSelectedDetail.rowNo,
+    customerNo: normalizeCustomerNoForKey_(sendSelectedDetail.customerNo || sendSelectedCustomerNoV50),
+    mode: mode,
+    selectedKeys: selectedKeys,
+    testInput: testInput,
+    manualTo: sendToList.slice(),
+    manualCc: sendCcList.slice(),
+    removedCc: buildRemovedDefaultCc_(),
+    reviewSessionId: sendReviewSessionIdV75 || '',
+    runId: runId
+  });
+}
+
+function openSendForCustomer(rowNo) {
+  // 고객 상세 검색 리스트에서 바로 자료발송 화면으로 이동해 해당 고객을 선택합니다.
+  switchPage('send', true);
+  setTimeout(function(){
+    selectSendCustomer(Number(rowNo));
+  }, 120);
+}
+</script>

@@ -1,0 +1,265 @@
+<script>
+// PATCH O-FIX1: 즐겨찾기 화면은 서버에서 전체 고객목록을 다시 조합하지 않고,
+// 1) 고객즐겨찾기_DB에서 현재 유저의 즐겨찾기 map만 빠르게 읽고
+// 2) 브라우저에 이미 올라온 검색인덱스_DB rows와 매칭해서 즉시 렌더링합니다.
+// 이렇게 해야 즐겨찾기 메뉴 진입 시 무거운 getPortalFavoriteCustomers() 호출 때문에 화면이 멈추지 않습니다.
+let favoriteRenderPollTimerV61 = null;
+let favoriteExpandedRowNoV63 = null;
+let favoriteSortKeyP15 = '';
+let favoriteSortDirP15 = 'asc';
+
+function refreshFavoriteCustomers(force) {
+  force = !!force;
+  const area = document.getElementById('favoriteResultArea');
+  if (area) area.innerHTML = '<div class="loading">즐겨찾기 고객을 불러오는 중입니다.</div>';
+
+  // 검색인덱스는 localStorage 우선으로 즉시 올립니다.
+  try {
+    if (typeof loadCustomerSearchIndexFromLocalStorage_ === 'function') loadCustomerSearchIndexFromLocalStorage_();
+  } catch (err) {}
+
+  // 검색인덱스가 아직 없으면 뒤에서 로딩을 시작합니다.
+  try {
+    if ((!customerSearchIndexState || !customerSearchIndexState.ready) && typeof initializeCustomerSearchIndex === 'function') {
+      initializeCustomerSearchIndex({ silent: true, useLocalFirst: true });
+    }
+  } catch (err) {}
+
+  // 이미 즐겨찾기 map이 있고 강제 새로고침이 아니면 우선 즉시 그림.
+  if (!force && customerFavoriteLoadedV60) {
+    renderFavoritePage();
+    startFavoriteRenderPollV61_();
+    return;
+  }
+
+  if (typeof google === 'undefined' || !google.script || !google.script.run) {
+    renderFavoritePage();
+    startFavoriteRenderPollV61_();
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.ok) {
+        setCustomerFavoriteMapFromServer_(res.map || {});
+        // 서버 snapshot rows가 있으면 fallback으로만 보관합니다.
+        if (Array.isArray(res.rows)) customerFavoriteRowsV60 = res.rows;
+      }
+      renderFavoritePage();
+      startFavoriteRenderPollV61_();
+    })
+    .withFailureHandler(function(err) {
+      if (area) area.innerHTML = '<div class="loading">즐겨찾기 정보를 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+    })
+    .getPortalCustomerFavoriteMap();
+}
+
+function startFavoriteRenderPollV61_() {
+  if (favoriteRenderPollTimerV61) clearInterval(favoriteRenderPollTimerV61);
+  let count = 0;
+  favoriteRenderPollTimerV61 = setInterval(function() {
+    count++;
+    try {
+      if (document.getElementById('customerFavoritesSection') && document.getElementById('customerFavoritesSection').classList.contains('active')) {
+        renderFavoritePage();
+      }
+    } catch (err) {}
+    if ((customerSearchIndexState && customerSearchIndexState.ready) || count >= 30) {
+      clearInterval(favoriteRenderPollTimerV61);
+      favoriteRenderPollTimerV61 = null;
+    }
+  }, 300);
+}
+
+function getFavoriteRowsFromClientIndexV61_() {
+  const map = customerFavoriteMapV60 || {};
+  const mapKeys = Object.keys(map).filter(function(k) { return !!map[k]; });
+  const byKey = {};
+  const rows = [];
+
+  function addRow(row) {
+    row = row || {};
+    const key = getFavoriteCustomerKey_(row);
+    if (!key) return;
+    // map이 로딩된 상태에서는 map에 있는 것만 표시합니다.
+    if (customerFavoriteLoadedV60 && !map[key]) return;
+    if (byKey[key]) return;
+    const copy = Object.assign({}, row);
+    copy.favorite = true;
+    byKey[key] = true;
+    rows.push(copy);
+  }
+
+  if (customerSearchIndexState && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length) {
+    filterCustomerRowsByPermissionClient_(customerSearchIndexState.rows).forEach(function(row) {
+      const key = getFavoriteCustomerKey_(row);
+      if (key && map[key]) addRow(row);
+    });
+  }
+
+  // 서버/토글 응답 snapshot은 검색인덱스에서 못 찾을 때만 fallback으로 사용합니다.
+  filterCustomerRowsByPermissionClient_(customerFavoriteRowsV60 || []).forEach(function(row) {
+    addRow(row);
+  });
+
+  // map은 있는데 아직 검색인덱스가 안 뜬 경우에는 로딩 상태를 구분하기 위해 marker를 남깁니다.
+  rows.__hasFavoriteKeys = mapKeys.length > 0;
+  return rows;
+}
+
+function sortFavoriteRowsP15_(rows) {
+  if (!favoriteSortKeyP15) return Array.isArray(rows) ? rows : [];
+  return sortPortalRowsByKeyP15_(rows, favoriteSortKeyP15, favoriteSortDirP15);
+}
+
+function toggleFavoriteHeaderSortP15_(key) {
+  key = String(key || '').trim();
+  if (!key) return;
+  favoriteSortDirP15 = favoriteSortKeyP15 === key && favoriteSortDirP15 === 'asc' ? 'desc' : 'asc';
+  favoriteSortKeyP15 = key;
+  renderFavoritePage();
+}
+
+function renderFavoriteSortableThP15_(col) {
+  col = col || {};
+  return makePortalSortableThP15_(col.label || col.key, col.key || '', favoriteSortKeyP15, favoriteSortDirP15, 'toggleFavoriteHeaderSortP15_', '');
+}
+
+function renderFavoritePage() {
+  const area = document.getElementById('favoriteResultArea');
+  if (!area) return;
+
+  const keywordEl = document.getElementById('favoriteKeyword');
+  const keyword = String(keywordEl && keywordEl.value || '').trim().toLowerCase();
+  let rows = getFavoriteRowsFromClientIndexV61_();
+
+  if (keyword) {
+    rows = rows.filter(function(r) {
+      return [r.customerNo, r.company, r.salesRep, r.status, r.contact, r.phone, r.directPhone, r.email, r.vendor, r.finalQuote, r.memo]
+        .join(' ').toLowerCase().indexOf(keyword) >= 0;
+    });
+  }
+  rows = sortFavoriteRowsP15_(rows);
+
+  const hasFavoriteKeys = rows.__hasFavoriteKeys || Object.keys(customerFavoriteMapV60 || {}).length > 0;
+  const indexReady = !!(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length);
+
+  if (!rows.length) {
+    if (!customerFavoriteLoadedV60) {
+      area.innerHTML = '<div class="loading">즐겨찾기 정보를 불러오는 중입니다.</div>';
+      return;
+    }
+    if (hasFavoriteKeys && !indexReady) {
+      area.innerHTML = '<div class="loading">즐겨찾기 목록을 구성하는 중입니다.<br><span class="cache-note">검색인덱스_DB를 불러오는 중입니다.</span></div>';
+      return;
+    }
+    area.innerHTML = '<div class="favorite-empty">즐겨찾기 고객이 없습니다.<br><span>고객 상세 검색에서 ☆ 별표를 누르면 이곳에 표시됩니다.</span></div>';
+    return;
+  }
+
+  let html = '<div class="customer-table-scroll"><table class="customer-result-table favorite-result-table"><colgroup>';
+  html += '<col style="width:42px">';
+  CUSTOMER_RESULT_TABLE.columns.forEach(function(col) { html += '<col style="width:' + escAttr(col.width || 'auto') + '">'; });
+  html += '<col style="width:' + escAttr(CUSTOMER_RESULT_TABLE.actionWidth || '76px') + '">';
+  html += '</colgroup><thead><tr><th></th>';
+  CUSTOMER_RESULT_TABLE.columns.forEach(function(col) { html += renderFavoriteSortableThP15_(col); });
+  html += '<th></th></tr></thead><tbody>';
+
+  rows.forEach(function(r) {
+    const rowNo = Number(r.rowNo) || 0;
+    const isExpanded = favoriteExpandedRowNoV63 === rowNo;
+    html += '<tr class="customer-main-row' + (isExpanded ? ' customer-expanded' : '') + '" data-row-no="' + rowNo + '">';
+    html += renderCustomerFavoriteCell_(r);
+    CUSTOMER_RESULT_TABLE.columns.forEach(function(col) { html += renderFavoriteResultCellV63_(r, col); });
+    html += '<td><div class="customer-actions">' +
+      '<button type="button" class="customer-row-btn primary" onclick="event.stopPropagation(); openDetailSafe_(' + rowNo + ')">상세</button>' +
+      '<button type="button" class="customer-row-btn" onclick="event.stopPropagation(); openSendForCustomer(' + rowNo + ')">발송</button>' +
+      '<button type="button" class="customer-row-btn customer-row-expand-btn" title="상세 펼침/접기" onclick="event.stopPropagation(); toggleFavoriteCustomerExpand_(' + rowNo + ')">' + (isExpanded ? '▲' : '▼') + '</button>' +
+      '</div></td>';
+    html += '</tr>';
+
+    if (isExpanded) {
+      const colspan = CUSTOMER_RESULT_TABLE.columns.length + 2;
+      html += '<tr class="customer-expand-row favorite-expand-row" id="favoriteExpandRow_' + rowNo + '"><td colspan="' + colspan + '">' + renderFavoriteExpandedContentV63_(rowNo, r) + '</td></tr>';
+    }
+  });
+
+  html += '</tbody></table></div>';
+  area.innerHTML = html;
+  try { if (typeof bindFavoriteCustomerInlineEditDelegationP15_ === 'function') bindFavoriteCustomerInlineEditDelegationP15_(); } catch (err) {}
+  try {
+    if (typeof prefetchCustomerDetailsForRows_ === 'function') {
+      prefetchCustomerDetailsForRows_(rows, { delayBase: 450 });
+    }
+  } catch (err) {}
+}
+
+
+// PATCH O-FIX3: 즐겨찾기 목록에서도 고객상세검색과 같은 펼침 상세를 사용합니다.
+// - 행 더블클릭 또는 메모 내용 클릭 시 아래에 상세 영역을 펼칩니다.
+// - 고객상세검색의 renderCustomerExpandedContent_()를 재사용하되, 접기 버튼만 즐겨찾기용 toggle로 바꿉니다.
+function renderFavoriteResultCellV63_(row, col) {
+  const html = renderCustomerResultCell_(row, col);
+  if (!col || col.key !== 'memo') return html;
+  return html.replace(/toggleCustomerExpand\(/g, 'toggleFavoriteCustomerExpand_(');
+}
+
+function findFavoriteRowSummaryByRowNoV63_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return null;
+  const rows = getFavoriteRowsFromClientIndexV61_() || [];
+  for (let i = 0; i < rows.length; i++) {
+    if (Number(rows[i] && rows[i].rowNo) === rowNo) return rows[i];
+  }
+  return findCustomerRowSummaryByRowNo_(rowNo);
+}
+
+function toggleFavoriteCustomerExpand_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+
+  if (favoriteExpandedRowNoV63 === rowNo) {
+    favoriteExpandedRowNoV63 = null;
+    renderFavoritePage();
+    return;
+  }
+
+  favoriteExpandedRowNoV63 = rowNo;
+  const rowSummary = findFavoriteRowSummaryByRowNoV63_(rowNo) || {};
+  const targetCustomerNo = normalizeCustomerNoForKey_(rowSummary && rowSummary.customerNo);
+
+  if (!getCustomerDetailCache_(rowNo, targetCustomerNo) && rowSummary) {
+    setCustomerDetailCache_(buildCustomerDetailFromRowSummary_(rowSummary, rowNo), {
+      source: 'index',
+      skipStorage: true,
+      allowIndexPatch: false
+    });
+  }
+
+  renderFavoritePage();
+
+  const cached = getCustomerDetailCache_(rowNo, targetCustomerNo);
+  const isFresh = (typeof isCustomerDetailFreshFromMasterP112_ === 'function')
+    ? isCustomerDetailFreshFromMasterP112_(cached, typeof CUSTOMER_DETAIL_EXPAND_REALTIME_TTL_MS_P112 !== 'undefined' ? CUSTOMER_DETAIL_EXPAND_REALTIME_TTL_MS_P112 : 3000)
+    : false;
+  if (cached && !cached.__summary && !cached.__lite && isFresh) return;
+
+  fetchCustomerDetailFromServer_(rowNo, function(detail) {
+    if (favoriteExpandedRowNoV63 === rowNo) renderFavoritePage();
+  }, function(err) {
+    const row = document.getElementById('favoriteExpandRow_' + rowNo);
+    if (row) row.querySelector('td').innerHTML = '<div class="customer-expand-loading">상세정보를 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+  });
+}
+
+function renderFavoriteExpandedContentV63_(rowNo, rowSummary) {
+  if (typeof renderCustomerExpandedContent_ !== 'function') {
+    return '<div class="customer-expand-loading">상세 펼침 UI를 불러오지 못했습니다.</div>';
+  }
+  let html = renderCustomerExpandedContent_(rowNo, rowSummary || {});
+  // 고객상세검색용 접기 버튼을 즐겨찾기용 접기로 교체합니다.
+  html = html.replace(new RegExp('toggleCustomerExpand\\(' + rowNo + '\\)', 'g'), 'toggleFavoriteCustomerExpand_(' + rowNo + ')');
+  return html;
+}
+
+</script>

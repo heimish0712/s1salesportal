@@ -1,0 +1,490 @@
+<script>
+// v81: 계약종합관리 화면 상태 / 고객사명 공란행 2중 필터 / 상세 레이아웃 복구 / 수정 저장 안정화
+let contractCompleteRowsV69 = [];
+let contractCompleteMetaV69 = null;
+let contractCompleteLoadingV69 = false;
+let contractCompleteExpandedRowNoV69 = null;
+let contractCompleteLastKeywordV69 = '';
+let contractCompleteEditingRowNoV80 = null;
+let contractCompleteEditValuesV80 = {};
+let contractCompleteSavingRowNoV80 = null;
+let contractCompleteSortKeyP15 = '';
+let contractCompleteSortDirP15 = 'asc';
+
+const CONTRACT_COMPLETE_COLUMNS_V69 = [
+  { key: 'contractNo', label: '계약번호', width: '7%', align: 'center' },
+  { key: 'customerNo', label: '고객번호', width: '7%', align: 'center' },
+  { key: 'contractDate', label: '계약일자', width: '9%', align: 'center' },
+  { key: 'contractRep', label: '계약담당자', width: '8%', align: 'center' },
+  { key: 'company', label: '고객사명', width: '15%', className: 'customer-cell-company' },
+  { key: 'contactName', label: '담당자', width: '9%', align: 'center' },
+  { key: 'phone', label: '전화번호', width: '11%', align: 'center' },
+  { key: 'area', label: '연면적', width: '8%', align: 'right' },
+  { key: 'grade', label: '관리등급', width: '7%', align: 'center' },
+  { key: 'contractPrice', label: '계약가', width: '9%', align: 'right' },
+  { key: 'vendor', label: '수행사', width: '7%', align: 'center' },
+  { key: 'billingMemo', label: '청구 등 메모', width: '18%', className: 'customer-cell-memo' }
+];
+
+const CONTRACT_COMPLETE_EDITABLE_KEYS_V80 = [
+  'appointmentDue',
+  'firstMaintenanceDue',
+  'performanceDue',
+  'appointmentDone',
+  'maintenanceDone',
+  'performanceDone',
+  'businessRegSaved',
+  'orderMailSaved',
+  'contractSaved',
+  'businessNo',
+  'representativeName',
+  'businessType',
+  'billingMemo'
+];
+
+function loadContractCompletePageV69(options) {
+  options = options || {};
+  const area = document.getElementById('contractCompleteArea');
+  if (!area) return;
+
+  const force = options.force === true;
+  if (contractCompleteLoadingV69) return;
+
+  if (contractCompleteRowsV69.length && !force) {
+    renderContractCompleteListV69_();
+    return;
+  }
+
+  contractCompleteLoadingV69 = true;
+  area.innerHTML = '<div class="loading">계약종합관리 목록을 불러오는 중입니다...</div>';
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      contractCompleteLoadingV69 = false;
+      contractCompleteMetaV69 = res || null;
+      contractCompleteRowsV69 = normalizeContractCompleteRowsV81_((res && Array.isArray(res.rows)) ? res.rows : []);
+      if (contractCompleteMetaV69) contractCompleteMetaV69.total = contractCompleteRowsV69.length;
+      renderContractCompleteListV69_();
+    })
+    .withFailureHandler(function(err) {
+      contractCompleteLoadingV69 = false;
+      area.innerHTML = '<div class="loading" style="color:#b42318;">계약종합관리 목록 조회 실패<br>' + esc(getErrorMessage_(err)) + '</div>';
+    })
+    .listContractCompleteRowsV69({ force: force });
+}
+
+function refreshContractCompletePageV69() {
+  contractCompleteExpandedRowNoV69 = null;
+  contractCompleteEditingRowNoV80 = null;
+  contractCompleteEditValuesV80 = {};
+  loadContractCompletePageV69({ force: true });
+}
+
+function searchContractCompletePageV69() {
+  contractCompleteLastKeywordV69 = String((document.getElementById('contractCompleteKeyword') && document.getElementById('contractCompleteKeyword').value) || '').trim();
+  contractCompleteExpandedRowNoV69 = null;
+  contractCompleteEditingRowNoV80 = null;
+  contractCompleteEditValuesV80 = {};
+  renderContractCompleteListV69_();
+}
+
+function resetContractCompleteSearchV69() {
+  const input = document.getElementById('contractCompleteKeyword');
+  if (input) input.value = '';
+  contractCompleteLastKeywordV69 = '';
+  contractCompleteExpandedRowNoV69 = null;
+  contractCompleteEditingRowNoV80 = null;
+  contractCompleteEditValuesV80 = {};
+  renderContractCompleteListV69_();
+}
+
+function normalizeContractCompleteCompanyV81_(value) {
+  return String(value == null ? '' : value).replace(/\u00a0/g, ' ').trim();
+}
+
+function isContractCompleteDisplayableRowV81_(row) {
+  const company = normalizeContractCompleteCompanyV81_(row && row.company);
+  if (!company) return false;
+  if (company === '-' || company === '—' || company === '–') return false;
+  return true;
+}
+
+function normalizeContractCompleteRowsV81_(rows) {
+  return (Array.isArray(rows) ? rows : []).filter(isContractCompleteDisplayableRowV81_);
+}
+
+function getFilteredContractCompleteRowsV69_() {
+  const keyword = String((document.getElementById('contractCompleteKeyword') && document.getElementById('contractCompleteKeyword').value) || contractCompleteLastKeywordV69 || '').trim().toLowerCase();
+  contractCompleteLastKeywordV69 = keyword;
+  const baseRows = normalizeContractCompleteRowsV81_(contractCompleteRowsV69);
+  if (baseRows.length !== contractCompleteRowsV69.length) {
+    contractCompleteRowsV69 = baseRows;
+    if (contractCompleteMetaV69) contractCompleteMetaV69.total = baseRows.length;
+  }
+  let filtered = !keyword ? baseRows.slice() : baseRows.filter(function(row) {
+    return String(row && row.searchText || '').toLowerCase().indexOf(keyword) >= 0;
+  });
+  if (contractCompleteSortKeyP15) filtered = sortPortalRowsByKeyP15_(filtered, contractCompleteSortKeyP15, contractCompleteSortDirP15);
+  return filtered;
+}
+
+function toggleContractCompleteHeaderSortP15_(key) {
+  key = String(key || '').trim();
+  if (!key) return;
+  contractCompleteSortDirP15 = contractCompleteSortKeyP15 === key && contractCompleteSortDirP15 === 'asc' ? 'desc' : 'asc';
+  contractCompleteSortKeyP15 = key;
+  renderContractCompleteListV69_();
+}
+
+function renderContractCompleteSortableThP15_(col) {
+  col = col || {};
+  return makePortalSortableThP15_(col.label || col.key, col.key || '', contractCompleteSortKeyP15, contractCompleteSortDirP15, 'toggleContractCompleteHeaderSortP15_', '');
+}
+
+function renderContractCompleteListV69_() {
+  const area = document.getElementById('contractCompleteArea');
+  if (!area) return;
+  const rows = getFilteredContractCompleteRowsV69_();
+  const total = contractCompleteRowsV69.length;
+  const loadedAt = contractCompleteMetaV69 && contractCompleteMetaV69.loadedAt ? contractCompleteMetaV69.loadedAt : '';
+  const fromCache = !!(contractCompleteMetaV69 && contractCompleteMetaV69.fromCache);
+
+  if (!rows.length) {
+    area.innerHTML = '<div class="contract-complete-summary-line">계약종합관리 · 전체 ' + total + '건' + (loadedAt ? ' · 조회 ' + esc(loadedAt) : '') + (fromCache ? ' · 캐시' : '') + '</div>' +
+      '<div class="loading">검색 결과가 없습니다.</div>';
+    return;
+  }
+
+  let html = '<div class="contract-complete-summary-line">계약종합관리 · 표시 ' + rows.length + '건 / 전체 ' + total + '건' + (loadedAt ? ' · 조회 ' + esc(loadedAt) : '') + (fromCache ? ' · 캐시' : '') + '<br><span>행을 더블클릭하거나 청구 등 메모를 클릭하면 아래에 상세 카드가 펼쳐집니다.</span></div>';
+  html += '<div class="customer-table-scroll contract-complete-table-scroll"><table class="customer-result-table contract-complete-table"><colgroup>';
+  CONTRACT_COMPLETE_COLUMNS_V69.forEach(function(col) {
+    html += '<col style="width:' + escAttr(col.width || 'auto') + '">';
+  });
+  html += '<col style="width:74px">';
+  html += '</colgroup><thead><tr>';
+  CONTRACT_COMPLETE_COLUMNS_V69.forEach(function(col) {
+    html += renderContractCompleteSortableThP15_(col);
+  });
+  html += '<th>관리</th></tr></thead><tbody>';
+
+  rows.forEach(function(row) {
+    const rowNo = Number(row.rowNo) || 0;
+    const expanded = contractCompleteExpandedRowNoV69 === rowNo;
+    html += '<tr class="customer-main-row contract-complete-main-row' + (expanded ? ' customer-expanded' : '') + '" data-contract-row-no="' + rowNo + '" ondblclick="toggleContractCompleteExpandV69(' + rowNo + ')">';
+    CONTRACT_COMPLETE_COLUMNS_V69.forEach(function(col) {
+      html += renderContractCompleteCellV69_(row, col);
+    });
+    html += '<td><button type="button" class="customer-row-btn primary" onclick="event.stopPropagation(); toggleContractCompleteExpandV69(' + rowNo + ')">' + (expanded ? '접기' : '상세') + '</button></td>';
+    html += '</tr>';
+    if (expanded) {
+      html += '<tr class="customer-expand-row contract-complete-expand-row" id="contractCompleteExpandRow_' + rowNo + '"><td colspan="' + (CONTRACT_COMPLETE_COLUMNS_V69.length + 1) + '">' + renderContractCompleteExpandedContentV69_(row) + '</td></tr>';
+    }
+  });
+
+  html += '</tbody></table></div>';
+  area.innerHTML = html;
+}
+
+function renderContractCompleteCellV69_(row, col) {
+  const key = col.key || '';
+  let value = disp(row && row[key]);
+  const rawTitle = value;
+  if (key === 'billingMemo') value = shortenContractCompleteMemoV69_(value, 95);
+  let className = col.className || '';
+  if (col.align === 'center') className += ' customer-cell-center';
+  if (col.align === 'right') className += ' customer-cell-right';
+  if (key === 'billingMemo') className += ' is-expand-trigger';
+  const rowNo = Number(row && row.rowNo) || 0;
+  const clickAttr = key === 'billingMemo' ? ' onclick="event.stopPropagation(); toggleContractCompleteExpandV69(' + rowNo + ')"' : '';
+  const title = key === 'billingMemo' ? (rawTitle + '\n\n클릭하면 상세 카드가 펼쳐집니다.') : rawTitle;
+  return '<td class="' + escAttr(className.trim()) + '" title="' + escAttr(title) + '"' + clickAttr + '>' + esc(value) + '</td>';
+}
+
+function shortenContractCompleteMemoV69_(value, maxLen) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-') return '-';
+  maxLen = Number(maxLen) || 90;
+  return text.length > maxLen ? text.slice(0, maxLen) + '...' : text;
+}
+
+function toggleContractCompleteExpandV69(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  const isClosing = contractCompleteExpandedRowNoV69 === rowNo;
+  contractCompleteExpandedRowNoV69 = isClosing ? null : rowNo;
+  if (isClosing || contractCompleteEditingRowNoV80 !== rowNo) {
+    contractCompleteEditingRowNoV80 = null;
+    contractCompleteEditValuesV80 = {};
+  }
+  renderContractCompleteListV69_();
+  if (contractCompleteExpandedRowNoV69) {
+    setTimeout(function() {
+      const el = document.getElementById('contractCompleteExpandRow_' + rowNo);
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  }
+}
+
+function findContractCompleteRowByRowNoV69_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  return contractCompleteRowsV69.find(function(row) { return Number(row && row.rowNo) === rowNo; }) || null;
+}
+
+function renderContractCompleteExpandedContentV69_(row) {
+  row = row || {};
+  const rowNo = Number(row.rowNo) || 0;
+  const company = row.company || '계약 상세';
+  const editing = contractCompleteEditingRowNoV80 === rowNo;
+  const saving = contractCompleteSavingRowNoV80 === rowNo;
+
+  let html = '<div class="customer-expand-panel customer-expand-panel-v58 contract-complete-expand-panel' + (editing ? ' is-editing' : '') + '">';
+  html += '<div class="customer-expand-top customer-expand-top-v58">' +
+    '<div class="customer-expand-title-wrap"><div class="customer-expand-title">' + esc(company) + '</div>' +
+    '<div class="customer-expand-sub">계약번호 ' + esc(disp(row.contractNo)) + ' · 고객번호 ' + esc(disp(row.customerNo)) + '</div></div>' +
+    '<div class="customer-expand-actions customer-expand-actions-v58">' +
+      renderContractCompleteActionButtonsV80_(row, editing, saving) +
+    '</div>' +
+  '</div>';
+
+  if (editing) {
+    html += '<div class="contract-complete-edit-notice">수정 가능 항목: 실제 수행 정보, 서류 저장 여부, 사업자등록증 정보, 청구 등 메모. 되돌리기는 마스터시트의 현재 저장값으로 입력값을 복구합니다.</div>';
+  }
+
+  html += '<div class="customer-expand-board-v58 contract-complete-board">';
+
+  html += renderContractCompleteBlockV69_('고객 기본 정보', [
+    [
+      { key:'contractNo', label:'계약번호' },
+      { key:'customerNo', label:'고객번호' },
+      { key:'contractRep', label:'계약담당자' },
+      { key:'company', label:'고객사명' }
+    ],
+    [
+      { key:'contactName', label:'담당자 성함' },
+      { key:'phone', label:'전화번호' },
+      { key:'email', label:'이메일 주소' },
+      { key:'regionCity', label:'지역/도시' }
+    ],
+    [
+      { key:'customerAddress', label:'고객사 주소', span:4 }
+    ]
+  ], row, 'contract-complete-block-basic', editing);
+
+  html += renderContractCompleteBlockV69_('고객 계약 정보', [
+    [
+      { key:'contractDate', label:'계약일자' },
+      { key:'contractPeriod', label:'계약기간' },
+      { key:'area', label:'연면적' },
+      { key:'grade', label:'관리등급' }
+    ],
+    [
+      { key:'contractPrice', label:'계약가' },
+      { key:'vat', label:'VAT' },
+      { key:'vendor', label:'수행사' },
+      { key:'referrer', label:'제보자' }
+    ],
+    [
+      { key:'appointment', label:'비상주선임' },
+      { key:'maintenance', label:'유지점검' },
+      { key:'performance', label:'성능점검' },
+      { key:'vendorSentDate', label:'수행사발송일자' }
+    ]
+  ], row, 'contract-complete-block-contract', editing);
+
+  html += renderContractCompleteBlockV69_('실제 수행 정보', [
+    [
+      { key:'appointmentDue', label:'선임예정일' },
+      { key:'firstMaintenanceDue', label:'첫 유지점검예정일' },
+      { key:'performanceDue', label:'성능점검예정일' }
+    ],
+    [
+      { key:'appointmentDone', label:'선임완료여부' },
+      { key:'maintenanceDone', label:'유지점검완료여부' },
+      { key:'performanceDone', label:'성능점검완료여부' }
+    ]
+  ], row, 'contract-complete-block-service', editing);
+
+  html += renderContractCompleteBlockV69_('서류 저장 여부', [
+    [
+      { key:'businessRegSaved', label:'사업자등록증 저장' },
+      { key:'orderMailSaved', label:'발주메일 저장' },
+      { key:'contractSaved', label:'계약서 저장' }
+    ]
+  ], row, 'contract-complete-block-docs', editing);
+
+  html += renderContractCompleteBlockV69_('사업자등록증 정보', [
+    [
+      { key:'businessNo', label:'사업자등록번호' },
+      { key:'representativeName', label:'대표자명' },
+      { key:'businessType', label:'업종' }
+    ]
+  ], row, 'contract-complete-block-biz', editing);
+
+  html += '<div class="customer-expand-form-block contract-complete-memo-box">' +
+    '<div class="customer-expand-form-title">청구 등 메모</div>';
+  if (editing) {
+    html += '<textarea class="contract-complete-edit-textarea" data-contract-edit-key="billingMemo" oninput="updateContractCompleteEditValueV80(this)" placeholder="청구 등 메모 입력">' + esc(getContractCompleteEditValueV80_(row, 'billingMemo')) + '</textarea>';
+  } else {
+    html += '<div class="contract-complete-memo-readonly">' + renderContractCompleteValueHtmlV69_(row.billingMemo) + '</div>';
+  }
+  html += '</div>';
+
+  html += '</div></div>';
+  return html;
+}
+
+function renderContractCompleteActionButtonsV80_(row, editing, saving) {
+  const rowNo = Number(row && row.rowNo) || 0;
+  if (editing) {
+    return '' +
+      '<button type="button" class="secondary" onclick="event.stopPropagation(); resetContractCompleteEditV80(' + rowNo + ')"' + (saving ? ' disabled' : '') + '>되돌리기</button>' +
+      '<button type="button" class="primary" onclick="event.stopPropagation(); saveContractCompleteEditV80(' + rowNo + ')"' + (saving ? ' disabled' : '') + '>' + (saving ? '저장 중' : '저장') + '</button>' +
+      '<button type="button" onclick="event.stopPropagation(); openCustomerSearchFromContractCompleteV69(' + rowNo + ')"' + (saving ? ' disabled' : '') + '>고객상세검색</button>' +
+      '<button type="button" class="secondary" onclick="event.stopPropagation(); toggleContractCompleteExpandV69(' + rowNo + ')"' + (saving ? ' disabled' : '') + '>접기</button>';
+  }
+  return '' +
+    '<button type="button" onclick="event.stopPropagation(); startContractCompleteEditV80(' + rowNo + ')">수정</button>' +
+    '<button type="button" onclick="event.stopPropagation(); openCustomerSearchFromContractCompleteV69(' + rowNo + ')">고객상세검색</button>' +
+    '<button type="button" class="secondary" onclick="event.stopPropagation(); toggleContractCompleteExpandV69(' + rowNo + ')">접기</button>';
+}
+
+function renderContractCompleteBlockV69_(title, rowDefs, row, extraClass, editing) {
+  let html = '<div class="customer-expand-form-block ' + escAttr(extraClass || '') + '">';
+  html += '<div class="customer-expand-form-title">' + esc(title || '') + '</div>';
+  html += '<div class="customer-expand-form-body">';
+  (rowDefs || []).forEach(function(defs, idx) {
+    html += '<div class="customer-expand-form-row row-' + idx + '">';
+    (defs || []).forEach(function(def) {
+      html += renderContractCompleteCellBlockV69_(row, def, editing);
+    });
+    html += '</div>';
+  });
+  html += '</div></div>';
+  return html;
+}
+
+function renderContractCompleteCellBlockV69_(row, def, editing) {
+  def = def || {};
+  const key = def.key || '';
+  const label = def.label || key;
+  const span = Math.max(1, Math.min(4, Number(def.span) || 1));
+  const editable = editing && CONTRACT_COMPLETE_EDITABLE_KEYS_V80.indexOf(key) >= 0 && key !== 'billingMemo';
+  let valueHtml;
+  if (editable) {
+    valueHtml = '<input class="contract-complete-edit-input" data-contract-edit-key="' + escAttr(key) + '" value="' + escAttr(getContractCompleteEditValueV80_(row, key)) + '" oninput="updateContractCompleteEditValueV80(this)">';
+  } else {
+    const value = row && row[key] != null ? row[key] : '';
+    valueHtml = renderContractCompleteValueHtmlV69_(value);
+  }
+  return '<div class="customer-expand-form-cell key-' + escAttr(String(key).replace(/[^a-zA-Z0-9_-]/g, '-')) + ' span-' + span + (editable ? ' is-editable' : '') + '">' +
+    '<div class="customer-expand-form-label">' + esc(label) + '</div>' +
+    '<div class="customer-expand-form-value">' + valueHtml + '</div>' +
+  '</div>';
+}
+
+function renderContractCompleteValueHtmlV69_(value) {
+  const text = String(value == null || value === '' ? '-' : value);
+  return text.split(/\n+/).map(function(line) {
+    return '<span class="customer-expand-multi-line">' + esc(line || '-') + '</span>';
+  }).join('');
+}
+
+function getContractCompleteEditValueV80_(row, key) {
+  const rowNo = Number(row && row.rowNo) || 0;
+  const existing = contractCompleteEditValuesV80[rowNo] || {};
+  if (Object.prototype.hasOwnProperty.call(existing, key)) return existing[key];
+  return row && row[key] != null ? row[key] : '';
+}
+
+function startContractCompleteEditV80(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const row = findContractCompleteRowByRowNoV69_(rowNo);
+  if (!row) return;
+  contractCompleteExpandedRowNoV69 = rowNo;
+  contractCompleteEditingRowNoV80 = rowNo;
+  contractCompleteEditValuesV80[rowNo] = buildContractCompleteEditablePayloadV80_(row);
+  renderContractCompleteListV69_();
+}
+
+function resetContractCompleteEditV80(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const row = findContractCompleteRowByRowNoV69_(rowNo);
+  if (!row) return;
+  contractCompleteEditingRowNoV80 = rowNo;
+  contractCompleteEditValuesV80[rowNo] = buildContractCompleteEditablePayloadV80_(row);
+  renderContractCompleteListV69_();
+}
+
+function updateContractCompleteEditValueV80(el) {
+  if (!el) return;
+  const key = el.getAttribute('data-contract-edit-key');
+  const rowNo = contractCompleteEditingRowNoV80;
+  if (!key || !rowNo) return;
+  if (!contractCompleteEditValuesV80[rowNo]) contractCompleteEditValuesV80[rowNo] = {};
+  contractCompleteEditValuesV80[rowNo][key] = el.value;
+}
+
+function buildContractCompleteEditablePayloadV80_(row) {
+  const out = {};
+  CONTRACT_COMPLETE_EDITABLE_KEYS_V80.forEach(function(key) {
+    out[key] = row && row[key] != null ? row[key] : '';
+  });
+  return out;
+}
+
+function saveContractCompleteEditV80(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo || contractCompleteSavingRowNoV80) return;
+  const values = contractCompleteEditValuesV80[rowNo] || {};
+  contractCompleteSavingRowNoV80 = rowNo;
+  renderContractCompleteListV69_();
+
+  let safetyTimer = setTimeout(function() {
+    if (contractCompleteSavingRowNoV80 === rowNo) {
+      contractCompleteSavingRowNoV80 = null;
+      renderContractCompleteListV69_();
+      alert('저장 응답이 45초 이상 지연되었습니다. 새로고침 후 시트 반영 여부를 확인해 주세요.');
+    }
+  }, 45000);
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      clearTimeout(safetyTimer);
+      contractCompleteSavingRowNoV80 = null;
+      if (!res || res.ok === false) {
+        alert((res && res.message) || '저장에 실패했습니다.');
+        renderContractCompleteListV69_();
+        return;
+      }
+      const updated = res.updatedRow;
+      if (updated) {
+        contractCompleteRowsV69 = normalizeContractCompleteRowsV81_(contractCompleteRowsV69.map(function(row) {
+          return Number(row && row.rowNo) === rowNo ? updated : row;
+        }));
+        contractCompleteEditValuesV80[rowNo] = buildContractCompleteEditablePayloadV80_(updated);
+      }
+      contractCompleteEditingRowNoV80 = null;
+      contractCompleteExpandedRowNoV69 = rowNo;
+      renderContractCompleteListV69_();
+    })
+    .withFailureHandler(function(err) {
+      clearTimeout(safetyTimer);
+      contractCompleteSavingRowNoV80 = null;
+      alert('계약종합관리 저장 실패\n' + getErrorMessage_(err));
+      renderContractCompleteListV69_();
+    })
+    .updateContractCompleteRowV69({ rowNo: rowNo, values: values });
+}
+
+function openCustomerSearchFromContractCompleteV69(rowNo) {
+  const row = findContractCompleteRowByRowNoV69_(rowNo);
+  if (!row) return;
+  const customerNo = String(row.customerNo || '').trim();
+  switchPage('customers', true);
+  setTimeout(function() {
+    const input = document.getElementById('keyword');
+    if (input) input.value = customerNo || row.company || '';
+    if (typeof searchCustomerPage === 'function') searchCustomerPage(0);
+  }, 80);
+}
+</script>

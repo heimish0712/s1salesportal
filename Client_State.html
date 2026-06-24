@@ -1,0 +1,687 @@
+<script>
+let currentDetail = null;
+// PATCH B: 상세/캐시 기준 식별자는 customerNo, rowNo는 보조 위치값입니다.
+let currentDetailCustomerNo = '';
+let isDetailEditMode = false;
+let lastCalcResult = null;
+let discountTargetMode = false;
+let registrationMode = false;
+let registrationApplied = false;
+let registrationCalcResult = null;
+let savedRegistrationMode = false;
+let sendSelectedDetail = null;
+let sendToList = [];
+let sendCcList = [];
+let sendDefaultCcList = [];
+// v50: 견적/자료 발송 화면 상태 보존/초기화 관리
+let sendPageRenderedV50 = false;
+let sendSelectedRowNoV50 = 0;
+let sendSelectedCustomerNoV50 = '';
+let sendSelectedFileKeysV50 = [];
+let currentMailRunId = "";
+let mailProgressPollTimer = null;
+let mailSendInFlight = false;
+let mailProgressState = null;
+
+// v48: 메일 발송 완료 사운드. 현재 브라우저/현재 사용자가 시작한 발송 완료 시에만 재생합니다.
+const MAIL_COMPLETE_SOUND_FILE_ID_V48 = '1ppd5_TkEirXnYdfN7EVwAxbXiBr48PJn';
+const MAIL_COMPLETE_SOUND_DIRECT_URL_V48 = 'https://drive.google.com/uc?export=download&id=' + MAIL_COMPLETE_SOUND_FILE_ID_V48;
+let mailCompleteAudioV48 = null;
+let mailCompleteSoundLoadingV48 = false;
+let mailCompleteSoundReadyV48 = false;
+let mailCompleteSoundPendingRunIdV48 = '';
+let mailCompleteSoundPlayedRunIdsV48 = {};
+
+const CUSTOMER_PAGE_SIZE = 20;
+let customerSearchState = { keyword: '', page: 0 };
+// v79: 고객상세검색 정렬 상태. 기본 동작은 고객번호 자리수 큰 순이나, 버튼/기본 항목 표기는 '정렬'로 단순화합니다.
+const CUSTOMER_SORT_DEFAULT_V67 = 'customerNoDigitsDesc';
+let customerSortModeV67 = CUSTOMER_SORT_DEFAULT_V67;
+const CUSTOMER_SORT_OPTIONS_V67 = [
+  { value: 'customerNoDigitsDesc', label: '정렬' },
+  { value: 'customerNoAsc', label: '고객번호 오름차순' },
+  { value: 'customerNoDesc', label: '고객번호 내림차순' },
+  { value: 'finalQuoteAsc', label: '최종견적가 오름차순' },
+  { value: 'finalQuoteDesc', label: '최종견적가 내림차순' },
+  { value: 'contactLatest', label: '컨택이력 최신순' },
+  { value: 'contactOldest', label: '컨택이력 오래된순' }
+];
+let sendSearchState = { keyword: '', page: 0 };
+let customerPageMemoryCache = {};
+let prefetchTimers = [];
+
+// PATCH O: 유저별 고객 즐겨찾기 상태
+let customerFavoriteMapV60 = {};
+let customerFavoriteRowsV60 = [];
+let customerFavoriteLoadingV60 = false;
+let customerFavoriteLoadedV60 = false;
+let customerFavoriteLastLoadedAtV60 = 0;
+
+// PATCH O-FIX2: 즐겨찾기 동시 클릭 시 서버 응답 순서가 뒤섞여도
+// 사용자가 방금 누른 별 상태가 중간에 사라지지 않도록 pending mutation을 유지합니다.
+let customerFavoritePendingMapV62 = {};
+let customerFavoriteMutationSeqV62 = 0;
+const CUSTOMER_FAVORITE_PENDING_TTL_MS_V62 = 30000;
+
+
+// v31: 검색인덱스_DB + 상세 원본행 프리패치 캐시
+let customerSearchIndexState = { ready: false, loading: false, version: '', builtAt: '', rows: [], loadedAt: 0, source: '' };
+let customerDetailPrefetchTimers = [];
+let customerDetailPrefetching = false;
+const CUSTOMER_INDEX_STORAGE_KEY = 'salesPortal.customerSearchIndex.v36.detailLite';
+const CUSTOMER_INDEX_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const CUSTOMER_DETAIL_PREFETCH_BATCH_SIZE = 50;
+const CUSTOMER_DETAIL_PREFETCH_DELAY_MS = 650;
+const CUSTOMER_DETAIL_STORAGE_KEY_PREFIX = 'salesPortal.customerDetail.v58.masterBackedOnly.';
+const CUSTOMER_DETAIL_STORAGE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
+
+// v28 고객 상세 검색 결과표 설정
+// - label: 화면에 표시할 컬럼명
+// - key: 서버에서 내려주는 필드명. Code.gs의 PORTAL_CUSTOMER_LIST_FIELD_HEADERS와 맞물립니다.
+// - width: 컬럼 너비. px / % 모두 가능
+// - align: left / center / right
+// - className: CSS 보정용. 필요 없으면 생략
+// 컬럼 추가/삭제/순서 변경은 이 배열만 고치면 됩니다.
+
+
+// PATCH F FIX1: 설정_DB 기반 진행현황 옵션/색상 정책
+// - 기준 원본: 서버 getPortalSettings() → 설정_DB 시트
+// - 실패 시: 아래 기본값 fallback 사용
+// - 설정_DB가 없으면 서버 ensurePortalSettingsSheet_()에서 자동 생성합니다.
+const PORTAL_DEFAULT_STATUS_OPTIONS_F = [
+  { value: '수주실패', label: '수주실패', bg: '#fecaca', fg: '#991b1b', order: 10, active: true },
+  { value: '견적제출완료', label: '견적제출완료', bg: '#bae6fd', fg: '#075985', order: 20, active: true },
+  { value: '장기 추진건', label: '장기 추진건', bg: '#dcfce7', fg: '#166534', order: 30, active: true },
+  { value: '고객 설득 중', label: '고객 설득 중', bg: '#bbf7d0', fg: '#166534', order: 40, active: true },
+  { value: '발주완료', label: '발주완료', bg: '#fef9c3', fg: '#713f12', order: 50, active: true },
+  { value: '계약완료', label: '계약완료', bg: '#fff200', fg: '#111827', order: 60, active: true },
+  { value: '!!상태지정필요!!', label: '!!상태지정필요!!', bg: '#e5e7eb', fg: '#374151', order: 70, active: true },
+
+  // 기존 데이터 호환: 드롭다운에서는 숨기되 칩 색상은 유지합니다.
+  { value: '영업종료', label: '영업종료', bg: '#fecaca', fg: '#991b1b', order: 900, active: false },
+  { value: '미선택', label: '미선택', bg: '#f3f4f6', fg: '#6b7280', order: 901, active: false },
+  { value: '표준견적 발송요청', label: '표준견적 발송요청', bg: '#bae6fd', fg: '#075985', order: 902, active: false },
+  { value: '후속상담 완료', label: '후속상담 완료', bg: '#bbf7d0', fg: '#166534', order: 903, active: false },
+  { value: '영업자 컨택 중', label: '영업자 컨택 중', bg: '#bbf7d0', fg: '#166534', order: 904, active: false },
+  { value: '계약서류 발송완료', label: '계약서류 발송완료', bg: '#bae6fd', fg: '#075985', order: 905, active: false },
+  { value: '고객 내부검토중', label: '고객 내부검토중', bg: '#dcfce7', fg: '#166534', order: 906, active: false },
+  { value: '수주확정', label: '수주확정', bg: '#fff200', fg: '#111827', order: 907, active: false },
+  { value: '계약서 취합 완료', label: '계약서 취합 완료', bg: '#fef9c3', fg: '#713f12', order: 908, active: false },
+  { value: '영업팀 2차콜 필요', label: '영업팀 2차콜 필요', bg: '#dbeafe', fg: '#1d4ed8', order: 909, active: false },
+  { value: '영업담당자 컨택 중', label: '영업담당자 컨택 중', bg: '#bbf7d0', fg: '#166534', order: 910, active: false },
+  { value: '영업팀 수주 성공', label: '영업팀 수주 성공', bg: '#fff200', fg: '#111827', order: 911, active: false },
+  { value: '영업종료(거절)', label: '영업종료(거절)', bg: '#fecaca', fg: '#991b1b', order: 912, active: false },
+  { value: '계약중도취소', label: '계약중도취소', bg: '#fecaca', fg: '#991b1b', order: 913, active: false },
+  { value: '미컨택', label: '미컨택', bg: '#f3f4f6', fg: '#4b5563', order: 914, active: false },
+  { value: 'TM 배분 완료', label: 'TM 배분 완료', bg: '#fff34d', fg: '#5f4b00', order: 915, active: false },
+  { value: 'TM 성공콜', label: 'TM 성공콜', bg: '#fde047', fg: '#713f12', order: 916, active: false },
+  { value: '영업팀 2차콜 이후 영업 중', label: '영업팀 2차콜 이후 영업 중', bg: '#bfdbfe', fg: '#1e40af', order: 917, active: false },
+  { value: '1차컨택대상', label: '1차컨택대상', bg: '#f3f4f6', fg: '#4b5563', order: 918, active: false },
+  { value: '통화부재', label: '통화부재', bg: '#fef3c7', fg: '#92400e', order: 919, active: false },
+  { value: '자료요청', label: '자료요청', bg: '#dbeafe', fg: '#1d4ed8', order: 920, active: false },
+  { value: '견적발송', label: '견적발송', bg: '#bae6fd', fg: '#075985', order: 921, active: false },
+  { value: '재컨택필요', label: '재컨택필요', bg: '#bfdbfe', fg: '#1e40af', order: 922, active: false },
+  { value: '확인필요', label: '확인필요', bg: '#e5e7eb', fg: '#374151', order: 923, active: false },
+  { value: '계약검토중', label: '계약검토중', bg: '#e9d5ff', fg: '#6b21a8', order: 924, active: false },
+  { value: '계약서류발송', label: '계약서류발송', bg: '#e9d5ff', fg: '#6b21a8', order: 925, active: false },
+  { value: '보류', label: '보류', bg: '#f3f4f6', fg: '#4b5563', order: 926, active: false },
+  { value: '거절', label: '거절', bg: '#fecaca', fg: '#991b1b', order: 927, active: false },
+  { value: '오류/제외', label: '오류/제외', bg: '#e5e7eb', fg: '#374151', order: 928, active: false }
+];
+
+let portalSettingsState = {
+  loaded: false,
+  loading: false,
+  source: 'fallback',
+  updatedAt: '',
+  statusOptions: PORTAL_DEFAULT_STATUS_OPTIONS_F.slice()
+};
+
+let PORTAL_STATUS_STYLE_MAP = {};
+
+function normalizeStatusKey_(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizePortalColorClient_(value, fallback) {
+  const text = String(value || '').trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(text)) return text;
+  if (/^[0-9a-fA-F]{6}$/.test(text)) return '#' + text;
+  return fallback;
+}
+
+function normalizePortalStatusOption_(item, fallbackOrder) {
+  item = item || {};
+  const value = String(item.value || item.label || '').trim();
+  const label = String(item.label || item.value || '').trim();
+  return {
+    value: value,
+    label: label || value,
+    bg: normalizePortalColorClient_(item.bg, '#f2f4f7'),
+    fg: normalizePortalColorClient_(item.fg, '#344054'),
+    order: Number(item.order || fallbackOrder || 9999) || 9999,
+    active: item.active !== false,
+    description: String(item.description || '').trim()
+  };
+}
+
+function rebuildPortalStatusSettings_(rawOptions) {
+  const seen = {};
+  const list = (rawOptions && rawOptions.length ? rawOptions : PORTAL_DEFAULT_STATUS_OPTIONS_F)
+    .map(function(item, idx) { return normalizePortalStatusOption_(item, idx + 1); })
+    .filter(function(item) { return item.value; })
+    .sort(function(a, b) { return (a.order || 9999) - (b.order || 9999); })
+    .filter(function(item) {
+      const key = normalizeStatusKey_(item.value);
+      if (!key || seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+
+  PORTAL_STATUS_STYLE_MAP = {};
+  list.forEach(function(item) {
+    PORTAL_STATUS_STYLE_MAP[normalizeStatusKey_(item.value)] = { bg: item.bg, fg: item.fg, label: item.label, active: item.active, order: item.order };
+  });
+
+  portalSettingsState.statusOptions = list;
+  return list;
+}
+
+function getPortalStatusStyle_(statusText) {
+  if (!Object.keys(PORTAL_STATUS_STYLE_MAP || {}).length) rebuildPortalStatusSettings_(portalSettingsState.statusOptions);
+  const key = normalizeStatusKey_(statusText);
+  if (PORTAL_STATUS_STYLE_MAP[key]) return PORTAL_STATUS_STYLE_MAP[key];
+  return { bg: '#f2f4f7', fg: '#344054', label: statusText || '-' };
+}
+
+function getPortalStatusOptionsForSelect_(currentValue) {
+  const currentKey = normalizeStatusKey_(currentValue);
+  const list = (portalSettingsState.statusOptions || []).filter(function(item) {
+    return item.active !== false || normalizeStatusKey_(item.value) === currentKey;
+  });
+
+  if (currentKey && !list.some(function(item) { return normalizeStatusKey_(item.value) === currentKey; })) {
+    const st = getPortalStatusStyle_(currentValue);
+    list.unshift({ value: currentValue, label: currentValue, bg: st.bg, fg: st.fg, order: -1, active: false });
+  }
+  return list;
+}
+
+function renderStatusOptionsForDetail_(current) {
+  const currentText = String(current || '').trim();
+  const options = getPortalStatusOptionsForSelect_(currentText);
+  const seen = {};
+  let html = '';
+  options.forEach(function(opt) {
+    const value = String(opt.value || '').trim();
+    if (!value) return;
+    const key = normalizeStatusKey_(value);
+    if (seen[key]) return;
+    seen[key] = true;
+    html += '<option value="' + escAttr(value) + '"' + (normalizeStatusKey_(currentText) === key ? ' selected' : '') + '>' + esc(opt.label || value) + '</option>';
+  });
+  return html;
+}
+
+function renderStatusChip_(statusText, extraClass) {
+  const text = String(statusText || '').trim() || '-';
+  const st = getPortalStatusStyle_(text);
+  const cls = 'status portal-status-chip' + (extraClass ? ' ' + extraClass : '');
+  return '<span class="' + escAttr(cls) + '" style="background:' + escAttr(st.bg) + ';color:' + escAttr(st.fg) + ';border-color:' + escAttr(st.bg) + ';" title="' + escAttr(text) + '">' + esc(st.label || text) + '</span>';
+}
+
+function loadPortalSettings_(options) {
+  options = options || {};
+  if (portalSettingsState.loading && !options.force) return;
+  portalSettingsState.loading = true;
+
+  // 우선 fallback을 즉시 활성화해 화면이 깨지지 않게 합니다.
+  rebuildPortalStatusSettings_(portalSettingsState.statusOptions || PORTAL_DEFAULT_STATUS_OPTIONS_F);
+
+  if (typeof google === 'undefined' || !google.script || !google.script.run) {
+    portalSettingsState.loading = false;
+    portalSettingsState.loaded = true;
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      portalSettingsState.loading = false;
+      const opts = res && Array.isArray(res.statusOptions) && res.statusOptions.length ? res.statusOptions : PORTAL_DEFAULT_STATUS_OPTIONS_F;
+      portalSettingsState.loaded = true;
+      portalSettingsState.source = (res && res.source) || '설정_DB';
+      portalSettingsState.updatedAt = (res && res.updatedAt) || '';
+      rebuildPortalStatusSettings_(opts);
+      refreshPortalStatusUi_();
+      if (!options.silent) toast('설정_DB를 불러왔습니다.');
+    })
+    .withFailureHandler(function(err) {
+      portalSettingsState.loading = false;
+      portalSettingsState.loaded = true;
+      portalSettingsState.source = 'fallback-after-error';
+      rebuildPortalStatusSettings_(PORTAL_DEFAULT_STATUS_OPTIONS_F);
+      refreshPortalStatusUi_();
+      console.warn('설정_DB 로딩 실패. 기본값을 사용합니다.', err);
+      if (!options.silent) toast('설정_DB 로딩 실패. 기본 상태값을 사용합니다.');
+    })
+    .getPortalSettings();
+}
+
+function refreshPortalStatusUi_() {
+  try {
+    document.querySelectorAll('.portal-status-select').forEach(function(select) {
+      const current = select.value || '';
+      select.innerHTML = renderStatusOptionsForDetail_(current);
+      select.value = current;
+      if (typeof applyPortalStatusControlStyles_ === 'function') applyPortalStatusControlStyles_();
+    });
+  } catch (err) {}
+
+  try {
+    if (lastCustomerResultResponse && typeof renderCustomerResultsFromResponse_ === 'function') {
+      renderCustomerResultsFromResponse_(lastCustomerResultResponse, lastCustomerResultFromCache);
+    }
+  } catch (err) {}
+
+  try {
+    if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_();
+  } catch (err) {}
+}
+
+// fallback 색상을 즉시 준비합니다. 실제 설정_DB 값은 window.onload에서 비동기로 덮어씁니다.
+rebuildPortalStatusSettings_(PORTAL_DEFAULT_STATUS_OPTIONS_F);
+
+const CUSTOMER_RESULT_TABLE = {
+  actionWidth: '76px',
+  memoMaxLength: 90,
+  columns: [
+    { key: 'customerNo', label: '고객번호', width: '7%', align: 'center' },
+    { key: 'salesRep', label: '영업담당자', width: '8%', align: 'center' },
+    { key: 'company', label: '회사명', width: '14%', className: 'customer-cell-company' },
+    { key: 'status', label: '진행현황', width: '12%', align: 'center', className: 'customer-cell-status' },
+    { key: 'contact', label: '담당자', width: '8%', align: 'center' },
+    { key: 'phone', label: '전화번호', width: '12%', align: 'center' },
+    { key: 'vendor', label: '수행사', width: '7%', align: 'center' },
+    { key: 'finalQuote', label: '최종 견적가', width: '10%', align: 'right' },
+    { key: 'memo', label: '메모 내용', width: '22%', className: 'customer-cell-memo' }
+  ]
+};
+
+
+// v29 고객검색 행 펼침 패널 설정
+// - basicFields / contractFields 순서만 바꾸면 펼침 영역 표시 순서가 바뀝니다.
+// - wide:true는 해당 항목을 한 줄 넓게 표시합니다.
+const CUSTOMER_EXPAND_PANEL = {
+  basicTitle: '고객사 기본 정보',
+  contractTitle: '상세 계약조건',
+  memoTitle: '메모 내용',
+  basicFields: [
+    { key: 'customerNo', label: '고객번호' },
+    { key: 'company', label: '회사명' },
+    { key: 'salesRep', label: '영업담당자' },
+    { key: 'status', label: '진행현황' },
+    { key: 'contact', label: '담당자' },
+    { key: 'phone', label: '대표전화번호' },
+    { key: 'directPhone', label: '직통번호' },
+    { key: 'email', label: '담당자 이메일 주소' },
+    { key: 'address', label: '고객사 상세 주소', wide: true }
+  ],
+  contractFields: [
+    { key: 'area', label: '연면적' },
+    { key: 'grade', label: '관리등급' },
+    { key: 'buildingType', label: '건물 유형' },
+    { key: 'contractUnit', label: '계약단위' },
+    { key: 'appointment', label: '관리자 선임 여부' },
+    { key: 'maintenance', label: '유지점검' },
+    { key: 'performance', label: '성능점검' },
+    { key: 'vat', label: '부가세' },
+    { key: 'discountRate', label: '할인율' },
+    { key: 'finalQuote', label: '최종 견적가' },
+    { key: 'specialTerms', label: '용역신청서특약사항', wide: true }
+  ]
+};
+
+let customerExpandedRowNo = null;
+let customerDetailInlineCache = {};
+// PATCH J: 상세정보 보강 전 저장 시, 로딩/미보강 필드의 빈 값이 마스터시트를 덮어쓰지 않도록
+// 정보수정 진입 시점의 입력값을 기준선으로 저장하고, 실제 변경된 필드만 저장합니다.
+let detailEditBaselineValues = null;
+// PATCH D: 상세 저장 직후 서버/프리패치의 늦은 응답이 화면을 과거값으로 되돌리지 않도록 보류 중인 저장 draft를 추적합니다.
+let customerDetailPendingSaveMap = {};
+let customerDetailSaveSeq = 0;
+// PATCH K-1: 검색인덱스_DB/rowSummary는 빠른 표시용 snapshot입니다.
+// 마스터 full detail 또는 사용자 optimistic patch가 이미 있는 고객은,
+// stale 검색인덱스가 다시 화면/캐시를 덮어쓰지 못하게 권위 패치를 보관합니다.
+let customerAuthoritativePatchMapK1 = {};
+const CUSTOMER_AUTHORITATIVE_PATCH_TTL_MS_K1 = 5 * 60 * 1000;
+let lastCustomerResultResponse = null;
+let lastCustomerResultFromCache = false;
+let contactHistoryTargetRowNo = 0;
+let todaySelectedDate = formatDateInput_(new Date());
+let todayCalendarCursor = new Date();
+let todayCurrentData = null;
+// PATCH L: 오늘 할 일도 영업지원요청처럼 메뉴 진입 전 백그라운드 프리로드/캐시를 사용합니다.
+let todayCacheByDateV57 = {};
+let todayLoadingByDateV57 = {};
+let todayLastLoadAtByDateV57 = {};
+const TODAY_CACHE_STORAGE_KEY_PREFIX_V57 = 'portalTodayCache:v57:';
+const TODAY_CACHE_MAX_AGE_MS_V57 = 10 * 60 * 1000;
+const TODAY_BACKGROUND_REFRESH_MS_V57 = 90 * 1000;
+
+let supportCurrentRowNo = 0;
+let supportCurrentData = null;
+let supportCurrentCustomer = null;
+const SUPPORT_CACHE_STORAGE_KEY_V56 = 'portalSupportCache:v56:master';
+let supportLastLoadAtV56 = 0;
+let supportLoadingV56 = false;
+// PATCH L: HOME 진입 후 영업지원요청을 백그라운드에서 미리 불러옵니다.
+let supportPreloadStartedV57 = false;
+let supportPreloadCompletedV57 = false;
+const SUPPORT_BACKGROUND_REFRESH_MS_V57 = 90 * 1000;
+
+// v64: 영업지원 요청 처리 워크플로우
+// 처리 버튼 → 고객상세검색 이동/행 펼침 → 좌측 작업안내 → 요청업무가기 버튼으로 처리내용 영역 이동
+let activeSupportWorkV64 = null;
+let pendingSupportCustomerOpenV64 = null;
+
+
+let noticeDeleteMode = false;
+let currentNoticeId = '';
+let noticeCacheById = {};
+let noticeListCache = [];
+let homeNoticeCache = [];
+
+
+// PATCH O: 유저별 고객 즐겨찾기 client helpers
+function getFavoriteCustomerKey_(row) {
+  row = row || {};
+  const cno = String(row.customerNo || '').trim();
+  if (cno) return 'CNO:' + cno;
+  const rowNo = Number(row.rowNo) || 0;
+  return rowNo ? ('ROW:' + rowNo) : '';
+}
+
+function cleanupCustomerFavoritePendingV62_() {
+  const now = Date.now();
+  Object.keys(customerFavoritePendingMapV62 || {}).forEach(function(key) {
+    const item = customerFavoritePendingMapV62[key];
+    if (!item || now - Number(item.startedAt || 0) > CUSTOMER_FAVORITE_PENDING_TTL_MS_V62) {
+      delete customerFavoritePendingMapV62[key];
+    }
+  });
+}
+
+function applyFavoritePendingToMapV62_(map) {
+  const next = Object.assign({}, map || {});
+  cleanupCustomerFavoritePendingV62_();
+
+  Object.keys(customerFavoritePendingMapV62 || {}).forEach(function(key) {
+    const item = customerFavoritePendingMapV62[key];
+    if (!item) return;
+    if (item.favorite) next[key] = true;
+    else delete next[key];
+  });
+
+  return next;
+}
+
+function isCustomerFavorite_(row) {
+  const key = getFavoriteCustomerKey_(row || {});
+  if (!key) return false;
+
+  // pending이 있으면 서버 map보다 사용자가 방금 누른 상태를 우선합니다.
+  cleanupCustomerFavoritePendingV62_();
+  const pending = customerFavoritePendingMapV62 && customerFavoritePendingMapV62[key];
+  if (pending) return !!pending.favorite;
+
+  return !!(customerFavoriteMapV60 && customerFavoriteMapV60[key]);
+}
+
+function setCustomerFavoriteMapFromServer_(map) {
+  // PATCH O-FIX2:
+  // 서버 응답은 언제나 현재 탭의 최신 클릭보다 늦을 수 있습니다.
+  // 따라서 서버 map을 그대로 대입하지 않고, 아직 처리 중인 pending 클릭을 다시 덮어씌웁니다.
+  customerFavoriteMapV60 = applyFavoritePendingToMapV62_(map || {});
+  customerFavoriteLoadedV60 = true;
+  customerFavoriteLastLoadedAtV60 = Date.now();
+}
+
+function loadCustomerFavoriteMap_(options) {
+  options = options || {};
+  if (customerFavoriteLoadingV60 && !options.force) return;
+  if (customerFavoriteLoadedV60 && !options.force && Date.now() - customerFavoriteLastLoadedAtV60 < 5 * 60 * 1000) return;
+  if (typeof google === 'undefined' || !google.script || !google.script.run) return;
+
+  customerFavoriteLoadingV60 = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      customerFavoriteLoadingV60 = false;
+      if (res && res.ok) setCustomerFavoriteMapFromServer_(res.map || {});
+      try { repaintCustomerResultsIfVisible_(); } catch (err) {}
+      try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
+    })
+    .withFailureHandler(function(err) {
+      customerFavoriteLoadingV60 = false;
+      if (!options.silent) toast('즐겨찾기 정보를 불러오지 못했습니다: ' + getErrorMessage_(err));
+    })
+    .getPortalCustomerFavoriteMap();
+}
+
+function patchFavoriteStateOptimistic_(row, favorite) {
+  const key = getFavoriteCustomerKey_(row || {});
+  if (!key) return null;
+
+  const mutationId = ++customerFavoriteMutationSeqV62;
+  customerFavoritePendingMapV62[key] = {
+    favorite: !!favorite,
+    mutationId: mutationId,
+    startedAt: Date.now()
+  };
+
+  if (favorite) customerFavoriteMapV60[key] = true;
+  else delete customerFavoriteMapV60[key];
+
+  customerFavoriteLoadedV60 = true;
+  customerFavoriteLastLoadedAtV60 = Date.now();
+
+  return {
+    key: key,
+    mutationId: mutationId,
+    favorite: !!favorite
+  };
+}
+
+function commitFavoriteStateOptimistic_(mutation, serverMap) {
+  if (!mutation || !mutation.key) {
+    if (serverMap) setCustomerFavoriteMapFromServer_(serverMap);
+    return;
+  }
+
+  // 서버 저장 성공이므로 해당 mutation은 확정합니다.
+  // 다만 같은 key에 대해 더 최신 클릭이 있으면 그 최신 클릭 pending은 지우지 않습니다.
+  const currentPending = customerFavoritePendingMapV62[mutation.key];
+  if (currentPending && Number(currentPending.mutationId) === Number(mutation.mutationId)) {
+    delete customerFavoritePendingMapV62[mutation.key];
+  }
+
+  const next = Object.assign({}, serverMap || customerFavoriteMapV60 || {});
+
+  // 성공한 현재 mutation 상태는 서버 응답에 혹시 누락되어도 확정 반영합니다.
+  if (mutation.favorite) next[mutation.key] = true;
+  else delete next[mutation.key];
+
+  customerFavoriteMapV60 = applyFavoritePendingToMapV62_(next);
+  customerFavoriteLoadedV60 = true;
+  customerFavoriteLastLoadedAtV60 = Date.now();
+}
+
+function rollbackFavoriteStateOptimistic_(mutation, previousFavorite) {
+  if (!mutation || !mutation.key) return;
+
+  const currentPending = customerFavoritePendingMapV62[mutation.key];
+
+  // 같은 key에 대해 더 최신 클릭이 이미 있으면 예전 실패 응답은 화면을 되돌리면 안 됩니다.
+  if (currentPending && Number(currentPending.mutationId) !== Number(mutation.mutationId)) {
+    return;
+  }
+
+  if (currentPending) delete customerFavoritePendingMapV62[mutation.key];
+
+  if (previousFavorite) customerFavoriteMapV60[mutation.key] = true;
+  else delete customerFavoriteMapV60[mutation.key];
+
+  customerFavoriteLoadedV60 = true;
+  customerFavoriteLastLoadedAtV60 = Date.now();
+}
+
+
+
+// PATCH S: 권한_DB 기반 현재 사용자/화면 권한 상태
+let portalCurrentPermissionV63 = null;
+let portalPermissionLoadedV63 = false;
+let portalPermissionLoadingV63 = false;
+
+function loadPortalCurrentPermission_(options, callback) {
+  options = options || {};
+  if (portalPermissionLoadedV63 && portalCurrentPermissionV63) {
+    try { applyPortalPermissionToUi_(); } catch (err) {}
+    if (callback) callback(portalCurrentPermissionV63);
+    return;
+  }
+  if (portalPermissionLoadingV63) return;
+  portalPermissionLoadingV63 = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      portalPermissionLoadingV63 = false;
+      portalPermissionLoadedV63 = true;
+      portalCurrentPermissionV63 = (res && res.permission) || null;
+      applyPortalPermissionToUi_();
+      if (callback) callback(portalCurrentPermissionV63);
+    })
+    .withFailureHandler(function(err) {
+      portalPermissionLoadingV63 = false;
+      portalPermissionLoadedV63 = true;
+      portalCurrentPermissionV63 = {
+        level: 'GUEST',
+        displayName: '권한 확인 실패',
+        canUseAdminHome: false,
+        canViewAllCustomers: false,
+        canWriteNotice: false,
+        canDeleteNotice: false,
+        canWriteSupport: false,
+        canReadAllSupport: false,
+        canCompleteSupport: false,
+        canViewAllActivityLogs: false,
+        canCompareActivityLogs: false,
+        active: false,
+        note: getErrorMessage_ ? getErrorMessage_(err) : String(err || '')
+      };
+      applyPortalPermissionToUi_();
+      if (!options.silent) alert('권한 확인 실패: ' + (getErrorMessage_ ? getErrorMessage_(err) : String(err || '')));
+      if (callback) callback(portalCurrentPermissionV63);
+    })
+    .getPortalCurrentPermission();
+}
+
+function getPortalPermission_() {
+  return portalCurrentPermissionV63 || { level: 'GUEST', displayName: '권한 확인 중', canUseAdminHome: false, canViewAllCustomers: false, canReadAllSupport: false, canViewAllActivityLogs: false, canCompareActivityLogs: false, active: false };
+}
+
+function isPortalAdmin_() {
+  const p = getPortalPermission_();
+  return !!(p && p.active !== false && p.canUseAdminHome);
+}
+
+function canPortal_(key) {
+  const p = getPortalPermission_();
+  return !!(p && p[key]);
+}
+
+function getPortalPermissionLabel_() {
+  const p = getPortalPermission_();
+  return (p && p.displayName) || '권한 확인 중';
+}
+
+function applyPortalPermissionToUi_() {
+  const p = getPortalPermission_();
+  const badge = document.getElementById('currentUserBadge');
+  if (badge) {
+    const role = p && p.level ? p.level : 'GUEST';
+    badge.textContent = (p && p.displayName ? p.displayName : '권한 확인 중') + ' · ' + role;
+    badge.title = (p && p.email ? p.email : '') + (p && p.note ? '\n' + p.note : '');
+    badge.classList.toggle('is-sales', role === 'SALES');
+    badge.classList.toggle('is-admin', role === 'ADMIN');
+    badge.classList.toggle('is-guest', role === 'GUEST' || p.active === false);
+  }
+
+  document.body.classList.toggle('portal-role-sales', p && p.level === 'SALES');
+  document.body.classList.toggle('portal-role-admin', !!(p && p.canUseAdminHome));
+  document.body.classList.toggle('portal-can-admin-home', !!(p && p.canUseAdminHome));
+  document.body.classList.toggle('portal-can-customer-all', !!(p && p.canViewAllCustomers));
+  document.body.classList.toggle('portal-can-support-all', !!(p && p.canReadAllSupport));
+  document.body.classList.toggle('portal-can-activity-all', !!(p && p.canViewAllActivityLogs));
+  document.body.classList.toggle('portal-can-activity-compare', !!(p && p.canCompareActivityLogs));
+  document.body.classList.toggle('portal-can-notice-write', !!(p && p.canWriteNotice));
+  document.body.classList.toggle('portal-can-notice-delete', !!(p && p.canDeleteNotice));
+  document.body.classList.toggle('portal-can-support-complete', !!(p && p.canCompleteSupport));
+  document.body.classList.toggle('portal-support-processor', !!(p && p.canCompleteSupport));
+  try { if (typeof updateSupportRoleUiV65_ === 'function') updateSupportRoleUiV65_(); } catch (err) {}
+
+  const noticeActions = document.querySelector('.notice-actions');
+  if (noticeActions) noticeActions.style.display = (p && (p.canWriteNotice || p.canDeleteNotice)) ? '' : 'none';
+  const noticeWriteBtn = document.querySelector('.notice-actions .btn-blue');
+  if (noticeWriteBtn) noticeWriteBtn.style.display = (p && p.canWriteNotice) ? '' : 'none';
+  const noticeDeleteBtn = document.getElementById('noticeDeleteBtn');
+  if (noticeDeleteBtn) noticeDeleteBtn.style.display = (p && p.canDeleteNotice) ? '' : 'none';
+
+  const completeBtn = document.getElementById('supportCompleteNowBtn');
+  if (completeBtn) completeBtn.style.display = (p && p.canCompleteSupport) ? '' : 'none';
+  ['supportHandler','supportCompletedAt','supportProcessContent','supportAutoSendCheck'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !(p && p.canCompleteSupport);
+  });
+  const statusEl = document.getElementById('supportStatus');
+  if (statusEl && !(p && p.canCompleteSupport)) {
+    Array.from(statusEl.options || []).forEach(function(opt) {
+      if (String(opt.value || opt.text || '').trim() === '완료') opt.disabled = true;
+    });
+    if (statusEl.value === '완료') statusEl.disabled = true;
+    else statusEl.disabled = false;
+  }
+
+  document.querySelectorAll('[data-admin-only="Y"]').forEach(function(el) {
+    el.style.display = isPortalAdmin_() ? '' : 'none';
+  });
+}
+
+function normalizePortalPermissionTextClient_(value) {
+  return String(value || '').replace(/\s+/g, '').trim();
+}
+
+function splitPortalPermissionAliasesClient_(value) {
+  return String(value || '').split(/[,:，、\/|\n]/).map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+}
+
+function isCustomerRowAllowedByClientPermission_(row) {
+  const p = getPortalPermission_();
+  if (!p || p.active === false) return false;
+  if (p.canViewAllCustomers || p.isAdmin || p.level === 'ADMIN') return true;
+  const salesRep = normalizePortalPermissionTextClient_(row && (row.salesRep || row['영업담당자'] || row.salesRepName || ''));
+  const aliases = splitPortalPermissionAliasesClient_(p.salesRepName || p.name || '');
+  if (!salesRep || !aliases.length) return false;
+  return aliases.some(function(alias) {
+    const a = normalizePortalPermissionTextClient_(alias);
+    return a && (salesRep === a || salesRep.indexOf(a) >= 0 || a.indexOf(salesRep) >= 0);
+  });
+}
+
+function filterCustomerRowsByPermissionClient_(rows) {
+  rows = Array.isArray(rows) ? rows : [];
+  const p = getPortalPermission_();
+  if (!portalPermissionLoadedV63 || !p || p.active === false) return [];
+  if (p.canViewAllCustomers || p.isAdmin || p.level === 'ADMIN') return rows;
+  return rows.filter(isCustomerRowAllowedByClientPermission_);
+}
+
+</script>

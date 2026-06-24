@@ -1,0 +1,358 @@
+<script>
+function isTodaySectionActiveV57_() {
+  const section = document.getElementById('todaySection');
+  return !!(section && section.classList && section.classList.contains('active'));
+}
+
+function getTodayCacheKeyV57_(dateStr) {
+  return TODAY_CACHE_STORAGE_KEY_PREFIX_V57 + String(dateStr || todaySelectedDate || formatDateInput_(new Date()));
+}
+
+function readTodayCacheV57_(dateStr) {
+  dateStr = String(dateStr || todaySelectedDate || formatDateInput_(new Date()));
+  if (todayCacheByDateV57[dateStr]) return todayCacheByDateV57[dateStr];
+  try {
+    const raw = localStorage.getItem(getTodayCacheKeyV57_(dateStr));
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.data || !obj.cachedAt) return null;
+    if (Date.now() - Number(obj.cachedAt) > TODAY_CACHE_MAX_AGE_MS_V57) return null;
+    todayCacheByDateV57[dateStr] = obj.data;
+    todayLastLoadAtByDateV57[dateStr] = Number(obj.cachedAt) || Date.now();
+    return obj.data;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveTodayCacheV57_(data) {
+  data = data || {};
+  const dateStr = String(data.selectedDate || todaySelectedDate || formatDateInput_(new Date()));
+  const copy = Object.assign({}, data, { selectedDate: dateStr, cachedAt: Date.now() });
+  todayCacheByDateV57[dateStr] = copy;
+  todayLastLoadAtByDateV57[dateStr] = Date.now();
+  try {
+    localStorage.setItem(getTodayCacheKeyV57_(dateStr), JSON.stringify({ cachedAt: Date.now(), data: copy }));
+  } catch (err) {}
+  return copy;
+}
+
+function renderTodayDataV57_(data) {
+  todayCurrentData = data || { selectedDate: todaySelectedDate, todos: [], nextActions: [] };
+  todaySelectedDate = todayCurrentData.selectedDate || todaySelectedDate;
+  renderTodayTodos(todayCurrentData.todos || []);
+  renderTodayNextActions(todayCurrentData.nextActions || []);
+  renderTodaySummaryV111_(todayCurrentData.todos || [], todayCurrentData.nextActions || []);
+  renderTodayCalendar();
+  const label = document.getElementById('todaySelectedLabel');
+  if (label) label.textContent = todaySelectedDate + ' 할 일';
+}
+
+function preloadTodayPageV57_(options) {
+  options = options || {};
+  const dateStr = String(options.date || todaySelectedDate || formatDateInput_(new Date()));
+  const cached = readTodayCacheV57_(dateStr);
+  if (cached) {
+    todayCurrentData = cached;
+    if (isTodaySectionActiveV57_()) renderTodayDataV57_(cached);
+    const age = Date.now() - Number(todayLastLoadAtByDateV57[dateStr] || 0);
+    if (age > 0 && age < TODAY_BACKGROUND_REFRESH_MS_V57) return;
+  }
+  if (todayLoadingByDateV57[dateStr]) return;
+  todayLoadingByDateV57[dateStr] = true;
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      todayLoadingByDateV57[dateStr] = false;
+      data = saveTodayCacheV57_(data || { selectedDate: dateStr, todos: [], nextActions: [] });
+      if (String(todaySelectedDate || '') === String(data.selectedDate || '') && isTodaySectionActiveV57_()) {
+        renderTodayDataV57_(data);
+      }
+    })
+    .withFailureHandler(function(err) {
+      todayLoadingByDateV57[dateStr] = false;
+      if (!options.silent) console.warn('오늘 할 일 프리로드 실패', err);
+    })
+    .getPortalTodayData(dateStr);
+}
+
+function loadTodayPage(options) {
+  options = options || {};
+  const dateStr = String(todaySelectedDate || formatDateInput_(new Date()));
+  renderTodayCalendar();
+  const label = document.getElementById('todaySelectedLabel');
+  if (label) label.textContent = dateStr + ' 할 일';
+  const area = document.getElementById('todayTodoArea');
+
+  const cached = !options.force ? readTodayCacheV57_(dateStr) : null;
+  if (cached) {
+    renderTodayDataV57_(cached);
+    const age = Date.now() - Number(todayLastLoadAtByDateV57[dateStr] || 0);
+    if (age < TODAY_BACKGROUND_REFRESH_MS_V57 || todayLoadingByDateV57[dateStr]) return;
+    preloadTodayPageV57_({ date: dateStr, silent: true });
+    return;
+  }
+
+  if (todayLoadingByDateV57[dateStr]) {
+    if (area) area.innerHTML = '<div class="loading">오늘 할 일을 백그라운드에서 불러오는 중입니다...</div>';
+    return;
+  }
+
+  if (area) area.innerHTML = '<div class="loading">할 일을 불러오는 중입니다...</div>';
+  todayLoadingByDateV57[dateStr] = true;
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      todayLoadingByDateV57[dateStr] = false;
+      data = saveTodayCacheV57_(data || { selectedDate: dateStr, todos: [], nextActions: [] });
+      renderTodayDataV57_(data);
+    })
+    .withFailureHandler(function(err) {
+      todayLoadingByDateV57[dateStr] = false;
+      const fallback = readTodayCacheV57_(dateStr);
+      if (fallback) {
+        renderTodayDataV57_(fallback);
+        toast('오늘 할 일 최신 조회 실패. 캐시를 표시합니다.');
+        return;
+      }
+      if (area) area.innerHTML = '<div class="loading" style="color:#b42318;">오늘 할 일을 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+    })
+    .getPortalTodayData(dateStr);
+}
+
+
+function renderTodaySummaryV111_(todos, nextActions) {
+  const area = document.getElementById('todaySummaryArea');
+  if (!area) return;
+  todos = Array.isArray(todos) ? todos : [];
+  nextActions = Array.isArray(nextActions) ? nextActions : [];
+  const totalTodos = todos.filter(function(t) { return String((t && t.content) || '').trim(); }).length;
+  const doneTodos = todos.filter(function(t) { return t && t.done && String(t.content || '').trim(); }).length;
+  const pendingTodos = Math.max(0, totalTodos - doneTodos);
+  const nextCount = nextActions.length;
+  area.innerHTML = '' +
+    '<div class="today-summary-card"><div class="today-summary-label">수동 할 일</div><div class="today-summary-value">' + totalTodos + '</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">완료</div><div class="today-summary-value">' + doneTodos + '</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">미완료</div><div class="today-summary-value">' + pendingTodos + '</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">컨택 예정</div><div class="today-summary-value">' + nextCount + '</div></div>';
+}
+
+function isTodayTodoEditingV111_() {
+  const active = document.activeElement;
+  return !!(active && active.closest && active.closest('#todayTodoList'));
+}
+
+function appendTodayTodoTextV111_(content) {
+  const list = document.getElementById('todayTodoList');
+  if (!list) return;
+  const text = String(content || '').trim();
+  if (!text) return;
+  const rows = Array.from(list.querySelectorAll('.today-todo-row'));
+  let target = rows.find(function(row) {
+    const ta = row.querySelector('.todayTodoText');
+    return ta && !String(ta.value || '').trim();
+  });
+  if (!target) {
+    list.insertAdjacentHTML('beforeend', renderTodayTodoRow_({ content: '', done: false }, 0));
+    target = list.querySelector('.today-todo-row:last-child');
+  }
+  const textarea = target && target.querySelector('.todayTodoText');
+  if (!textarea) return;
+  textarea.value = text;
+  textarea.focus();
+  try { textarea.setSelectionRange(textarea.value.length, textarea.value.length); } catch (err) {}
+  toast('오늘 할 일에 추가했습니다. 저장 버튼을 눌러 확정하세요.');
+}
+
+function addTodayNextActionToTodoV111_(encoded) {
+  let item = {};
+  try { item = JSON.parse(decodeURIComponent(String(encoded || ''))); } catch (err) { item = {}; }
+  const parts = [];
+  if (item.company) parts.push('[' + item.company + ']');
+  if (item.nextAction) parts.push(item.nextAction);
+  if (item.nextActionAt) parts.push(String(item.nextActionAt).replace(/^\d{4}-\d{1,2}-\d{1,2}\s*/, ''));
+  if (item.content) parts.push('- ' + item.content);
+  appendTodayTodoTextV111_(parts.join(' '));
+}
+
+function getTodayNextActionPayloadV111_(item) {
+  try {
+    return encodeURIComponent(JSON.stringify({
+      company: item.company || '',
+      nextAction: item.nextAction || '',
+      nextActionAt: item.nextActionAt || '',
+      content: item.content || ''
+    }));
+  } catch (err) {
+    return '';
+  }
+}
+
+function renderTodayTodos(todos) {
+  const area = document.getElementById('todayTodoArea');
+  if (!area) return;
+  todos = Array.isArray(todos) ? todos : [];
+  if (!todos.length) todos = [{ content: '', done: false }];
+  area.innerHTML = '<div class="today-todo-list" id="todayTodoList">' + todos.map(renderTodayTodoRow_).join('') + '</div>';
+}
+
+function renderTodayTodoRow_(todo, idx) {
+  todo = todo || {};
+  return '<div class="today-todo-row">' +
+    '<input type="checkbox" class="todayTodoDone" ' + (todo.done ? 'checked' : '') + '>' +
+    '<textarea class="todayTodoText" placeholder="할 일을 입력하세요.">' + esc(todo.content || '') + '</textarea>' +
+    '<button class="today-todo-remove" onclick="removeTodayTodoRow(this)">×</button>' +
+  '</div>';
+}
+
+function addTodayTodoRow() {
+  const list = document.getElementById('todayTodoList');
+  if (!list) return;
+  list.insertAdjacentHTML('beforeend', renderTodayTodoRow_({ content: '', done: false }, 0));
+  const textareas = list.querySelectorAll('.todayTodoText');
+  if (textareas.length) textareas[textareas.length - 1].focus();
+}
+
+function removeTodayTodoRow(btn) {
+  const row = btn && btn.closest ? btn.closest('.today-todo-row') : null;
+  if (row) row.remove();
+  const list = document.getElementById('todayTodoList');
+  if (list && !list.querySelector('.today-todo-row')) addTodayTodoRow();
+}
+
+function collectTodayTodos_() {
+  const rows = Array.from(document.querySelectorAll('#todayTodoList .today-todo-row'));
+  return rows.map(function(row) {
+    return {
+      done: !!row.querySelector('.todayTodoDone').checked,
+      content: row.querySelector('.todayTodoText').value || ''
+    };
+  }).filter(function(item) { return String(item.content || '').trim(); });
+}
+
+function saveTodayTodos() {
+  const todos = collectTodayTodos_();
+  const prev = todayCurrentData ? JSON.parse(JSON.stringify(todayCurrentData)) : null;
+  const optimistic = saveTodayCacheV57_(Object.assign({}, todayCurrentData || {}, {
+    selectedDate: todaySelectedDate,
+    todos: todos,
+    nextActions: (todayCurrentData && todayCurrentData.nextActions) || []
+  }));
+  todayCurrentData = optimistic;
+  renderTodayTodos(todos);
+  renderTodayNextActions(optimistic.nextActions || []);
+  toast('오늘 할 일을 화면에 먼저 반영했습니다. 뒤에서 저장 중입니다.');
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      data = saveTodayCacheV57_(data || optimistic);
+      todayCurrentData = data;
+      if (!isTodayTodoEditingV111_()) {
+        renderTodayTodos((data && data.todos) || []);
+        renderTodayNextActions((data && data.nextActions) || []);
+      }
+      renderTodaySummaryV111_((data && data.todos) || [], (data && data.nextActions) || []);
+      toast('오늘 할 일이 저장되었습니다.');
+    })
+    .withFailureHandler(function(err) {
+      if (prev) {
+        saveTodayCacheV57_(prev);
+        todayCurrentData = prev;
+        renderTodayDataV57_(prev);
+      }
+      alert('할 일 저장 실패: ' + getErrorMessage_(err));
+    })
+    .savePortalTodosForDate({ date: todaySelectedDate, todos: todos });
+}
+
+function renderTodayNextActions(items) {
+  const area = document.getElementById('todayNextActionArea');
+  if (!area) return;
+  items = Array.isArray(items) ? items : [];
+  renderTodaySummaryV111_((todayCurrentData && todayCurrentData.todos) || [], items);
+  if (!items.length) {
+    area.innerHTML = '<div class="today-muted">선택한 날짜의 컨택 예정 액션이 없습니다.</div>';
+    return;
+  }
+  area.innerHTML = items.map(function(item) {
+    item = item || {};
+    const rowNo = Number(item.rowNo) || 0;
+    const payload = getTodayNextActionPayloadV111_(item);
+    let actions = '<button class="secondary" type="button" onclick="addTodayNextActionToTodoV111_(\'' + payload + '\')">할 일에 추가</button>';
+    if (rowNo) {
+      actions += '<button class="secondary" type="button" onclick="openDetail(' + rowNo + ')">상세</button>';
+      actions += '<button class="secondary" type="button" onclick="openContactHistoryModal(' + rowNo + ')">컨택이력</button>';
+      actions += '<button type="button" onclick="openSendForCustomer(' + rowNo + ')">발송</button>';
+    }
+    return '<div class="today-next-item">' +
+      '<div class="today-next-head">' +
+        '<div>' +
+          '<div class="today-next-title">' + esc(item.company || '-') + '</div>' +
+          '<div class="today-next-meta">' + esc(item.customerNo || '') + (item.author ? ' · ' + esc(item.author) : '') + '</div>' +
+        '</div>' +
+        '<div class="today-next-time">' + esc(item.nextActionAt || '') + '</div>' +
+      '</div>' +
+      '<div class="today-next-action-line"><span class="today-next-chip">다음액션</span>' + esc(item.nextAction || '-') + '</div>' +
+      (item.content ? '<div class="today-next-content">' + esc(item.content) + '</div>' : '') +
+      '<div class="today-next-actions">' + actions + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderTodayCalendar() {
+  const area = document.getElementById('todayCalendarArea');
+  const title = document.getElementById('todayCalendarTitle');
+  if (!area) return;
+  const cursor = todayCalendarCursor instanceof Date ? todayCalendarCursor : new Date();
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+  if (title) title.textContent = year + '년 ' + String(month + 1).padStart(2, '0') + '월';
+
+  const first = new Date(year, month, 1);
+  const start = new Date(year, month, 1 - first.getDay());
+  const todayStr = formatDateInput_(new Date());
+  let html = '<table class="today-calendar"><thead><tr>';
+  ['일','월','화','수','목','금','토'].forEach(function(d){ html += '<th>' + d + '</th>'; });
+  html += '</tr></thead><tbody>';
+  for (let w = 0; w < 6; w++) {
+    html += '<tr>';
+    for (let d = 0; d < 7; d++) {
+      const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate() + w * 7 + d);
+      const dateStr = formatDateInput_(cur);
+      const cls = [cur.getMonth() !== month ? 'other-month' : '', dateStr === todayStr ? 'is-today' : '', dateStr === todaySelectedDate ? 'selected' : ''].filter(Boolean).join(' ');
+      html += '<td class="' + cls + '" onclick="selectTodayDate(\'' + dateStr + '\')">' + cur.getDate() + '</td>';
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  area.innerHTML = html;
+}
+
+function shiftTodayCalendar(delta) {
+  todayCalendarCursor = new Date(todayCalendarCursor.getFullYear(), todayCalendarCursor.getMonth() + Number(delta || 0), 1);
+  renderTodayCalendar();
+}
+
+function selectTodayDate(dateStr) {
+  todaySelectedDate = dateStr;
+  todayCalendarCursor = parseDateInput_(dateStr);
+  loadTodayPage();
+}
+
+function setTodayDate(date) {
+  todaySelectedDate = formatDateInput_(date || new Date());
+  todayCalendarCursor = parseDateInput_(todaySelectedDate);
+  loadTodayPage();
+}
+
+function formatDateInput_(date) {
+  date = date instanceof Date ? date : new Date(date);
+  const pad = n => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+}
+
+function parseDateInput_(dateStr) {
+  const m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date();
+}
+</script>

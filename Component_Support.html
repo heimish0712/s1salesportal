@@ -1,0 +1,909 @@
+<script>
+let supportSortKeyP15 = "";
+let supportSortDirP15 = "asc";
+function isSupportSectionActiveV57_() {
+  const section = document.getElementById('supportSection');
+  return !!(section && section.classList && section.classList.contains('active'));
+}
+
+function renderSupportDataV57_(data) {
+  data = data || { rows: [], requestTypes: [], statusOptions: [], currentUser: '' };
+  supportCurrentData = data;
+  renderSupportStatusFilter_(data.statusOptions || []);
+  renderSupportBoard(data.rows || []);
+}
+
+function preloadSupportPageV57_(options) {
+  options = options || {};
+  if (supportPreloadStartedV57 && supportLoadingV56) return;
+
+  const cached = readSupportCacheV56_();
+  if (cached && cached.rows && cached.rows.length) {
+    supportCurrentData = cached;
+    supportLastLoadAtV56 = Number(cached.cachedAt || cached.loadedAt || Date.now()) || Date.now();
+    if (isSupportSectionActiveV57_()) renderSupportDataV57_(cached);
+    const age = Date.now() - Number(cached.cachedAt || cached.loadedAt || 0);
+    if (age > 0 && age < SUPPORT_BACKGROUND_REFRESH_MS_V57) {
+      supportPreloadCompletedV57 = true;
+      return;
+    }
+  }
+
+  if (supportLoadingV56) return;
+  supportPreloadStartedV57 = true;
+  supportLoadingV56 = true;
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      supportLoadingV56 = false;
+      supportPreloadCompletedV57 = true;
+      supportLastLoadAtV56 = Date.now();
+      data = data || { rows: [], requestTypes: [], statusOptions: [], currentUser: '' };
+      supportCurrentData = data;
+      saveSupportCacheV56_(data);
+      if (isSupportSectionActiveV57_()) renderSupportDataV57_(data);
+
+      // 최근 스캔이 불완전하고 결과가 없으면 사용자가 들어오기 전에 전체 보강을 조용히 시도합니다.
+      if ((!data.rows || !data.rows.length) && data.meta && data.meta.complete === false) {
+        setTimeout(function() { loadSupportFullV56_({ silent: true }); }, 400);
+      }
+    })
+    .withFailureHandler(function(err) {
+      supportLoadingV56 = false;
+      if (!options.silent) console.warn('영업지원 요청 프리로드 실패', err);
+    })
+    .getPortalSupportRecentData({ keyword: '', status: '', limit: 100, maxScanRows: 1200, chunkSize: 300 });
+}
+
+function loadSupportPage(options) {
+  options = options || {};
+  if (!portalPermissionLoadedV63) {
+    const area = document.getElementById('supportBoardArea');
+    if (area) area.innerHTML = '<div class="loading">사용자 권한을 확인한 뒤 영업지원 요청 화면을 준비하는 중입니다...</div>';
+    loadPortalCurrentPermission_({ silent: true }, function() { loadSupportPage(options); });
+    return;
+  }
+  updateSupportRoleUiV65_();
+  const keyword = document.getElementById('supportKeyword') ? document.getElementById('supportKeyword').value : '';
+  const status = document.getElementById('supportStatusFilter') ? document.getElementById('supportStatusFilter').value : '';
+  const area = document.getElementById('supportBoardArea');
+  const hasFilter = !!String(keyword || '').trim() || !!String(status || '').trim();
+  const force = !!options.force;
+
+  // PATCH L: HOME에서 백그라운드 프리로드 중이면 중복 호출하지 않고, 완료 콜백이 현재 화면을 렌더링하게 둡니다.
+  if (!force && !hasFilter && supportLoadingV56) {
+    if (supportCurrentData && Array.isArray(supportCurrentData.rows) && supportCurrentData.rows.length) {
+      renderSupportDataV57_(supportCurrentData);
+    } else {
+      const cachedWhileLoading = readSupportCacheV56_();
+      if (cachedWhileLoading && cachedWhileLoading.rows && cachedWhileLoading.rows.length) {
+        supportCurrentData = cachedWhileLoading;
+        renderSupportDataV57_(cachedWhileLoading);
+      } else if (area) {
+        area.innerHTML = '<div class="loading">영업지원 요청을 백그라운드에서 불러오는 중입니다...</div>';
+      }
+    }
+    return;
+  }
+
+  // v56: 메뉴 재진입 시 기존 메모리/브라우저 캐시를 먼저 표시합니다.
+  if (!force && !hasFilter && supportCurrentData && Array.isArray(supportCurrentData.rows) && supportCurrentData.rows.length) {
+    renderSupportStatusFilter_(supportCurrentData.statusOptions || []);
+    renderSupportBoard(supportCurrentData.rows || []);
+    const age = Date.now() - (supportLastLoadAtV56 || 0);
+    if (age < 90 * 1000 || supportLoadingV56) return;
+  } else if (!force && !hasFilter) {
+    const cached = readSupportCacheV56_();
+    if (cached && cached.rows && cached.rows.length) {
+      supportCurrentData = cached;
+      renderSupportStatusFilter_(cached.statusOptions || []);
+      renderSupportBoard(cached.rows || []);
+    } else if (area) {
+      area.innerHTML = '<div class="loading">마스터시트의 영업지원요청 시트에서 최근 요청을 불러오는 중입니다...</div>';
+    }
+  } else if (area) {
+    area.innerHTML = '<div class="loading">영업지원 요청 전체 목록을 검색하는 중입니다...</div>';
+  }
+
+  supportLoadingV56 = true;
+
+  const onSuccess = function(data) {
+    supportLoadingV56 = false;
+    supportLastLoadAtV56 = Date.now();
+    data = data || { rows: [], requestTypes: [], statusOptions: [], currentUser: '' };
+    supportCurrentData = data;
+    renderSupportStatusFilter_(data.statusOptions || []);
+    renderSupportBoard(data.rows || []);
+    if (!hasFilter) saveSupportCacheV56_(data);
+
+    // 최근 스캔에서 0건인데 전체 스캔이 끝난 게 아니면, 한 번만 전체 목록으로 보강합니다.
+    if (!hasFilter && !force && (!data.rows || !data.rows.length) && data.meta && data.meta.complete === false) {
+      setTimeout(function() { loadSupportFullV56_({ silent: true }); }, 250);
+    }
+  };
+
+  const onFailure = function(err) {
+    supportLoadingV56 = false;
+    const cached = !hasFilter ? readSupportCacheV56_() : null;
+    if (cached && cached.rows && cached.rows.length) {
+      supportCurrentData = cached;
+      renderSupportStatusFilter_(cached.statusOptions || []);
+      renderSupportBoard(cached.rows || []);
+      toast('영업지원 요청 최신 조회 실패. 캐시 목록을 표시합니다.');
+      return;
+    }
+    if (area) area.innerHTML = '<div class="loading" style="color:#b42318;">영업지원 요청을 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+  };
+
+  const runner = google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure);
+  if (hasFilter) {
+    runner.getPortalSupportData({ keyword: keyword, status: status, limit: 500 });
+  } else {
+    runner.getPortalSupportRecentData({ keyword: '', status: '', limit: 100, maxScanRows: 1200, chunkSize: 300 });
+  }
+}
+
+function loadSupportFullV56_(options) {
+  options = options || {};
+  const keyword = document.getElementById('supportKeyword') ? document.getElementById('supportKeyword').value : '';
+  const status = document.getElementById('supportStatusFilter') ? document.getElementById('supportStatusFilter').value : '';
+  google.script.run
+    .withSuccessHandler(function(data) {
+      data = data || { rows: [], requestTypes: [], statusOptions: [], currentUser: '' };
+      supportCurrentData = data;
+      supportLastLoadAtV56 = Date.now();
+      renderSupportStatusFilter_(data.statusOptions || []);
+      renderSupportBoard(data.rows || []);
+      if (!String(keyword || '').trim() && !String(status || '').trim()) saveSupportCacheV56_(data);
+    })
+    .withFailureHandler(function(err) {
+      if (!options.silent) alert('영업지원 요청 전체 조회 실패: ' + getErrorMessage_(err));
+    })
+    .getPortalSupportData({ keyword: keyword, status: status, limit: 500 });
+}
+
+function readSupportCacheV56_() {
+  try {
+    const raw = localStorage.getItem(SUPPORT_CACHE_STORAGE_KEY_V56);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.cachedAt || !obj.data) return null;
+    if (Date.now() - Number(obj.cachedAt) > 30 * 60 * 1000) return null;
+    return obj.data;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveSupportCacheV56_(data) {
+  try {
+    localStorage.setItem(SUPPORT_CACHE_STORAGE_KEY_V56, JSON.stringify({ cachedAt: Date.now(), data: data || {} }));
+  } catch (err) {}
+}
+
+function renderSupportStatusFilter_(options) {
+  const sel = document.getElementById('supportStatusFilter');
+  if (!sel || sel.getAttribute('data-loaded') === 'Y') return;
+  sel.innerHTML = '<option value="">전체 상태</option>' + (options || []).map(function(v) { return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
+  sel.setAttribute('data-loaded', 'Y');
+}
+
+function isSupportProcessorModeV65_() {
+  const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
+  // PATCH P1-15: 영업지원 처리/완료 UI는 권한_DB의 `영업지원완료처리`에서 계산된 canCompleteSupport만 사용합니다.
+  // role/isAdmin fallback을 쓰면 권한_DB와 화면이 불일치할 수 있습니다.
+  return !!(p && p.active !== false && p.canCompleteSupport);
+}
+
+function updateSupportRoleUiV65_() {
+  const isProcessor = isSupportProcessorModeV65_();
+  const newPanel = document.getElementById('supportNewPanel');
+  const resetBtn = document.getElementById('supportInlineResetBtn');
+  const sub = document.getElementById('supportPageSubtext');
+  const title = document.querySelector('#supportSection .support-existing-title');
+  if (newPanel) newPanel.style.display = isProcessor ? 'none' : '';
+  if (resetBtn) resetBtn.style.display = isProcessor ? 'none' : '';
+  if (sub) sub.textContent = isProcessor
+    ? '접수된 영업지원 요청을 처리하고 고객 상세 검색으로 바로 이동합니다.'
+    : '신규 요청 등록과 기존 요청 목록을 분리해서 관리합니다.';
+  if (title) title.textContent = isProcessor ? '처리할 요청 목록' : '기존 요청 목록';
+}
+
+function formatSupportCompletedAtDisplay_(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  // 예: 2026. 6. 18 오전 8:14:00 -> 26. 6. 18 / 오전 8:14:00
+  let m = text.match(/^(?:20)?(\d{2})[.\-\/]\s*(\d{1,2})[.\-\/]\s*(\d{1,2})\s+(오전|오후)\s*(.+)$/);
+  if (m) {
+    return esc(m[1] + '. ' + Number(m[2]) + '. ' + Number(m[3])) + '<br>' + esc(m[4] + ' ' + m[5]);
+  }
+
+  // 이미 줄바꿈된 값도 축약 표시
+  m = text.match(/^(?:20)?(\d{2})[.\-\/]\s*(\d{1,2})[.\-\/]\s*(\d{1,2})\s*\n\s*(.+)$/);
+  if (m) {
+    return esc(m[1] + '. ' + Number(m[2]) + '. ' + Number(m[3])) + '<br>' + esc(m[4]);
+  }
+
+  return esc(text).replace(/\n/g, '<br>');
+}
+
+function clearSupportFilter() {
+  if (document.getElementById('supportKeyword')) document.getElementById('supportKeyword').value = '';
+  if (document.getElementById('supportStatusFilter')) document.getElementById('supportStatusFilter').value = '';
+  loadSupportPage({ force: true });
+}
+
+function toggleSupportHeaderSortP15_(key) {
+  key = String(key || '').trim();
+  if (!key) return;
+  supportSortDirP15 = supportSortKeyP15 === key && supportSortDirP15 === 'asc' ? 'desc' : 'asc';
+  supportSortKeyP15 = key;
+  renderSupportBoard((supportCurrentData && supportCurrentData.rows) || []);
+}
+
+function renderSupportSortableThP15_(label, key, styleText) {
+  return makePortalSortableThP15_(label, key, supportSortKeyP15, supportSortDirP15, 'toggleSupportHeaderSortP15_', styleText || '');
+}
+
+function renderSupportBoard(rows) {
+  const area = document.getElementById('supportBoardArea');
+  if (!area) return;
+  updateSupportRoleUiV65_();
+  const isProcessor = isSupportProcessorModeV65_();
+  const actionHead = isProcessor ? '처리' : '관리';
+  rows = Array.isArray(rows) ? rows : [];
+  if (supportSortKeyP15) rows = sortPortalRowsByKeyP15_(rows, supportSortKeyP15, supportSortDirP15);
+  const bodyRows = rows.length ? rows.map(function(r) {
+      const cls = r.status === '완료' ? 'done' : (r.status === '처리중' ? 'ing' : (r.status === '보류' ? 'hold' : ''));
+      const actionHtml = isProcessor
+        ? '<button class="support-process-btn" onclick="event.stopPropagation(); startSupportProcessFromRowV64(' + Number(r.rowNo) + ')">처리</button>'
+        : '<button class="secondary" onclick="event.stopPropagation(); openSupportRequestModal(' + Number(r.rowNo) + ')">상세</button>';
+      return '<tr ondblclick="openSupportRequestModal(' + Number(r.rowNo) + ')">' +
+        '<td class="customer-cell-center">' + esc(r.receiptNo || '') + '</td>' +
+        '<td class="customer-cell-center">' + esc(r.requestType || '') + '</td>' +
+        '<td class="customer-cell-center">' + esc(r.requester || '') + '</td>' +
+        '<td class="customer-cell-center">' + esc(r.handler || '') + '</td>' +
+        '<td class="customer-cell-center">' + esc(r.customerNo || '') + '</td>' +
+        '<td><b>' + esc(r.customerName || '') + '</b></td>' +
+        '<td><div class="support-request-text">' + esc(r.requestText || '') + '</div></td>' +
+        '<td class="customer-cell-center"><span class="support-status ' + cls + '">' + esc(r.status || '접수') + '</span></td>' +
+        '<td class="customer-cell-center support-completed-at">' + formatSupportCompletedAtDisplay_(r.completedAt || '') + '</td>' +
+        '<td><div class="support-row-actions">' + actionHtml + '</div></td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="10" class="customer-cell-center" style="color:#667085; padding:18px;">등록된 영업지원 요청이 없습니다.</td></tr>';
+
+  if (!isProcessor) renderSupportInlineEntryPanel_();
+  const meta = supportCurrentData && supportCurrentData.meta ? supportCurrentData.meta : null;
+  const metaText = meta ? ('<div class="cache-note" style="padding:0 0 8px 0;">' +
+    esc((meta.source === 'MASTER_SPREADSHEET_ID' ? '마스터시트 영업지원요청' : '영업지원요청') + ' · ' +
+    ((meta.recent ? '최근 우선 로딩' : '전체 조회') + ' · 표시 ' + rows.length + '건' +
+    (meta.complete === false ? ' · 뒤에서 전체 목록 보강 가능' : ''))) + '</div>') : '';
+  const html = metaText + '<table class="support-table"><thead><tr>' +
+    renderSupportSortableThP15_('접수번호', 'receiptNo', 'width:72px;') +
+    renderSupportSortableThP15_('업무유형', 'requestType', 'width:86px;') +
+    renderSupportSortableThP15_('요청자', 'requester', 'width:76px;') +
+    renderSupportSortableThP15_('처리자', 'handler', 'width:72px;') +
+    renderSupportSortableThP15_('고객번호', 'customerNo', 'width:92px;') +
+    renderSupportSortableThP15_('고객명', 'customerName', 'width:150px;') +
+    renderSupportSortableThP15_('요청업무', 'requestText', 'width:450px;') +
+    renderSupportSortableThP15_('진행 상태', 'status', 'width:90px;') +
+    renderSupportSortableThP15_('완료 시각', 'completedAt', 'width:94px;') +
+    '<th style="width:76px;">' + esc(actionHead) + '</th>' +
+    '</tr></thead><tbody>' + bodyRows + '</tbody></table>';
+  area.innerHTML = html;
+  try { applyPortalPermissionToUi_(); } catch (err) {}
+}
+
+function renderSupportInlineEntryPanel_() {
+  const area = document.getElementById('supportInlineArea');
+  if (!area) return;
+  if (isSupportProcessorModeV65_()) {
+    area.innerHTML = '';
+    updateSupportRoleUiV65_();
+    return;
+  }
+  const html = '<table class="support-inline-table"><thead><tr>' +
+    '<th style="width:108px;">업무유형</th>' +
+    '<th style="width:96px;">요청자</th>' +
+    '<th style="width:190px;">고객번호</th>' +
+    '<th style="width:190px;">고객명</th>' +
+    '<th>요청업무</th>' +
+    '<th style="width:86px;">저장</th>' +
+    '</tr></thead><tbody>' + renderSupportInlineEntryRow_() + '</tbody></table>';
+  area.innerHTML = html;
+  initSupportInlineEntryDefaults_();
+}
+
+function renderSupportInlineEntryRow_() {
+  const types = (supportCurrentData && supportCurrentData.requestTypes) || ['수기견적','자료제출','약속잡기','확인하기','기타요청'];
+  const requesters = getSupportRequesterOptions_();
+  const typeOptions = '<option value="">선택</option>' + types.map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
+  const requesterOptions = requesters.map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
+  return '<tr class="support-inline-entry">' +
+    '<td><select id="supportInlineRequestType">' + typeOptions + '</select></td>' +
+    '<td><select id="supportInlineRequester">' + requesterOptions + '</select></td>' +
+    '<td><div class="support-inline-customer-cell"><input id="supportInlineCustomerNo" placeholder="고객번호" onkeydown="if(event.key===\'Enter\') applySupportInlineCustomer()"><button type="button" class="secondary" onclick="applySupportInlineCustomer()">적용</button></div></td>' +
+    '<td><input id="supportInlineCustomerName" disabled placeholder="고객번호 적용 시 자동"></td>' +
+    '<td><textarea id="supportInlineRequestText" placeholder="요청업무 입력"></textarea></td>' +
+    '<td><button id="supportInlineSaveBtn" class="support-inline-save" onclick="saveSupportInlineRequest()">저장</button></td>' +
+  '</tr>' +
+  '<tr class="support-inline-contract-row"><td colspan="6"><span class="support-inline-contract-title">계약조건</span><span id="supportInlineContractSummary" class="support-inline-placeholder">고객번호 입력 후 적용을 누르면 계약조건과 고객 정보가 자동으로 표시됩니다.</span></td></tr>' +
+  '<tr class="support-inline-history-row"><td colspan="6"><div id="supportInlineCustomerHistory" class="support-inline-history-placeholder">고객을 적용하면 해당 고객의 최근 영업지원 요청 이력이 표시됩니다.</div></td></tr>';
+}
+
+function getSupportRequesterOptions_() {
+  const base = ['김경아','최보람','이옥희','김서하','방수원'];
+  const current = (supportCurrentData && supportCurrentData.currentUser) || '';
+  const fromServer = (supportCurrentData && supportCurrentData.requesterOptions) || [];
+  const out = [];
+  function add(v) { v = String(v || '').trim(); if (v && out.indexOf(v) < 0) out.push(v); }
+  add(current);
+  fromServer.forEach(add);
+  base.forEach(add);
+  return out;
+}
+
+function initSupportInlineEntryDefaults_() {
+  const requester = document.getElementById('supportInlineRequester');
+  if (requester && supportCurrentData && supportCurrentData.currentUser) requester.value = supportCurrentData.currentUser;
+  window.__supportInlineCustomer = null;
+}
+
+function resetSupportInlineEntry() {
+  ['supportInlineCustomerNo','supportInlineCustomerName','supportInlineRequestText'].forEach(function(id){ const el=document.getElementById(id); if(el) el.value=''; });
+  const type = document.getElementById('supportInlineRequestType'); if (type) type.value = '';
+  const requester = document.getElementById('supportInlineRequester'); if (requester && supportCurrentData && supportCurrentData.currentUser) requester.value = supportCurrentData.currentUser;
+  const summary = document.getElementById('supportInlineContractSummary');
+  if (summary) { summary.textContent = '고객번호 입력 후 적용을 누르면 계약조건과 고객 정보가 자동으로 표시됩니다.'; summary.className = 'support-inline-placeholder'; }
+  renderSupportInlineCustomerHistoryP19_(null);
+  window.__supportInlineCustomer = null;
+}
+
+function applySupportInlineCustomer() {
+  const input = document.getElementById('supportInlineCustomerNo');
+  const q = input ? input.value : '';
+  if (!String(q || '').trim()) return toast('고객번호를 입력하세요.');
+  const summary = document.getElementById('supportInlineContractSummary');
+  if (summary) { summary.textContent = '고객 정보를 불러오는 중입니다...'; summary.className = 'support-inline-placeholder'; }
+  google.script.run
+    .withSuccessHandler(function(info) {
+      fillSupportInlineCustomerInfo_(info || {});
+      const reqText = document.getElementById('supportInlineRequestText');
+      if (reqText) reqText.focus();
+      toast('고객 정보를 적용했습니다.');
+    })
+    .withFailureHandler(function(err) {
+      if (summary) { summary.textContent = '고객 조회 실패: ' + getErrorMessage_(err); summary.className = 'support-inline-placeholder'; }
+      alert('고객 조회 실패: ' + getErrorMessage_(err));
+    })
+    .getPortalSupportCustomerLookup(q);
+}
+
+function fillSupportInlineCustomerInfo_(info, options) {
+  info = info || {};
+  options = options || {};
+  window.__supportInlineCustomer = info;
+  const no = document.getElementById('supportInlineCustomerNo'); if (no) no.value = info.customerNo || '';
+  const name = document.getElementById('supportInlineCustomerName'); if (name) name.value = info.customerName || '';
+  const summary = document.getElementById('supportInlineContractSummary');
+  const text = info.contractSummary || buildSupportInlineContractSummaryClient_(info);
+  if (summary) { summary.textContent = text || '계약조건 정보가 비어 있습니다.'; summary.className = text ? '' : 'support-inline-placeholder'; }
+  renderSupportInlineCustomerHistoryP19_(info);
+  const reqText = document.getElementById('supportInlineRequestText');
+  if (reqText && !String(reqText.value || '').trim() && options && options.suggestRequestText) {
+    reqText.value = options.suggestRequestText;
+  }
+}
+
+function renderSupportInlineCustomerHistoryP19_(info) {
+  const box = document.getElementById('supportInlineCustomerHistory');
+  if (!box) return;
+  info = info || {};
+  const customerNo = String(info.customerNo || '').trim();
+  const customerName = String(info.customerName || '').trim();
+  if (!customerNo && !customerName) {
+    box.className = 'support-inline-history-placeholder';
+    box.innerHTML = '고객을 적용하면 해당 고객의 최근 영업지원 요청 이력이 표시됩니다.';
+    return;
+  }
+  const rows = supportCurrentData && Array.isArray(supportCurrentData.rows) ? supportCurrentData.rows : [];
+  const hits = rows.filter(function(r) {
+    return (customerNo && String(r.customerNo || '').trim() === customerNo) ||
+      (customerName && String(r.customerName || '').trim() === customerName);
+  }).slice(0, 5);
+  if (!hits.length) {
+    box.className = 'support-inline-history-empty';
+    box.innerHTML = '<b>최근 요청 이력</b><span>이 고객으로 등록된 영업지원 요청이 아직 없습니다.</span>';
+    return;
+  }
+  box.className = 'support-inline-history-list';
+  box.innerHTML = '<div class="support-inline-history-title">최근 요청 이력</div>' + hits.map(function(r) {
+    return '<div class="support-inline-history-item">' +
+      '<span class="support-inline-history-date">' + esc(r.requestedAt || r.receiptNo || '-') + '</span>' +
+      '<span class="support-inline-history-type">' + esc(r.requestType || '-') + '</span>' +
+      '<span class="support-inline-history-text">' + esc(normalizeSupportWorkTextV64_(r.requestText || '', 120)) + '</span>' +
+      '<span class="support-inline-history-status">' + esc(r.status || '접수') + '</span>' +
+    '</div>';
+  }).join('');
+}
+
+function buildSupportInlineContractSummaryClient_(info) {
+  info = info || {};
+  const parts = [];
+  if (info.contractUnit) parts.push(info.contractUnit);
+  const appointmentLabel = normalizeSupportInlineAppointmentLabel_(info.appointment);
+  if (appointmentLabel) parts.push('선임 ' + appointmentLabel);
+  if (info.maintenance) parts.push('유지 ' + info.maintenance);
+  if (info.performance) parts.push('성능 ' + info.performance);
+  if (info.discountRate) parts.push('할인율 ' + String(info.discountRate).replace(/%$/, '') + '%');
+  if (info.vat) parts.push('부가세 ' + info.vat);
+  if (info.quoteAmount) parts.push('최종견적가 ' + info.quoteAmount);
+  if (info.status) parts.push('진행상태 ' + info.status);
+  return parts.join(' / ');
+}
+
+function normalizeSupportInlineAppointmentLabel_(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const lower = text.toLowerCase();
+  if (text.indexOf('미') >= 0 || text.indexOf('없') >= 0 || lower.indexOf('x') >= 0 || lower.indexOf('n') === 0) return 'X';
+  if (text.indexOf('해당없음') >= 0 || text.indexOf('해당 없음') >= 0) return 'X';
+  if (text.indexOf('선임') >= 0 || lower.indexOf('o') >= 0 || lower.indexOf('y') === 0 || text.indexOf('유') >= 0) return 'O';
+  return text;
+}
+
+function collectSupportInlinePayload_() {
+  const c = window.__supportInlineCustomer || {};
+  return {
+    rowNo: 0,
+    masterRowNo: c.rowNo || '',
+    receiptNo: '',
+    requestType: (document.getElementById('supportInlineRequestType') || {}).value || '',
+    requester: (document.getElementById('supportInlineRequester') || {}).value || '',
+    handler: '',
+    customerNo: (document.getElementById('supportInlineCustomerNo') || {}).value || '',
+    customerName: (document.getElementById('supportInlineCustomerName') || {}).value || '',
+    requestText: (document.getElementById('supportInlineRequestText') || {}).value || '',
+    discountRate: c.discountRate || '',
+    quoteAmount: c.quoteAmount || '',
+    area: c.area || '',
+    region: c.region || '',
+    contactName: c.contactName || '',
+    contactEmail: c.contactEmail || '',
+    processContent: '',
+    completedAt: '',
+    status: '접수',
+    masterMemo: c.masterMemo || '',
+    autoSendCheck: ''
+  };
+}
+
+function saveSupportInlineRequest() {
+  if (!canPortal_('canWriteSupport')) return alert('영업지원 요청 작성 권한이 없습니다.');
+  const payload = collectSupportInlinePayload_();
+  if (!payload.requestType) return toast('업무유형을 선택하세요.');
+  if (!payload.requester) return toast('요청자를 선택하세요.');
+  if (!payload.customerNo) return toast('고객번호를 입력하고 적용하세요.');
+  if (!payload.customerName) return toast('고객번호 적용으로 고객명을 불러와야 합니다.');
+  if (!String(payload.requestText || '').trim()) return toast('요청업무를 입력하세요.');
+  const btn = document.getElementById('supportInlineSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      toast((res && res.message) || '영업지원 요청이 저장되었습니다.');
+      resetSupportInlineEntry();
+      loadSupportPage({ force: true });
+    })
+    .withFailureHandler(function(err) {
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      alert('영업지원 요청 저장 실패: ' + getErrorMessage_(err));
+    })
+    .savePortalSupportRequest(payload);
+}
+
+
+function findSupportRowByRowNoV64_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const rows = supportCurrentData && Array.isArray(supportCurrentData.rows) ? supportCurrentData.rows : [];
+  return rows.find(function(r) { return Number(r && r.rowNo) === rowNo; }) || null;
+}
+
+function normalizeSupportWorkTextV64_(value, maxLen) {
+  value = String(value || '').trim();
+  maxLen = Number(maxLen) || 180;
+  if (value.length <= maxLen) return value;
+  return value.slice(0, maxLen) + '...';
+}
+
+function setActiveSupportWorkV64_(item) {
+  item = item || {};
+  activeSupportWorkV64 = {
+    rowNo: Number(item.rowNo) || 0,
+    receiptNo: item.receiptNo || '',
+    requestType: item.requestType || '',
+    requester: item.requester || '',
+    customerNo: item.customerNo || '',
+    customerName: item.customerName || '',
+    requestText: item.requestText || '',
+    status: item.status || '접수'
+  };
+  renderSupportWorkHintV64_();
+}
+
+function clearActiveSupportWorkV64_() {
+  activeSupportWorkV64 = null;
+  pendingSupportCustomerOpenV64 = null;
+  renderSupportWorkHintV64_();
+}
+
+function renderSupportWorkHintV64_() {
+  const box = document.getElementById('supportWorkHint');
+  if (!box) return;
+  const item = activeSupportWorkV64;
+  if (!item) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'block';
+  box.innerHTML = '<div class="support-work-hint-title">처리 중인 요청</div>' +
+    '<button type="button" class="support-work-hint-x" onclick="clearActiveSupportWorkV64_()">×</button>' +
+    '<div class="support-work-hint-line"><b>고객번호</b><span>' + esc(item.customerNo || '-') + '</span></div>' +
+    '<div class="support-work-hint-line"><b>고객명</b><span>' + esc(item.customerName || '-') + '</span></div>' +
+    '<div class="support-work-hint-request">' + esc(normalizeSupportWorkTextV64_(item.requestText || '', 220)) + '</div>' +
+    '<button type="button" class="support-work-go-btn" onclick="goSupportWorkRequestModalV64_()">요청업무가기</button>';
+}
+
+function startSupportProcessFromRowV64(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const item = findSupportRowByRowNoV64_(rowNo);
+  if (!item) return toast('요청 정보를 찾지 못했습니다. 새로고침 후 다시 눌러주세요.');
+  setActiveSupportWorkV64_(item);
+
+  pendingSupportCustomerOpenV64 = {
+    supportRowNo: rowNo,
+    customerNo: item.customerNo || '',
+    customerName: item.customerName || '',
+    requestText: item.requestText || ''
+  };
+
+  switchPage('customers', true);
+  const kw = document.getElementById('keyword');
+  if (kw) kw.value = item.customerNo || item.customerName || '';
+  customerExpandedRowNo = null;
+  searchCustomerPage(0);
+  toast('고객 상세 검색으로 이동했습니다. 왼쪽 처리 안내를 보면서 작업하세요.');
+}
+
+function goSupportWorkRequestModalV64_() {
+  const item = activeSupportWorkV64;
+  if (!item || !item.rowNo) return toast('처리 중인 영업지원 요청이 없습니다.');
+  const box = document.getElementById('supportWorkHint');
+  if (box) box.style.display = 'none';
+  openSupportRequestModal(item.rowNo, { focusProcess: true });
+}
+
+function focusSupportProcessAreaV64_() {
+  const body = document.getElementById('supportModalBody') || document.querySelector('#supportRequestBackdrop .support-modal-body');
+  const target = document.getElementById('supportProcessContent');
+  if (!body || !target) return;
+  setTimeout(function() {
+    try {
+      body.scrollTop = Math.max(0, target.offsetTop - body.offsetTop - 120);
+      target.focus();
+      target.classList.add('support-process-focus');
+      setTimeout(function() { target.classList.remove('support-process-focus'); }, 1600);
+    } catch (err) {}
+  }, 120);
+}
+
+// v78: 상세/처리 팝업 로딩 최적화
+// - 목록에 이미 있는 행 데이터로 팝업을 즉시 채웁니다.
+// - 서버 상세 조회는 localStorage/ScriptCache를 거쳐 백그라운드 보정만 수행합니다.
+const SUPPORT_DETAIL_CACHE_STORAGE_KEY_V78 = 'portalSupportDetailCache:v78:';
+let supportModalDirtyV78 = false;
+let supportModalDetailRequestSeqV78 = 0;
+let supportModalDirtyBoundV78 = false;
+
+function makeSupportDetailCacheKeyV78_(rowNo) {
+  return SUPPORT_DETAIL_CACHE_STORAGE_KEY_V78 + String(Number(rowNo) || 0);
+}
+
+function readSupportDetailCacheV78_(rowNo) {
+  try {
+    const raw = localStorage.getItem(makeSupportDetailCacheKeyV78_(rowNo));
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.cachedAt || !obj.item) return null;
+    if (Date.now() - Number(obj.cachedAt) > 10 * 60 * 1000) return null;
+    return obj.item;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveSupportDetailCacheV78_(rowNo, item) {
+  try {
+    if (!rowNo || !item) return;
+    localStorage.setItem(makeSupportDetailCacheKeyV78_(rowNo), JSON.stringify({ cachedAt: Date.now(), item: item }));
+  } catch (err) {}
+}
+
+function clearSupportDetailCacheV78_(rowNo) {
+  try {
+    if (rowNo) localStorage.removeItem(makeSupportDetailCacheKeyV78_(rowNo));
+  } catch (err) {}
+}
+
+function markSupportModalDirtyV78_() {
+  supportModalDirtyV78 = true;
+}
+
+function bindSupportModalDirtyWatcherV78_() {
+  if (supportModalDirtyBoundV78) return;
+  supportModalDirtyBoundV78 = true;
+  setTimeout(function() {
+    const body = document.getElementById('supportModalBody') || document.querySelector('#supportRequestBackdrop .support-modal-body');
+    if (!body) return;
+    body.addEventListener('input', markSupportModalDirtyV78_, true);
+    body.addEventListener('change', markSupportModalDirtyV78_, true);
+  }, 0);
+}
+
+function mergeSupportRowForInstantDetailV78_(item) {
+  item = item || {};
+  return {
+    rowNo: item.rowNo || '',
+    receiptNo: item.receiptNo || '',
+    requestType: item.requestType || '',
+    requester: item.requester || '',
+    handler: item.handler || '',
+    customerNo: item.customerNo || '',
+    customerName: item.customerName || '',
+    requestText: item.requestText || '',
+    discountRate: item.discountRate || '',
+    quoteAmount: item.quoteAmount || '',
+    area: item.area || '',
+    region: item.region || '',
+    contactName: item.contactName || '',
+    contactEmail: item.contactEmail || '',
+    processContent: item.processContent || '',
+    completedAt: item.completedAt || '',
+    status: item.status || '접수',
+    masterMemo: item.masterMemo || '',
+    autoSendCheck: item.autoSendCheck || ''
+  };
+}
+
+function refreshSupportDetailInBackgroundV78_(rowNo, options) {
+  options = options || {};
+  const seq = ++supportModalDetailRequestSeqV78;
+  google.script.run
+    .withSuccessHandler(function(data) {
+      if (seq !== supportModalDetailRequestSeqV78) return;
+      data = data || {};
+      const item = data.item || null;
+      if (!item) return;
+      saveSupportDetailCacheV78_(rowNo, item);
+      if (Number(supportCurrentRowNo) !== Number(rowNo)) return;
+      if (supportModalDirtyV78) return;
+      fillSupportSelects_(data.requestTypes || [], data.statusOptions || []);
+      fillSupportModal_(item);
+      if (options.focusProcess) focusSupportProcessAreaV64_();
+    })
+    .withFailureHandler(function(err) {
+      if (options.showError) toast('영업지원 요청 상세 최신 조회 실패: ' + getErrorMessage_(err));
+    })
+    .getPortalSupportRequestDetailFastV78(rowNo, { force: !!options.force });
+}
+
+function openSupportRequestModal(rowNo, options) {
+  options = options || {};
+  if (!canPortal_('canWriteSupport')) return alert('영업지원 요청 작성 권한이 없습니다.');
+  supportCurrentRowNo = Number(rowNo) || 0;
+  supportCurrentCustomer = null;
+  supportModalDirtyV78 = false;
+  bindSupportModalDirtyWatcherV78_();
+
+  const backdrop = document.getElementById('supportRequestBackdrop');
+  if (!backdrop) return;
+  resetSupportModal_();
+  backdrop.style.display = 'flex';
+  fillSupportSelects_((supportCurrentData && supportCurrentData.requestTypes) || ['수기견적','자료제출','약속잡기','확인하기','기타요청'], (supportCurrentData && supportCurrentData.statusOptions) || ['접수','처리중','완료','보류','반려']);
+
+  if (!supportCurrentRowNo) {
+    document.getElementById('supportModalTitle').textContent = '영업지원 요청 추가';
+    document.getElementById('supportRequester').value = (supportCurrentData && supportCurrentData.currentUser) || '';
+    document.getElementById('supportStatus').value = '접수';
+    setTimeout(function(){ const el=document.getElementById('supportCustomerNo'); if(el) el.focus(); }, 80);
+    return;
+  }
+
+  document.getElementById('supportModalTitle').textContent = '영업지원 요청 상세/처리';
+
+  const listItem = mergeSupportRowForInstantDetailV78_(findSupportRowByRowNoV64_(supportCurrentRowNo));
+  const cachedItem = readSupportDetailCacheV78_(supportCurrentRowNo);
+  const immediateItem = cachedItem || listItem;
+  fillSupportModal_(immediateItem);
+  if (options.focusProcess) focusSupportProcessAreaV64_();
+
+  // 캐시가 있으면 화면은 즉시 사용 가능하므로 강제 조회하지 않습니다.
+  // 캐시가 없거나 요청업무가기처럼 최신 상태가 중요한 경우에만 백그라운드 보정합니다.
+  if (!cachedItem || options.focusProcess || options.forceRefresh) {
+    refreshSupportDetailInBackgroundV78_(supportCurrentRowNo, { focusProcess: !!options.focusProcess, force: false, showError: false });
+  }
+}
+
+function closeSupportRequestModal() {
+  const backdrop = document.getElementById('supportRequestBackdrop');
+  if (backdrop) backdrop.style.display = 'none';
+  supportCurrentRowNo = 0;
+  supportCurrentCustomer = null;
+}
+
+function resetSupportModal_() {
+  ['supportReceiptNo','supportCustomerNo','supportRequester','supportCustomerName','supportDiscountRate','supportQuoteAmount','supportArea','supportRegion','supportContactName','supportContactEmail','supportRequestText','supportHandler','supportCompletedAt','supportAutoSendCheck','supportProcessContent','supportMasterMemo'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const results = document.getElementById('supportCustomerSearchResults');
+  if (results) { results.style.display = 'none'; results.innerHTML = ''; }
+  const btn = document.getElementById('supportSaveBtn');
+  if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+}
+
+function fillSupportSelects_(types, statuses) {
+  const typeSel = document.getElementById('supportRequestType');
+  const statusSel = document.getElementById('supportStatus');
+  if (typeSel) typeSel.innerHTML = '<option value="">선택</option>' + (types || []).map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
+  if (statusSel) {
+    statusSel.innerHTML = (statuses || []).map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
+    if (!canPortal_('canCompleteSupport')) {
+      Array.from(statusSel.options || []).forEach(function(opt) { if (String(opt.value || opt.text || '').trim() === '완료') opt.disabled = true; });
+    }
+  }
+  try { applyPortalPermissionToUi_(); } catch (err) {}
+}
+
+function fillSupportModal_(item) {
+  item = item || {};
+  document.getElementById('supportReceiptNo').value = item.receiptNo || '';
+  document.getElementById('supportRequestType').value = item.requestType || '';
+  document.getElementById('supportRequester').value = item.requester || '';
+  document.getElementById('supportHandler').value = item.handler || '';
+  document.getElementById('supportCustomerNo').value = item.customerNo || '';
+  document.getElementById('supportCustomerName').value = item.customerName || '';
+  document.getElementById('supportRequestText').value = item.requestText || '';
+  document.getElementById('supportDiscountRate').value = item.discountRate || '';
+  document.getElementById('supportQuoteAmount').value = item.quoteAmount || '';
+  document.getElementById('supportArea').value = item.area || '';
+  document.getElementById('supportRegion').value = item.region || '';
+  document.getElementById('supportContactName').value = item.contactName || '';
+  document.getElementById('supportContactEmail').value = item.contactEmail || '';
+  document.getElementById('supportProcessContent').value = item.processContent || '';
+  document.getElementById('supportCompletedAt').value = item.completedAt || '';
+  document.getElementById('supportStatus').value = item.status || '접수';
+  document.getElementById('supportMasterMemo').value = item.masterMemo || '';
+  document.getElementById('supportAutoSendCheck').value = item.autoSendCheck || '';
+  try { applyPortalPermissionToUi_(); } catch (err) {}
+}
+
+function lookupSupportCustomer() {
+  const q = document.getElementById('supportCustomerNo').value || '';
+  if (!q.trim()) return toast('고객번호 또는 고객명을 입력하세요.');
+  google.script.run
+    .withSuccessHandler(function(info) { fillSupportCustomerInfo_(info); toast('고객 정보를 불러왔습니다.'); })
+    .withFailureHandler(function(err) { alert('고객 조회 실패: ' + getErrorMessage_(err)); })
+    .getPortalSupportCustomerLookup(q);
+}
+
+function searchSupportCustomerCandidates() {
+  const q = document.getElementById('supportCustomerNo').value || '';
+  const box = document.getElementById('supportCustomerSearchResults');
+  if (!q.trim()) return toast('검색할 고객번호 또는 고객명을 입력하세요.');
+  if (box) { box.style.display = 'block'; box.innerHTML = '<div class="support-search-result">검색 중...</div>'; }
+  google.script.run
+    .withSuccessHandler(function(list) {
+      list = Array.isArray(list) ? list : [];
+      if (!box) return;
+      if (!list.length) { box.innerHTML = '<div class="support-search-result">검색 결과가 없습니다.</div>'; return; }
+      box.innerHTML = list.map(function(item, idx) {
+        return '<div class="support-search-result" onclick="selectSupportCustomerCandidate(' + idx + ')"><b>' + esc(item.customerName || '-') + '</b> · ' + esc(item.customerNo || '') + '<br><span class="support-muted">' + esc(item.contactName || '') + ' / ' + esc(item.contactEmail || '') + '</span></div>';
+      }).join('');
+      window.__supportCandidateList = list;
+    })
+    .withFailureHandler(function(err) { if (box) box.innerHTML = '<div class="support-search-result" style="color:#b42318;">' + esc(getErrorMessage_(err)) + '</div>'; })
+    .searchPortalSupportCustomers(q);
+}
+
+function selectSupportCustomerCandidate(idx) {
+  const list = window.__supportCandidateList || [];
+  const item = list[Number(idx)] || null;
+  if (!item) return;
+  fillSupportCustomerInfo_(item);
+  const box = document.getElementById('supportCustomerSearchResults');
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+}
+
+function fillSupportCustomerInfo_(info) {
+  info = info || {};
+  supportCurrentCustomer = info;
+  document.getElementById('supportCustomerNo').value = info.customerNo || '';
+  document.getElementById('supportCustomerName').value = info.customerName || '';
+  document.getElementById('supportDiscountRate').value = info.discountRate || '';
+  document.getElementById('supportQuoteAmount').value = info.quoteAmount || '';
+  document.getElementById('supportArea').value = info.area || '';
+  document.getElementById('supportRegion').value = info.region || '';
+  document.getElementById('supportContactName').value = info.contactName || '';
+  document.getElementById('supportContactEmail').value = info.contactEmail || '';
+  document.getElementById('supportMasterMemo').value = info.masterMemo || '';
+  if (info.contractSummary && document.getElementById('supportRequestText') && !document.getElementById('supportRequestText').value) {
+    document.getElementById('supportRequestText').value = info.contractSummary;
+  }
+}
+
+function collectSupportPayload_() {
+  return {
+    rowNo: supportCurrentRowNo || 0,
+    receiptNo: document.getElementById('supportReceiptNo').value || '',
+    requestType: document.getElementById('supportRequestType').value || '',
+    requester: document.getElementById('supportRequester').value || '',
+    handler: document.getElementById('supportHandler').value || '',
+    customerNo: document.getElementById('supportCustomerNo').value || '',
+    customerName: document.getElementById('supportCustomerName').value || '',
+    requestText: document.getElementById('supportRequestText').value || '',
+    discountRate: document.getElementById('supportDiscountRate').value || '',
+    quoteAmount: document.getElementById('supportQuoteAmount').value || '',
+    area: document.getElementById('supportArea').value || '',
+    region: document.getElementById('supportRegion').value || '',
+    contactName: document.getElementById('supportContactName').value || '',
+    contactEmail: document.getElementById('supportContactEmail').value || '',
+    processContent: document.getElementById('supportProcessContent').value || '',
+    completedAt: document.getElementById('supportCompletedAt').value || '',
+    status: document.getElementById('supportStatus').value || '접수',
+    masterMemo: document.getElementById('supportMasterMemo').value || '',
+    autoSendCheck: document.getElementById('supportAutoSendCheck').value || ''
+  };
+}
+
+function saveSupportRequestFromModal() {
+  if (!canPortal_('canWriteSupport')) return alert('영업지원 요청 작성 권한이 없습니다.');
+  if (!canPortal_('canCompleteSupport') && String((document.getElementById('supportStatus') || {}).value || '').trim() === '완료') {
+    return alert('영업지원 완료 처리 권한이 없습니다.');
+  }
+  const payload = collectSupportPayload_();
+  const btn = document.getElementById('supportSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      toast((res && res.message) || '저장되었습니다.');
+      clearSupportDetailCacheV78_(payload.rowNo);
+      try {
+        if (supportCurrentData && Array.isArray(supportCurrentData.rows) && res && res.item) {
+          supportCurrentData.rows = supportCurrentData.rows.map(function(r) {
+            return Number(r && r.rowNo) === Number(res.item.rowNo) ? res.item : r;
+          });
+          saveSupportCacheV56_(supportCurrentData);
+        }
+      } catch (e) {}
+      closeSupportRequestModal();
+      if (activeSupportWorkV64 && Number(activeSupportWorkV64.rowNo) === Number(payload.rowNo)) clearActiveSupportWorkV64_();
+      loadSupportPage({ force: true });
+    })
+    .withFailureHandler(function(err) {
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      alert('영업지원 요청 저장 실패: ' + getErrorMessage_(err));
+    })
+    .savePortalSupportRequest(payload);
+}
+
+function setSupportCompletedNow() {
+  if (!canPortal_('canCompleteSupport')) return alert('영업지원 완료 처리 권한이 없습니다.');
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  document.getElementById('supportCompletedAt').value = String(d.getFullYear()).slice(2) + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  const status = document.getElementById('supportStatus');
+  if (status) status.value = '완료';
+}
+</script>

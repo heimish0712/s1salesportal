@@ -1,0 +1,213 @@
+<script>
+let activityLogStateP110 = {
+  initialized: false,
+  data: null,
+  sortKey: 'atText',
+  sortDir: 'desc'
+};
+
+function loadActivityLogPage(force) {
+  if (!activityLogStateP110.initialized || force) renderActivityLogShellP110_();
+  const filters = collectActivityLogFiltersP110_();
+  const area = document.getElementById('activityLogResultArea');
+  if (area) area.innerHTML = '<div class="loading">작업로그를 불러오는 중입니다.</div>';
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      activityLogStateP110.data = res || { rows: [] };
+      renderActivityLogDataP110_(res || { rows: [] });
+    })
+    .withFailureHandler(function(err) {
+      if (area) area.innerHTML = '<div class="loading">작업로그 조회 실패: ' + esc(getErrorMessage_(err)) + '</div>';
+    })
+    .getPortalActivityLogData(filters);
+}
+
+function renderActivityLogShellP110_() {
+  const area = document.getElementById('activityLogArea');
+  if (!area) return;
+  const today = getActivityTodayP110_();
+  area.innerHTML = '' +
+    '<div class="activity-log-toolbar">' +
+      '<div class="activity-log-field"><label>시작일</label><input id="activityDateFrom" type="date" value="' + today + '"></div>' +
+      '<div class="activity-log-field"><label>종료일</label><input id="activityDateTo" type="date" value="' + today + '"></div>' +
+      '<div class="activity-log-field activity-log-admin-only" id="activityActorWrap" style="display:none;"><label>담당자/사용자</label><select id="activityActorFilter"><option value="">전체</option></select></div>' +
+      '<div class="activity-log-field"><label>작업구분</label><select id="activityTypeFilter"><option value="">전체</option></select></div>' +
+      '<div class="activity-log-field activity-log-keyword"><label>검색어</label><input id="activityKeyword" placeholder="고객명, 고객번호, 작업내용 검색" onkeydown="if(event.key===\'Enter\') loadActivityLogPage(false)"></div>' +
+      '<div class="activity-log-actions"><button onclick="loadActivityLogPage(false)">조회</button><button class="secondary" onclick="resetActivityLogFiltersP110_()">초기화</button></div>' +
+    '</div>' +
+    '<div id="activityLogSummaryArea"></div>' +
+    '<div id="activityLogCompareArea"></div>' +
+    '<div id="activityLogResultArea"><div class="loading">작업로그를 불러오는 중입니다.</div></div>';
+  activityLogStateP110.initialized = true;
+}
+
+function collectActivityLogFiltersP110_() {
+  const v = id => String((document.getElementById(id) || {}).value || '').trim();
+  return {
+    dateFrom: v('activityDateFrom'),
+    dateTo: v('activityDateTo'),
+    actor: v('activityActorFilter'),
+    type: v('activityTypeFilter'),
+    keyword: v('activityKeyword'),
+    limit: 500
+  };
+}
+
+function resetActivityLogFiltersP110_() {
+  const today = getActivityTodayP110_();
+  const ids = ['activityKeyword', 'activityActorFilter', 'activityTypeFilter'];
+  const df = document.getElementById('activityDateFrom');
+  const dt = document.getElementById('activityDateTo');
+  if (df) df.value = today;
+  if (dt) dt.value = today;
+  ids.forEach(function(id) { const el = document.getElementById(id); if (el) el.value = ''; });
+  loadActivityLogPage(false);
+}
+
+function renderActivityLogDataP110_(data) {
+  data = data || { rows: [] };
+  renderActivityLogFilterOptionsP110_(data);
+  renderActivityLogSummaryP110_(data);
+  renderActivityLogCompareP110_(data);
+  renderActivityLogTableP110_(data.rows || []);
+
+  const sub = document.getElementById('activityLogSubtext');
+  if (sub) {
+    sub.textContent = data.canViewAll
+      ? (data.canCompare ? '전체 로그 조회 권한입니다. 담당자별 선택 조회와 비교 통계를 확인할 수 있습니다.' : '전체 로그 조회 권한입니다.')
+      : '본인 작업 로그만 표시됩니다.';
+  }
+}
+
+function renderActivityLogFilterOptionsP110_(data) {
+  const actorWrap = document.getElementById('activityActorWrap');
+  const actorSelect = document.getElementById('activityActorFilter');
+  const typeSelect = document.getElementById('activityTypeFilter');
+  const currentActor = actorSelect ? actorSelect.value : '';
+  const currentType = typeSelect ? typeSelect.value : '';
+
+  if (actorWrap) actorWrap.style.display = data.canViewAll ? '' : 'none';
+  if (actorSelect && data.canViewAll) {
+    const opts = ['<option value="">전체</option>'].concat((data.actorOptions || []).map(function(x) {
+      return '<option value="' + escAttr(x.value || '') + '">' + esc(x.label || x.value || '') + '</option>';
+    }));
+    actorSelect.innerHTML = opts.join('');
+    actorSelect.value = currentActor;
+  }
+
+  if (typeSelect) {
+    const opts = ['<option value="">전체</option>'].concat((data.typeOptions || []).map(function(x) {
+      return '<option value="' + escAttr(x) + '">' + esc(x) + '</option>';
+    }));
+    typeSelect.innerHTML = opts.join('');
+    typeSelect.value = currentType;
+  }
+}
+
+function renderActivityLogSummaryP110_(data) {
+  const stats = data.stats || {};
+  const area = document.getElementById('activityLogSummaryArea');
+  if (!area) return;
+  area.innerHTML = '' +
+    '<div class="activity-log-cards">' +
+      renderActivityLogMetricP110_('전체 작업', stats.total || 0) +
+      renderActivityLogMetricP110_('관련 고객', stats.uniqueCustomers || 0) +
+      renderActivityLogMetricP110_('컨택이력', stats.contactCount || 0) +
+      renderActivityLogMetricP110_('자료발송', stats.sendCount || 0) +
+      renderActivityLogMetricP110_('영업지원', stats.supportCount || 0) +
+      renderActivityLogMetricP110_('수정작업', stats.editCount || 0) +
+    '</div>';
+}
+
+function renderActivityLogMetricP110_(label, value) {
+  return '<div class="activity-log-card"><div class="activity-log-card-label">' + esc(label) + '</div><div class="activity-log-card-value">' + esc(String(value)) + '</div></div>';
+}
+
+function renderActivityLogCompareP110_(data) {
+  const area = document.getElementById('activityLogCompareArea');
+  if (!area) return;
+  if (!data.canCompare) {
+    area.innerHTML = '';
+    return;
+  }
+  const rows = data.byUser || [];
+  if (!rows.length) {
+    area.innerHTML = '<div class="activity-log-compare-empty">담당자별 비교 통계가 아직 없습니다.</div>';
+    return;
+  }
+  let html = '<div class="activity-log-block"><div class="activity-log-block-title">담당자별 작업 비교</div><table class="activity-log-compare-table"><thead><tr>' +
+    '<th>담당자</th><th>전체</th><th>컨택</th><th>영업지원</th><th>자료발송</th><th>수정</th><th>계약관리</th><th>공지/할일</th>' +
+    '</tr></thead><tbody>';
+  rows.forEach(function(r) {
+    html += '<tr><td>' + esc(r.actor || '-') + '</td><td>' + esc(String(r.total || 0)) + '</td><td>' + esc(String(r.contact || 0)) + '</td><td>' + esc(String(r.support || 0)) + '</td><td>' + esc(String(r.send || 0)) + '</td><td>' + esc(String(r.edit || 0)) + '</td><td>' + esc(String(r.contract || 0)) + '</td><td>' + esc(String((r.notice || 0) + (r.todo || 0))) + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  area.innerHTML = html;
+}
+
+function renderActivityLogTableP110_(rows) {
+  const area = document.getElementById('activityLogResultArea');
+  if (!area) return;
+  rows = (rows || []).slice();
+  rows.sort(function(a, b) {
+    const key = activityLogStateP110.sortKey || 'atText';
+    const av = String(a[key] || '').toLowerCase();
+    const bv = String(b[key] || '').toLowerCase();
+    const cmp = av.localeCompare(bv, 'ko');
+    return activityLogStateP110.sortDir === 'asc' ? cmp : -cmp;
+  });
+
+  if (!rows.length) {
+    area.innerHTML = '<div class="loading">조회된 작업로그가 없습니다.</div>';
+    return;
+  }
+  let html = '<div class="activity-log-table-wrap"><table class="activity-log-table"><thead><tr>' +
+    renderActivityLogThP110_('date', '일자') +
+    renderActivityLogThP110_('time', '시각') +
+    renderActivityLogThP110_('actorName', '사용자') +
+    renderActivityLogThP110_('actionType', '작업구분') +
+    renderActivityLogThP110_('screen', '화면') +
+    renderActivityLogThP110_('customerNo', '고객번호') +
+    renderActivityLogThP110_('company', '회사명') +
+    renderActivityLogThP110_('summary', '작업내용') +
+    '</tr></thead><tbody>';
+  rows.forEach(function(r) {
+    html += '<tr>' +
+      '<td>' + esc(r.date || '-') + '</td>' +
+      '<td>' + esc(r.time || '-') + '</td>' +
+      '<td><b>' + esc(r.actorName || '-') + '</b><div class="activity-log-subcell">' + esc(r.role || '') + '</div></td>' +
+      '<td><span class="activity-log-type-chip">' + esc(r.actionType || '-') + '</span></td>' +
+      '<td>' + esc(r.screen || '-') + '</td>' +
+      '<td>' + esc(r.customerNo || '-') + '</td>' +
+      '<td>' + esc(r.company || '-') + '</td>' +
+      '<td class="activity-log-summary-cell">' + esc(r.summary || '-') + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table></div>';
+  area.innerHTML = html;
+}
+
+function renderActivityLogThP110_(key, label) {
+  const mark = activityLogStateP110.sortKey === key ? (activityLogStateP110.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  return '<th onclick="sortActivityLogP110_(\'' + escAttr(key) + '\')">' + esc(label + mark) + '</th>';
+}
+
+function sortActivityLogP110_(key) {
+  if (activityLogStateP110.sortKey === key) {
+    activityLogStateP110.sortDir = activityLogStateP110.sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    activityLogStateP110.sortKey = key;
+    activityLogStateP110.sortDir = 'asc';
+  }
+  renderActivityLogTableP110_((activityLogStateP110.data && activityLogStateP110.data.rows) || []);
+}
+
+function getActivityTodayP110_() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return yyyy + '-' + mm + '-' + dd;
+}
+</script>
