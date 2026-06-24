@@ -98,8 +98,10 @@ function searchCustomersPaged(keyword, page, pageSize, sortMode, scopeMode) {
   page = Math.max(0, Number(page) || 0);
   pageSize = Math.max(1, Math.min(100, Number(pageSize) || PORTAL_CONFIG.SEARCH_PAGE_SIZE || 20));
 
+  const permForScope = getPortalCurrentPermission_();
+  const effectiveScopeMode = normalizeCustomerSearchScopeModeP04_(scopeMode, permForScope);
   const indexData = getCustomerSearchIndexData();
-  const rows = filterCustomerIndexRowsByPermissionAndScopeP04_(indexData.rows || [], scopeMode);
+  const rows = filterCustomerIndexRowsByPermissionAndScopeP04_(indexData.rows || [], effectiveScopeMode, permForScope);
   const filtered = sortCustomerIndexRowsV67_(filterCustomerIndexRows_(rows, keyword), sortMode || 'customerNoDigitsDesc');
   const total = filtered.length;
   const start = page * pageSize;
@@ -116,7 +118,7 @@ function searchCustomersPaged(keyword, page, pageSize, sortMode, scopeMode) {
     hasNext: start + pageSize < total,
     keyword: keyword,
     sortMode: sortMode || 'customerNoDigitsDesc',
-    scopeMode: normalizeCustomerSearchScopeModeP04_(scopeMode),
+    scopeMode: effectiveScopeMode,
     source: '검색인덱스_DB',
     version: indexData.version || '',
     builtAt: indexData.builtAt || ''
@@ -124,8 +126,17 @@ function searchCustomersPaged(keyword, page, pageSize, sortMode, scopeMode) {
 }
 
 
-function normalizeCustomerSearchScopeModeP04_(scopeMode) {
-  return String(scopeMode || '').trim().toUpperCase() === 'OWN' ? 'OWN' : 'ALL';
+function normalizeCustomerSearchScopeModeP04_(scopeMode, perm) {
+  const raw = String(scopeMode || '').trim().toUpperCase();
+  if (raw === 'OWN' || raw === 'ALL') return raw;
+
+  // P2-5: 클라이언트가 scope를 누락하거나 오래된 코드에서 호출해도
+  // SALES 계정의 기본 조회 범위는 전체가 아니라 반드시 OWN입니다.
+  perm = perm || getPortalCurrentPermission_();
+  const defaultScope = String(perm && perm.defaultScope || '').trim().toUpperCase();
+  if (defaultScope === 'OWN' || defaultScope === 'ALL') return defaultScope;
+  const level = String(perm && perm.level || '').trim().toUpperCase();
+  return level === 'SALES' ? 'OWN' : 'ALL';
 }
 
 function isCustomerIndexRowOwnedByPermissionP04_(row, perm) {
@@ -139,11 +150,11 @@ function isCustomerIndexRowOwnedByPermissionP04_(row, perm) {
   });
 }
 
-function filterCustomerIndexRowsByPermissionAndScopeP04_(rows, scopeMode) {
+function filterCustomerIndexRowsByPermissionAndScopeP04_(rows, scopeMode, perm) {
   rows = filterPortalCustomerRowsByPermission_(Array.isArray(rows) ? rows : []);
-  const perm = getPortalCurrentPermission_();
+  perm = perm || getPortalCurrentPermission_();
   const canAll = !!(perm && (perm.canViewAllCustomers || perm.isAdmin));
-  const scope = canAll ? normalizeCustomerSearchScopeModeP04_(scopeMode) : 'OWN';
+  const scope = canAll ? normalizeCustomerSearchScopeModeP04_(scopeMode, perm) : 'OWN';
   if (scope !== 'OWN') return rows;
   return rows.filter(function(row) { return isCustomerIndexRowOwnedByPermissionP04_(row, perm); });
 }

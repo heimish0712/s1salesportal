@@ -35,10 +35,19 @@ function getEffectiveCustomerScopeP04_() {
   const p = getPortalPermission_ ? getPortalPermission_() : null;
   if (!p || p.active === false) return 'OWN';
   if (!getCustomerScopeCanViewAllP04_()) return 'OWN';
+
+  // P2-5: SALES 계정은 전체고객열람 권한이 있어도 기본 화면은 반드시 '나의 고객'입니다.
+  // 명시적으로 전체 고객 버튼을 누른 경우에만 ALL을 허용합니다.
   const current = String(customerScopeModeP04 || '').toUpperCase();
   if (current === 'ALL' || current === 'OWN') return current;
+
   const defaultScope = String(p.defaultScope || '').toUpperCase();
-  return defaultScope === 'OWN' ? 'OWN' : 'ALL';
+  if (defaultScope === 'OWN' || defaultScope === 'ALL') return defaultScope;
+
+  const level = String(p.level || '').toUpperCase();
+  if (level === 'SALES') return 'OWN';
+  if (p.canUseAdminHome || p.isAdmin || level === 'ADMIN') return 'ALL';
+  return 'OWN';
 }
 
 function getCustomerScopeForRequestP04_() {
@@ -158,8 +167,31 @@ function searchCustomerPage(page) {
   }, showSearchError);
 }
 
-function renderResults(response, fromCache) {
+function enforceCustomerScopeOnPagedResponseP205_(response) {
   const res = normalizePagedResponse_(response);
+  const scope = getEffectiveCustomerScopeP04_();
+  if (scope !== 'OWN') return res;
+
+  const beforeRows = Array.isArray(res.rows) ? res.rows : [];
+  const afterRows = filterCustomerRowsByCustomerScopeP04_(beforeRows);
+  if (afterRows.length === beforeRows.length) return res;
+
+  // 서버/오래된 last response/즐겨찾기 repaint가 전체 고객 rows를 들고 있어도
+  // 나의 고객 화면에는 절대 타 담당자 고객을 렌더링하지 않습니다.
+  const next = Object.assign({}, res, {
+    rows: afterRows,
+    total: afterRows.length,
+    start: afterRows.length ? 0 : 0,
+    end: afterRows.length,
+    hasPrev: false,
+    hasNext: false,
+    scopeFilteredP205: true
+  });
+  return next;
+}
+
+function renderResults(response, fromCache) {
+  const res = enforceCustomerScopeOnPagedResponseP205_(response);
   lastCustomerResultResponse = res;
   lastCustomerResultFromCache = !!fromCache;
   updateCustomerTopPager_(res, fromCache);
@@ -872,10 +904,20 @@ function applyPendingSaveToIncomingDetail_(detail) {
 }
 
 function repaintCustomerResultsIfVisible_() {
-  // PATCH J: 기존에는 존재하지 않는 #customerResultBody를 검사해서 저장 후 리스트 repaint가 실행되지 않았습니다.
-  // 현재 고객검색 화면 구조는 resultArea.innerHTML 전체를 renderResults()로 교체하므로,
-  // lastCustomerResultResponse가 있으면 즉시 다시 그립니다.
+  // P2-5: 즐겨찾기 토글/비동기 응답으로 repaint할 때 오래된 ALL 응답을 다시 그리면
+  // '나의 고객' 화면에 타 영업담당자 고객이 섞일 수 있습니다.
+  // 현재 scope 기준으로 검색인덱스에서 페이지를 다시 만든 뒤 렌더링하고,
+  // fallback도 scope 방어 필터를 통과시킵니다.
   try {
+    const visible = !!(document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active'));
+    if (!visible) return;
+    if (typeof buildCustomerPageFromIndex_ === 'function' && customerSearchState) {
+      const fresh = buildCustomerPageFromIndex_(customerSearchState.keyword || '', customerSearchState.page || 0);
+      if (fresh && typeof renderResults === 'function') {
+        renderResults(fresh, true);
+        return;
+      }
+    }
     if (lastCustomerResultResponse && typeof renderResults === 'function') {
       renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
     }
