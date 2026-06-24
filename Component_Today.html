@@ -249,11 +249,15 @@ function renderTodaySummaryV111_(tasks) {
   const done = tasks.filter(function(t) { return t && t.done && String(t.content || '').trim(); });
   const due = active.filter(function(t) { return t.dueAt; });
   const customer = active.filter(function(t) { return t.customerNo || t.rowNo || t.company; });
+  const now = Date.now();
+  const overdue = due.filter(function(t) { const ms = todayTaskDateMsP122_(t.dueAt); return ms && ms < now; }).length;
+  const tagCount = Object.keys(buildTodayTagCountMapP122_(tasks)).length;
   area.innerHTML = '' +
-    '<div class="today-summary-card today-summary-main"><div class="today-summary-label">남은 할 일</div><div class="today-summary-value">' + active.length + '</div></div>' +
-    '<div class="today-summary-card"><div class="today-summary-label">고객 관련</div><div class="today-summary-value">' + customer.length + '</div></div>' +
-    '<div class="today-summary-card"><div class="today-summary-label">시간 지정</div><div class="today-summary-value">' + due.length + '</div></div>' +
-    '<div class="today-summary-card"><div class="today-summary-label">완료</div><div class="today-summary-value">' + done.length + '</div></div>';
+    '<div class="today-summary-card today-summary-main"><div class="today-summary-label">남은 할 일</div><div class="today-summary-value">' + active.length + '</div><div class="today-summary-sub">완료 체크 시 자동 제외</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">고객 연결</div><div class="today-summary-value">' + customer.length + '</div><div class="today-summary-sub">상세/발송 바로가기</div></div>' +
+    '<div class="today-summary-card ' + (overdue ? 'today-summary-warn' : '') + '"><div class="today-summary-label">시간 지정</div><div class="today-summary-value">' + due.length + '</div><div class="today-summary-sub">' + (overdue ? '지연 ' + overdue + '건' : '완료예정시간 있음') + '</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">태그 분류</div><div class="today-summary-value">' + tagCount + '</div><div class="today-summary-sub">전화·메일·견적 등</div></div>' +
+    '<div class="today-summary-card"><div class="today-summary-label">완료</div><div class="today-summary-value">' + done.length + '</div><div class="today-summary-sub">선택일 처리 완료</div></div>';
 }
 
 function setTodayTaskFilterP117_(filter) {
@@ -280,21 +284,76 @@ function renderTodayTasksP117_(tasks) {
   todayTagOptionsP118_ = mergeTodayTagOptionsP118_(todayTagOptionsP118_, tasks);
   const visibleCount = tasks.filter(getTodayTaskVisibleP117_).length;
   area.innerHTML = '' +
-    '<div class="today-task-filterbar">' + renderTodayFilterButtonP117_('open', '미완료') + renderTodayFilterButtonP117_('all', '전체') + renderTodayFilterButtonP117_('done', '완료') + renderTodayTagFilterButtonsP118_() + '</div>' +
-    '<div class="today-task-list" id="todayTodoList">' + tasks.map(renderTodayTodoRow_).join('') + '</div>' +
-    (visibleCount ? '' : '<div class="today-empty-state">해당 조건의 할 일이 없습니다.</div>');
+    '<div class="today-workbench-p122">' +
+      '<div class="today-filterbar-wrap-p122">' +
+        '<div class="today-filter-title-p122"><span>빠른 조회</span><em>' + esc(getTodayFilterLabelP122_()) + '</em></div>' +
+        '<div class="today-task-filterbar">' + renderTodayFilterButtonP117_('open', '미완료', countTodayTasksForFilterP122_(tasks, 'open')) + renderTodayFilterButtonP117_('all', '전체', countTodayTasksForFilterP122_(tasks, 'all')) + renderTodayFilterButtonP117_('done', '완료', countTodayTasksForFilterP122_(tasks, 'done')) + renderTodayTagFilterButtonsP118_() + '</div>' +
+      '</div>' +
+      '<div class="today-list-shell-p122">' +
+        '<div class="today-list-head-p122"><span>완료</span><span>태그 / 고객</span><span>작성</span><span>할 일</span><span>처리내용</span><span>예정/완료시간</span><span></span></div>' +
+        '<div class="today-task-list" id="todayTodoList">' + tasks.map(renderTodayTodoRow_).join('') + '</div>' +
+        (visibleCount ? '' : '<div class="today-empty-state"><b>해당 조건의 할 일이 없습니다.</b><span>다른 태그를 누르거나, + 할 일/다음액션 추가를 눌러 새 작업을 등록하세요.</span></div>') +
+      '</div>' +
+    '</div>';
 }
 
-function renderTodayFilterButtonP117_(key, label) {
-  return '<button type="button" class="today-filter-chip ' + (todayTaskFilterP117_ === key ? 'active' : '') + '" onclick="setTodayTaskFilterP117_(\'' + escJsP118_(key) + '\')">' + esc(label) + '</button>';
+function renderTodayFilterButtonP117_(key, label, count) {
+  const active = todayTaskFilterP117_ === key ? ' active' : '';
+  const badge = (typeof count === 'number') ? '<span class="today-filter-count-p122">' + count + '</span>' : '';
+  return '<button type="button" class="today-filter-chip' + active + '" onclick="setTodayTaskFilterP117_(\'' + escJsP118_(key) + '\')"><span>' + esc(label) + '</span>' + badge + '</button>';
 }
 
 function renderTodayTagFilterButtonsP118_() {
-  const usedTags = [];
-  const tasks = (todayCurrentData && Array.isArray(todayCurrentData.tasks)) ? todayCurrentData.tasks : [];
-  tasks.forEach(function(t) { normalizeTodayTagsP118_(t && t.tags).forEach(function(tag) { if (usedTags.indexOf(tag) < 0) usedTags.push(tag); }); });
+  const tasks = (todayCurrentData && Array.isArray(todayCurrentData.tasks)) ? todayCurrentData.tasks.map(normalizeTodayTaskP117_) : [];
+  const counts = buildTodayTagCountMapP122_(tasks);
   const all = mergeTodayTagOptionsP118_(todayTagOptionsP118_, tasks);
-  return all.slice(0, 18).map(function(tag) { return renderTodayFilterButtonP117_('tag:' + tag, tag); }).join('');
+  return all.slice(0, 18).map(function(tag) { return renderTodayFilterButtonP117_('tag:' + tag, tag, counts[tag] || 0); }).join('');
+}
+
+
+function countTodayTasksForFilterP122_(tasks, filter) {
+  const prev = todayTaskFilterP117_;
+  todayTaskFilterP117_ = filter;
+  const count = (Array.isArray(tasks) ? tasks : []).filter(getTodayTaskVisibleP117_).length;
+  todayTaskFilterP117_ = prev;
+  return count;
+}
+
+function buildTodayTagCountMapP122_(tasks) {
+  const counts = {};
+  (Array.isArray(tasks) ? tasks : []).forEach(function(t) {
+    t = normalizeTodayTaskP117_(t || {});
+    if (t.done || !String(t.content || '').trim()) return;
+    normalizeTodayTagsP118_(t.tags).forEach(function(tag) { counts[tag] = (counts[tag] || 0) + 1; });
+  });
+  return counts;
+}
+
+function getTodayFilterLabelP122_() {
+  const f = todayTaskFilterP117_ || 'open';
+  if (f === 'open') return '미완료 할 일만 표시 중';
+  if (f === 'all') return '전체 할 일 표시 중';
+  if (f === 'done') return '완료한 일 표시 중';
+  if (String(f).indexOf('tag:') === 0) return String(f).slice(4) + ' 태그만 표시 중';
+  return '오늘 할 일 표시 중';
+}
+
+function todayTaskDateMsP122_(value) {
+  const v = toTodayLocalDateTimeValueP118_(value || '');
+  if (!v) return 0;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function getTodayDueStateClassP122_(task) {
+  task = normalizeTodayTaskP117_(task || {});
+  if (task.done || !task.dueAt) return '';
+  const ms = todayTaskDateMsP122_(task.dueAt);
+  if (!ms) return '';
+  const now = Date.now();
+  if (ms < now) return ' today-task-overdue-p122 ';
+  if (ms - now <= 1000 * 60 * 60 * 3) return ' today-task-soon-p122 ';
+  return '';
 }
 
 function renderTodayTodos(todos) { renderTodayTasksP117_(todos); }
@@ -308,35 +367,42 @@ function renderTodayTodoRow_(todo, idx) {
   todo = normalizeTodayTaskP117_(todo || {});
   const visible = getTodayTaskVisibleP117_(todo);
   const rowNo = Number(todo.rowNo) || 0;
+  const dueClass = getTodayDueStateClassP122_(todo);
   let actions = '';
   if (rowNo) {
     actions += '<button class="secondary" type="button" onclick="openDetail(' + rowNo + ')">상세</button>';
     actions += '<button type="button" onclick="openSendForCustomer(' + rowNo + ')">발송</button>';
   }
   const tagHtml = renderTodaySelectedTagsP118_(todo.tags) + renderTodayTagSelectP119_(todo.tags);
-  return '<div class="today-task-row today-task-row-compact ' + (todo.done ? 'done ' : '') + (!visible ? 'today-task-hidden ' : '') + '" ' +
+  const createdTime = formatTodayTimeOnlyP119_(todo.createdAt || todayNowLocalDateTimeP118_()) || '--:--';
+  const customerLine = (todo.company || todo.customerNo || todo.author || actions) ?
+    '<div class="today-customer-line-p122">' +
+      (todo.company ? '<span class="today-task-company">' + esc(todo.company) + '</span>' : '') +
+      (todo.customerNo ? '<span class="today-task-meta-inline">' + esc(todo.customerNo) + '</span>' : '') +
+      (todo.author ? '<span class="today-task-meta-inline">' + esc(todo.author) + '</span>' : '') +
+      (actions ? '<span class="today-task-actions today-task-actions-inline">' + actions + '</span>' : '') +
+    '</div>' : '';
+  return '<div class="today-task-row today-task-row-compact today-task-row-p122 ' + (todo.done ? 'done ' : '') + dueClass + (!visible ? 'today-task-hidden ' : '') + '" ' +
       'data-id="' + escAttrP117_(todo.id) + '" data-category="' + escAttrP117_(todo.category) + '" data-source-type="' + escAttrP117_(todo.sourceType) + '" data-source-id="' + escAttrP117_(todo.sourceId) + '" ' +
       'data-customer-no="' + escAttrP117_(todo.customerNo) + '" data-company="' + escAttrP117_(todo.company) + '" data-row-no="' + escAttrP117_(todo.rowNo) + '" data-time-text="' + escAttrP117_(todo.timeText) + '" data-priority="' + escAttrP117_(todo.priority) + '">' +
     '<label class="today-task-check"><input type="checkbox" class="todayTodoDone" onchange="onTodayTaskDoneChangeP117_(this)" ' + (todo.done ? 'checked' : '') + '><span></span></label>' +
     '<div class="today-task-body">' +
-      '<div class="today-task-topline today-task-topline-p119">' +
+      '<div class="today-task-topline today-task-topline-p119 today-task-topline-p122">' +
         '<div class="today-tag-box today-tag-box-inline" data-tags="' + escAttrP117_(todo.tags.join(',')) + '">' + tagHtml + '</div>' +
-        (todo.company ? '<span class="today-task-company">' + esc(todo.company) + '</span>' : '') +
-        (todo.customerNo ? '<span class="today-task-meta-inline">고객번호 ' + esc(todo.customerNo) + '</span>' : '') +
-        (todo.author ? '<span class="today-task-meta-inline">작성자 ' + esc(todo.author) + '</span>' : '') +
-        (actions ? '<span class="today-task-actions today-task-actions-inline">' + actions + '</span>' : '') +
+        customerLine +
       '</div>' +
-      '<div class="today-task-line-p119">' +
-        '<label class="today-created-wrap"><span>작성</span><input class="todayCreatedTime" type="text" value="' + escAttrP117_(formatTodayTimeOnlyP119_(todo.createdAt || todayNowLocalDateTimeP118_())) + '" disabled><input class="todayCreatedAt" type="hidden" value="' + escAttrP117_(todo.createdAt || todayNowLocalDateTimeP118_()) + '"></label>' +
-        '<label class="today-content-wrap"><span>할 일</span><input class="todayTodoText" placeholder="할 일을 입력하세요." value="' + escAttrP117_(todo.content || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
-        '<label class="today-detail-wrap"><span>처리내용</span><input class="todayTodoDetail" placeholder="처리내용" value="' + escAttrP117_(todo.detail || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
-        '<label class="today-due-wrap ' + (todo.done ? 'hidden' : '') + '"><span>완료예정시간</span><input class="todayDueAt" type="datetime-local" value="' + escAttrP117_(todo.dueAt || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
-        '<label class="today-completed-wrap ' + (todo.done ? '' : 'hidden') + '"><span>완료시간</span><input class="todayCompletedAt" type="datetime-local" value="' + escAttrP117_(todo.completedAt || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
+      '<div class="today-task-line-p119 today-task-line-p122">' +
+        '<label class="today-created-wrap"><span>작성</span><input class="todayCreatedTime" type="text" value="' + escAttrP117_(createdTime) + '" disabled><input class="todayCreatedAt" type="hidden" value="' + escAttrP117_(todo.createdAt || todayNowLocalDateTimeP118_()) + '"></label>' +
+        '<label class="today-content-wrap"><span>할 일</span><input class="todayTodoText" placeholder="예: 14시 전 견적 재발송" value="' + escAttrP117_(todo.content || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
+        '<label class="today-detail-wrap"><span>처리</span><input class="todayTodoDetail" placeholder="처리내용" value="' + escAttrP117_(todo.detail || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
+        '<label class="today-due-wrap ' + (todo.done ? 'hidden' : '') + '"><span>예정</span><input class="todayDueAt" type="datetime-local" value="' + escAttrP117_(todo.dueAt || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
+        '<label class="today-completed-wrap ' + (todo.done ? '' : 'hidden') + '"><span>완료</span><input class="todayCompletedAt" type="datetime-local" value="' + escAttrP117_(todo.completedAt || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
       '</div>' +
     '</div>' +
-    '<button class="today-todo-remove" type="button" onclick="removeTodayTodoRow(this)">×</button>' +
+    '<button class="today-todo-remove" type="button" title="삭제" onclick="removeTodayTodoRow(this)">×</button>' +
   '</div>';
 }
+
 
 function renderTodaySelectedTagsP118_(tags) {
   tags = normalizeTodayTagsP118_(tags);
@@ -409,6 +475,12 @@ function onTodayTaskDoneChangeP117_(checkbox) {
   const completed = row.querySelector('.todayCompletedAt');
   if (done && completed && !completed.value) completed.value = todayNowLocalDateTimeP118_();
   if (!done && completed) completed.value = '';
+  row.classList.remove('today-task-overdue-p122', 'today-task-soon-p122');
+  if (!done) {
+    const dueState = getTodayDueStateClassP122_(collectTodayTaskFromRowP120_(row));
+    if (dueState.indexOf('today-task-overdue-p122') >= 0) row.classList.add('today-task-overdue-p122');
+    if (dueState.indexOf('today-task-soon-p122') >= 0) row.classList.add('today-task-soon-p122');
+  }
   touchTodayLocalDraftP120_();
   const tasks = collectTodayTodos_();
   todayCurrentData = saveTodayCacheV57_(Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks, tagOptions: todayTagOptionsP118_ }));
