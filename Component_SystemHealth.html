@@ -1,0 +1,129 @@
+<script>
+let portalSystemHealthLastP208 = null;
+let portalSystemHealthLoadingP208 = false;
+
+function loadSystemHealthPageP208(force) {
+  const area = document.getElementById('systemHealthAreaP208');
+  if (!area) return;
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  if (!(p && p.canUseAdminHome)) {
+    area.innerHTML = '<div class="system-health-denied-p208">시스템 점검은 관리자/서무 권한에서만 사용할 수 있습니다.</div>';
+    return;
+  }
+  if (portalSystemHealthLoadingP208 && !force) return;
+  portalSystemHealthLoadingP208 = true;
+  area.innerHTML = '<div class="loading">시스템 상태를 점검하는 중입니다...</div>';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      portalSystemHealthLoadingP208 = false;
+      portalSystemHealthLastP208 = res || null;
+      renderSystemHealthP208_(res);
+    })
+    .withFailureHandler(function(err) {
+      portalSystemHealthLoadingP208 = false;
+      area.innerHTML = '<div class="system-health-denied-p208">점검 정보를 불러오지 못했습니다.<br>' + escapeHtml_(getSystemHealthErrorP208_(err, '시스템 점검 정보를 불러오지 못했습니다.')) + '</div>';
+    })
+    .getPortalSystemHealthP208();
+}
+
+function renderSystemHealthP208_(res) {
+  const area = document.getElementById('systemHealthAreaP208');
+  if (!area) return;
+  if (!res || !res.ok) {
+    area.innerHTML = '<div class="system-health-denied-p208">점검 결과가 없습니다.</div>';
+    return;
+  }
+  const summary = res.summary || {};
+  const checks = Array.isArray(res.checks) ? res.checks : [];
+  const groups = {};
+  checks.forEach(function(c) {
+    const g = c.group || '기타';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(c);
+  });
+
+  let html = '';
+  html += '<div class="system-health-toolbar-p208">';
+  html += '<div><div class="system-health-title-p208">시스템 점검</div><div class="system-health-sub-p208">동시작업, 마스터 동기화, 검색인덱스, DB 상태를 한 번에 확인합니다.</div></div>';
+  html += '<div class="system-health-actions-p208">';
+  html += '<button class="secondary" onclick="loadSystemHealthPageP208(true)">새로고침</button>';
+  html += '<button class="secondary" onclick="installSystemHealthTriggerP208_()">마스터 트리거 설치/재설치</button>';
+  html += '<button class="danger-light-p208" onclick="repairBlankMasterMetaP208_()">빈 행 수정메타 정리</button>';
+  html += '</div></div>';
+
+  html += '<div class="system-health-summary-p208">';
+  html += renderSystemHealthSummaryCardP208_('정상', summary.ok || 0, 'ok');
+  html += renderSystemHealthSummaryCardP208_('주의', summary.warn || 0, 'warn');
+  html += renderSystemHealthSummaryCardP208_('위험', summary.danger || 0, 'danger');
+  html += renderSystemHealthSummaryCardP208_('정보', summary.info || 0, 'info');
+  html += '</div>';
+
+  html += '<div class="system-health-meta-p208">점검시각: ' + escapeHtml_(res.checkedAt || '-') + ' · 소요 ' + escapeHtml_(String(res.elapsedMs || 0)) + 'ms</div>';
+
+  Object.keys(groups).forEach(function(group) {
+    html += '<div class="system-health-group-p208">';
+    html += '<div class="system-health-group-title-p208">' + escapeHtml_(group) + '</div>';
+    html += '<div class="system-health-checks-p208">';
+    groups[group].forEach(function(c) {
+      html += '<div class="system-health-check-p208 is-' + escapeHtml_(c.status || 'info') + '">';
+      html += '<div class="system-health-check-status-p208">' + renderSystemHealthStatusTextP208_(c.status) + '</div>';
+      html += '<div class="system-health-check-main-p208"><div class="system-health-check-name-p208">' + escapeHtml_(c.name || '') + '</div><div class="system-health-check-message-p208">' + escapeHtml_(c.message || '') + '</div>';
+      if (c.detail) html += '<pre class="system-health-detail-p208">' + escapeHtml_(String(c.detail || '')) + '</pre>';
+      html += '</div></div>';
+    });
+    html += '</div></div>';
+  });
+
+  area.innerHTML = html;
+}
+
+function renderSystemHealthSummaryCardP208_(label, value, type) {
+  return '<div class="system-health-summary-card-p208 is-' + type + '"><div>' + escapeHtml_(label) + '</div><strong>' + escapeHtml_(String(value)) + '</strong></div>';
+}
+
+function renderSystemHealthStatusTextP208_(status) {
+  status = String(status || 'info').toLowerCase();
+  if (status === 'ok') return '정상';
+  if (status === 'warn') return '주의';
+  if (status === 'danger') return '위험';
+  return '정보';
+}
+
+function repairBlankMasterMetaP208_() {
+  if (!confirm('빈 행에 잘못 찍힌 수정일시/수정버전/최종수정자만 정리합니다. 실데이터가 있는 행은 건드리지 않습니다. 실행할까요?')) return;
+  const area = document.getElementById('systemHealthAreaP208');
+  if (area) area.classList.add('is-saving-p208');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (area) area.classList.remove('is-saving-p208');
+      toast('빈 행 수정메타 정리 완료: ' + ((res && res.cleared) || 0) + '행');
+      loadSystemHealthPageP208(true);
+    })
+    .withFailureHandler(function(err) {
+      if (area) area.classList.remove('is-saving-p208');
+      toast(getSystemHealthErrorP208_(err, '빈 행 수정메타를 정리하지 못했습니다.'));
+    })
+    .repairPortalBlankMasterMetaP208();
+}
+
+function installSystemHealthTriggerP208_() {
+  if (!confirm('마스터시트 수정 감지 트리거를 설치/재설치합니다. 실행할까요?')) return;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      toast((res && res.message) || '마스터 트리거를 설치했습니다.');
+      loadSystemHealthPageP208(true);
+    })
+    .withFailureHandler(function(err) {
+      toast(getSystemHealthErrorP208_(err, '마스터 트리거를 설치하지 못했습니다.'));
+    })
+    .installPortalMasterSyncTriggerFromHealthP208();
+}
+function getSystemHealthErrorP208_(err, fallback) {
+  let msg = '';
+  try { msg = typeof getErrorMessage_ === 'function' ? getErrorMessage_(err) : ''; } catch (e) {}
+  if (!msg) msg = err && err.message ? err.message : String(err || '');
+  msg = String(msg || '').replace(/Exception:|ReferenceError:|TypeError:|LockService|ScriptError/gi, '').trim();
+  return msg || fallback || '처리하지 못했습니다.';
+}
+
+</script>

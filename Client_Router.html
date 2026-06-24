@@ -40,7 +40,7 @@ function switchPage(page, skipSearch) {
   if (page === 'dashboard') page = 'home';
 
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.getAttribute('data-page') === page));
-  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
+  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('active');
   });
@@ -116,6 +116,14 @@ function switchPage(page, skipSearch) {
     pageTitle.textContent = '작업로그';
     pageSubtitle.textContent = '개인은 본인 작업을, 관리자/서무는 담당자별 작업 로그와 비교 통계를 확인합니다.';
     loadActivityLogPage(false);
+    return;
+  }
+
+  if (page === 'systemHealth') {
+    document.getElementById('systemHealthSection').classList.add('active');
+    pageTitle.textContent = '시스템 점검';
+    pageSubtitle.textContent = '동시작업, 마스터 동기화, 검색인덱스, DB 상태를 점검합니다.';
+    loadSystemHealthPageP208(false);
     return;
   }
 

@@ -3885,9 +3885,9 @@ body.portal-font-zoom-active .font-scale-control {
   cursor: wait;
   filter: grayscale(0.25);
 }
-</style>
 
-<style>
+
+
 /* P2-2: 마스터시트 외부 변경 감지 배너 */
 .portal-data-refresh-banner {
   align-items: center;
@@ -3917,9 +3917,9 @@ body.portal-font-zoom-active .font-scale-control {
   background: #dbeafe;
   color: #1e40af;
 }
-</style>
 
-<style>
+
+
 /* P2-3 오늘 할 일 행 단위 저장 상태 표시 */
 .today-task-row.is-saving-p203 {
   box-shadow: inset 3px 0 0 #93c5fd;
@@ -3942,9 +3942,9 @@ body.portal-font-zoom-active .font-scale-control {
 .today-task-row.is-saving-p203 .today-row-save-state-p203 { color: #2563eb; }
 .today-task-row.is-saved-p203 .today-row-save-state-p203 { color: #16a34a; }
 .today-task-row.is-error-p203 .today-row-save-state-p203 { color: #dc2626; font-weight: 700; }
-</style>
 
-<style>
+
+
 /* PATCH P2-6: 중복 저장/진행 중 상태 */
 button[disabled], .portal-btn-pending {
   cursor: wait !important;
@@ -3959,5 +3959,72 @@ button[disabled], .portal-btn-pending {
   font-size: 12px;
   color: #dc2626;
   font-weight: 700;
+}
+/* PATCH P2-8: 시스템 점검 화면 */
+.system-health-nav-p208 { display: none; }
+.portal-can-system-health .system-health-nav-p208 { display: flex; }
+.system-health-section-p208 { padding: 0; }
+.system-health-toolbar-p208 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px;
+  border-bottom: 1px solid #e5e7eb;
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+}
+.system-health-title-p208 { font-size: 24px; font-weight: 900; color: #0f172a; }
+.system-health-sub-p208 { margin-top: 6px; color: #64748b; font-size: 13px; }
+.system-health-actions-p208 { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.danger-light-p208 {
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  color: #b91c1c;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.system-health-summary-p208 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  padding: 18px 24px 6px;
+}
+.system-health-summary-card-p208 {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 15px 16px;
+  color: #475569;
+  font-size: 13px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+}
+.system-health-summary-card-p208 strong { display: block; margin-top: 7px; font-size: 28px; color: #0f172a; }
+.system-health-summary-card-p208.is-ok { border-color: #bbf7d0; background: #f0fdf4; }
+.system-health-summary-card-p208.is-warn { border-color: #fde68a; background: #fffbeb; }
+.system-health-summary-card-p208.is-danger { border-color: #fecaca; background: #fff1f2; }
+.system-health-summary-card-p208.is-info { border-color: #bfdbfe; background: #eff6ff; }
+.system-health-meta-p208 { padding: 4px 24px 14px; font-size: 12px; color: #64748b; }
+.system-health-group-p208 { margin: 16px 24px 22px; background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04); }
+.system-health-group-title-p208 { padding: 14px 18px; font-size: 16px; font-weight: 900; background: #f8fafc; border-bottom: 1px solid #e5e7eb; }
+.system-health-checks-p208 { display: grid; gap: 0; }
+.system-health-check-p208 { display: grid; grid-template-columns: 86px 1fr; gap: 14px; padding: 14px 18px; border-bottom: 1px solid #f1f5f9; }
+.system-health-check-p208:last-child { border-bottom: 0; }
+.system-health-check-status-p208 { align-self: start; text-align: center; border-radius: 999px; padding: 6px 8px; font-weight: 900; font-size: 12px; }
+.system-health-check-p208.is-ok .system-health-check-status-p208 { background: #dcfce7; color: #15803d; }
+.system-health-check-p208.is-warn .system-health-check-status-p208 { background: #fef3c7; color: #b45309; }
+.system-health-check-p208.is-danger .system-health-check-status-p208 { background: #fee2e2; color: #b91c1c; }
+.system-health-check-p208.is-info .system-health-check-status-p208 { background: #dbeafe; color: #1d4ed8; }
+.system-health-check-name-p208 { font-weight: 900; color: #111827; margin-bottom: 4px; }
+.system-health-check-message-p208 { color: #334155; line-height: 1.45; }
+.system-health-detail-p208 { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: #f8fafc; color: #475569; white-space: pre-wrap; font-family: Consolas, Monaco, monospace; font-size: 12px; }
+.system-health-denied-p208 { margin: 20px; padding: 28px; border-radius: 16px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-weight: 800; }
+#systemHealthAreaP208.is-saving-p208 { opacity: 0.68; pointer-events: none; }
+@media (max-width: 1100px) {
+  .system-health-toolbar-p208 { align-items: flex-start; flex-direction: column; }
+  .system-health-summary-p208 { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .system-health-check-p208 { grid-template-columns: 1fr; }
+  .system-health-check-status-p208 { width: max-content; }
 }
 </style>

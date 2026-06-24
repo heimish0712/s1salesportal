@@ -18,6 +18,7 @@
       <div class="nav-item" data-page="send" onclick="switchPage('send')"><span class="nav-icon">✉</span><span class="nav-label">견적/자료 발송</span></div>
       <div class="nav-item" data-page="support" onclick="switchPage('support')"><span class="nav-icon">▣</span><span class="nav-label">영업지원 요청</span></div>
       <div class="nav-item" data-page="activityLog" onclick="switchPage('activityLog')"><span class="nav-icon">◷</span><span class="nav-label">작업로그</span></div>
+      <div class="nav-item system-health-nav-p208" data-page="systemHealth" onclick="switchPage('systemHealth')"><span class="nav-icon">⌁</span><span class="nav-label">시스템 점검</span></div>
       <div class="nav-item" data-page="today" onclick="switchPage('today')"><span class="nav-icon">✓</span><span class="nav-label">오늘 할 일</span></div>
       <div class="nav-item" data-page="settings" onclick="switchPage('settings')"><span class="nav-icon">⚙</span><span class="nav-label">설정</span></div>
       <div class="support-work-hint" id="supportWorkHint" style="display:none;"></div>
@@ -180,6 +181,10 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <section class="panel page-section system-health-section-p208" id="systemHealthSection">
+        <div id="systemHealthAreaP208"><div class="loading">시스템 점검 정보를 불러오는 중입니다.</div></div>
       </section>
 
       <section class="panel page-section" id="placeholderSection"><div class="placeholder-panel"><div class="placeholder-title" id="placeholderTitle">준비 중</div><div class="placeholder-desc" id="placeholderDesc">이 메뉴는 다음 단계에서 붙일 예정입니다.</div></div></section>
@@ -373,6 +378,7 @@
   <?!= include('Component_Support'); ?>
   <?!= include('Component_Today'); ?>
   <?!= include('Component_ActivityLog'); ?>
+  <?!= include('Component_SystemHealth'); ?>
   <?!= include('Component_Modals'); ?>
 </body>
 </html>

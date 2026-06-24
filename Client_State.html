@@ -827,11 +827,15 @@ function applyPortalPermissionToUi_() {
   document.body.classList.toggle('portal-can-support-all', !!(p && p.canReadAllSupport));
   document.body.classList.toggle('portal-can-activity-all', !!(p && p.canViewAllActivityLogs));
   document.body.classList.toggle('portal-can-activity-compare', !!(p && p.canCompareActivityLogs));
+  document.body.classList.toggle('portal-can-system-health', !!(p && p.canUseAdminHome));
   document.body.classList.toggle('portal-can-notice-write', !!(p && p.canWriteNotice));
   document.body.classList.toggle('portal-can-notice-delete', !!(p && p.canDeleteNotice));
   document.body.classList.toggle('portal-can-support-complete', !!(p && p.canCompleteSupport));
   document.body.classList.toggle('portal-support-processor', !!(p && p.canCompleteSupport));
   try { if (typeof updateSupportRoleUiV65_ === 'function') updateSupportRoleUiV65_(); } catch (err) {}
+
+  const systemHealthNav = document.querySelector('.system-health-nav-p208');
+  if (systemHealthNav) systemHealthNav.style.display = (p && p.canUseAdminHome) ? '' : 'none';
 
   const noticeActions = document.querySelector('.notice-actions');
   if (noticeActions) noticeActions.style.display = (p && (p.canWriteNotice || p.canDeleteNotice)) ? '' : 'none';
