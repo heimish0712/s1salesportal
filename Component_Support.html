@@ -1,6 +1,18 @@
 <script>
 let supportSortKeyP15 = "";
 let supportSortDirP15 = "asc";
+
+function makePortalSupportClientRequestIdP26_(prefix) {
+  return String(prefix || 'SUP') + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+function normalizePortalSaveErrorMessageP26_(err, fallback) {
+  const msg = getErrorMessage_(err);
+  if (/LockService|lock|잠금|timeout|Timeout|Service invoked too many times/i.test(msg)) return '다른 작업 처리 중입니다. 잠시 후 다시 시도해 주세요.';
+  if (/Exception|ReferenceError|TypeError/i.test(msg)) return fallback || '저장하지 못했습니다. 입력 내용은 유지됩니다.';
+  return msg || fallback || '저장하지 못했습니다. 입력 내용은 유지됩니다.';
+}
+
 function isSupportSectionActiveV57_() {
   const section = document.getElementById('supportSection');
   return !!(section && section.classList && section.classList.contains('active'));
@@ -487,17 +499,20 @@ function saveSupportInlineRequest() {
   if (!payload.customerNo) return toast('고객번호를 입력하고 적용하세요.');
   if (!payload.customerName) return toast('고객번호 적용으로 고객명을 불러와야 합니다.');
   if (!String(payload.requestText || '').trim()) return toast('요청업무를 입력하세요.');
+  payload.clientRequestId = payload.clientRequestId || makePortalSupportClientRequestIdP26_('SUPNEW');
   const btn = document.getElementById('supportInlineSaveBtn');
-  if (btn) { btn.disabled = true; btn.textContent = '저장 중'; }
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중'; btn.dataset.requestId = payload.clientRequestId; }
   google.script.run
     .withSuccessHandler(function(res) {
+      if (btn && btn.dataset.requestId && btn.dataset.requestId !== payload.clientRequestId) return;
+      if (btn) delete btn.dataset.requestId;
       toast((res && res.message) || '영업지원 요청이 저장되었습니다.');
       resetSupportInlineEntry();
       loadSupportPage({ force: true });
     })
     .withFailureHandler(function(err) {
-      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
-      alert('영업지원 요청 저장 실패: ' + getErrorMessage_(err));
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; delete btn.dataset.requestId; }
+      alert('영업지원 요청 저장 실패: ' + normalizePortalSaveErrorMessageP26_(err, '저장하지 못했습니다. 입력 내용은 유지됩니다.'));
     })
     .savePortalSupportRequest(payload);
 }
@@ -873,10 +888,13 @@ function saveSupportRequestFromModal() {
     return alert('영업지원 완료 처리 권한이 없습니다.');
   }
   const payload = collectSupportPayload_();
+  payload.clientRequestId = payload.clientRequestId || makePortalSupportClientRequestIdP26_(payload.rowNo ? 'SUPSAVE' : 'SUPNEW');
   const btn = document.getElementById('supportSaveBtn');
-  if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; btn.dataset.requestId = payload.clientRequestId; }
   google.script.run
     .withSuccessHandler(function(res) {
+      if (btn && btn.dataset.requestId && btn.dataset.requestId !== payload.clientRequestId) return;
+      if (btn) delete btn.dataset.requestId;
       toast((res && res.message) || '저장되었습니다.');
       clearSupportDetailCacheV78_(payload.rowNo);
       try {
@@ -892,8 +910,8 @@ function saveSupportRequestFromModal() {
       loadSupportPage({ force: true });
     })
     .withFailureHandler(function(err) {
-      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
-      alert('영업지원 요청 저장 실패: ' + getErrorMessage_(err));
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; delete btn.dataset.requestId; }
+      alert('영업지원 요청 저장 실패: ' + normalizePortalSaveErrorMessageP26_(err, '저장하지 못했습니다. 입력 내용은 유지됩니다.'));
     })
     .savePortalSupportRequest(payload);
 }

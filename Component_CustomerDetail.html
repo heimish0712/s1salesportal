@@ -1060,11 +1060,14 @@ function saveContactHistoryFromModal() {
   if (!String(content || '').trim() && !contactTagText) return toast('컨택 내용을 입력하거나 태그를 선택하세요.');
 
   const btn = document.getElementById('contactSaveBtn');
-  if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
+  const clientRequestId = 'CH-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; btn.dataset.requestId = clientRequestId; }
 
   google.script.run
     .withSuccessHandler(function(res) {
-      toast('컨택이력이 저장되었습니다.');
+      if (btn && btn.dataset.requestId && btn.dataset.requestId !== clientRequestId) return;
+      toast(res && res.duplicate ? '이미 저장된 컨택이력입니다.' : '컨택이력이 저장되었습니다.');
+      if (btn) delete btn.dataset.requestId;
       closeContactHistoryModal();
       const updatedMemo = res && res.updatedMemo ? res.updatedMemo : '';
       if (updatedMemo) applyCustomerMemoOptimistic_(rowNo, updatedMemo);
@@ -1081,10 +1084,11 @@ function saveContactHistoryFromModal() {
       if (document.getElementById('todaySection') && document.getElementById('todaySection').classList.contains('active')) loadTodayPage();
     })
     .withFailureHandler(function(err) {
-      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
-      alert('컨택이력 저장 실패: ' + getErrorMessage_(err));
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; delete btn.dataset.requestId; }
+      const msg = getErrorMessage_(err);
+      alert('컨택이력 저장 실패: ' + (/LockService|lock|잠금|timeout|Timeout|Exception|ReferenceError|TypeError/i.test(msg) ? '저장하지 못했습니다. 입력 내용은 유지됩니다. 잠시 후 다시 시도해 주세요.' : msg));
     })
-    .addContactHistory({ rowNo: rowNo, customerNo: normalizeCustomerNoForKey_(((getCustomerDetailCache_(rowNo, currentDetailCustomerNo) || currentDetail || {}).customerNo) || currentDetailCustomerNo), roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, author: author, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText });
+    .addContactHistory({ rowNo: rowNo, customerNo: normalizeCustomerNoForKey_(((getCustomerDetailCache_(rowNo, currentDetailCustomerNo) || currentDetail || {}).customerNo) || currentDetailCustomerNo), roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, author: author, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText, clientRequestId: clientRequestId });
 }
 
 

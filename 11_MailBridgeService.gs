@@ -33,7 +33,19 @@ function preparePortalMailFilesForReview(payload) {
     excludedCompareQuoteSheets: payload.excludedCompareQuoteSheets || payload.excludedCompareSheets || null
   };
 
-  const result = callExistingMailAutomationReviewV75_(reviewPayload);
+  const guard = beginPortalIdempotentRequestP26_('MAIL_REVIEW', reviewPayload.runId, { runningTtlMs: 15 * 60 * 1000, doneTtlMs: 60 * 60 * 1000 });
+  if (guard && guard.duplicate) {
+    if (guard.running) throwPortalDuplicateRunningP26_('파일 확인/수정');
+    return { ok: true, duplicate: true, message: '이미 처리된 파일 확인/수정 요청입니다.', company: company, rowNo: rowNo, customerNo: targetCustomerNo, selectedFiles: selectedKeys.map(k => getPortalSendFileLabel_(k)) };
+  }
+  let result = null;
+  try {
+    result = callExistingMailAutomationReviewV75_(reviewPayload);
+    finishPortalIdempotentRequestP26_(guard, { ok: true, rowNo: rowNo, customerNo: targetCustomerNo });
+  } catch (err) {
+    failPortalIdempotentRequestP26_(guard);
+    throw err;
+  }
 
   try {
     appendPortalActivityLog_({
@@ -106,7 +118,28 @@ function sendPortalSingleMail(payload) {
     customerNo: targetCustomerNo
   };
 
-  const result = callExistingMailAutomation_(sendPayload);
+  const guard = beginPortalIdempotentRequestP26_('MAIL_SEND', sendPayload.runId, { runningTtlMs: 20 * 60 * 1000, doneTtlMs: 2 * 60 * 60 * 1000 });
+  if (guard && guard.duplicate) {
+    if (guard.running) throwPortalDuplicateRunningP26_('메일 발송');
+    return {
+      ok: true,
+      duplicate: true,
+      message: '이미 처리된 메일 발송 요청입니다.',
+      company: company,
+      mode: mode,
+      selectedFiles: selectedKeys.map(k => getPortalSendFileLabel_(k)),
+      result: null,
+      indexUpdate: null
+    };
+  }
+  let result = null;
+  try {
+    result = callExistingMailAutomation_(sendPayload);
+    finishPortalIdempotentRequestP26_(guard, { ok: true, rowNo: rowNo, customerNo: targetCustomerNo, mode: mode });
+  } catch (err) {
+    failPortalIdempotentRequestP26_(guard);
+    throw err;
+  }
 
   appendContactHistory_({
     customerNo: targetCustomerNo || getMasterFieldValue_(rowObj, 'customerNo') || rowObj['고객번호'] || '',
@@ -150,6 +183,7 @@ function sendPortalSingleMail(payload) {
     company: company,
     mode: mode,
     selectedFiles: selectedKeys.map(k => getPortalSendFileLabel_(k)),
+    message: (mode === 'TEST' ? '테스트 발송 완료' : '고객 발송 완료'),
     result: result || null,
     indexUpdate: indexUpdate
   };

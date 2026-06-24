@@ -500,6 +500,20 @@ function savePortalSupportRequest(payload) {
   const permForSupport = getPortalCurrentPermission_();
   const sheet = ensurePortalSupportSheet_();
   const headerMap = getPortalSupportHeaderMap_(sheet);
+  const clientRequestId = String(payload.clientRequestId || payload.requestId || '').trim();
+  if (clientRequestId) {
+    const dupSupport = findPortalSupportByClientRequestIdP26_(sheet, headerMap, clientRequestId);
+    if (dupSupport) {
+      return {
+        ok: true,
+        duplicate: true,
+        rowNo: dupSupport.rowNo,
+        receiptNo: dupSupport.receiptNo || '',
+        message: '이미 처리된 영업지원 요청입니다.',
+        item: dupSupport
+      };
+    }
+  }
 
   let rowNo = Number(payload.rowNo) || 0;
   const isNew = !rowNo;
@@ -575,7 +589,8 @@ function savePortalSupportRequest(payload) {
     '완료 시각': completedAt,
     '진행 상태': status,
     [PORTAL_SUPPORT_MEMO_HEADER]: String(payload.masterMemo || '').trim(),
-    '자동발송 확인': autoSendCheckValue
+    '자동발송 확인': autoSendCheckValue,
+    '클라이언트요청ID': clientRequestId
   };
 
   PORTAL_CONFIG.SUPPORT_HEADERS.forEach(function(header) {
@@ -614,6 +629,22 @@ function savePortalSupportRequest(payload) {
     message: isNew ? '영업지원 요청이 접수되었습니다.' : '영업지원 요청이 저장되었습니다.',
     item: getPortalSupportRequestDetail(rowNo).item
   };
+}
+
+
+function findPortalSupportByClientRequestIdP26_(sheet, headerMap, clientRequestId) {
+  clientRequestId = String(clientRequestId || '').trim();
+  if (!clientRequestId) return null;
+  const col = headerMap['클라이언트요청ID'] || ensurePortalSupportColumn_(sheet, headerMap, '클라이언트요청ID');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < PORTAL_CONFIG.SUPPORT_DATA_START_ROW) return null;
+  const values = sheet.getRange(PORTAL_CONFIG.SUPPORT_DATA_START_ROW, 1, lastRow - PORTAL_CONFIG.SUPPORT_DATA_START_ROW + 1, Math.max(sheet.getLastColumn(), PORTAL_CONFIG.SUPPORT_HEADERS.length)).getDisplayValues();
+  for (let i = values.length - 1; i >= 0; i--) {
+    const row = values[i];
+    if (String(row[col - 1] || '').trim() !== clientRequestId) continue;
+    return buildPortalSupportRowObject_(row, PORTAL_CONFIG.SUPPORT_DATA_START_ROW + i, headerMap);
+  }
+  return null;
 }
 
 function ensurePortalSupportSheet_() {
