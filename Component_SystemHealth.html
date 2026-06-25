@@ -49,6 +49,7 @@ function renderSystemHealthP208_(res) {
   html += '<button class="secondary" onclick="loadSystemHealthPageP208(true)">새로고침</button>';
   html += '<button class="secondary" onclick="installSystemHealthTriggerP208_()">마스터 트리거 설치/재설치</button>';
   html += '<button class="danger-light-p208" onclick="repairBlankMasterMetaP208_()">빈 행 수정메타 정리</button>';
+  html += '<button class="secondary" onclick="processChangeQueueP209_()">변경큐 재처리</button>';
   html += '</div></div>';
 
   html += '<div class="system-health-summary-p208">';
@@ -118,6 +119,25 @@ function installSystemHealthTriggerP208_() {
     })
     .installPortalMasterSyncTriggerFromHealthP208();
 }
+
+function processChangeQueueP209_() {
+  if (!confirm('미처리/오류 상태의 마스터 변경큐를 재처리해 검색인덱스_DB를 갱신합니다. 실행할까요?')) return;
+  const area = document.getElementById('systemHealthAreaP208');
+  if (area) area.classList.add('is-saving-p208');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (area) area.classList.remove('is-saving-p208');
+      const msg = '변경큐 재처리 완료: 성공 ' + ((res && res.success) || 0) + '건, 오류 ' + ((res && res.failed) || 0) + '건, 건너뜀 ' + ((res && res.skipped) || 0) + '건';
+      toast(msg);
+      loadSystemHealthPageP208(true);
+    })
+    .withFailureHandler(function(err) {
+      if (area) area.classList.remove('is-saving-p208');
+      toast(getSystemHealthErrorP208_(err, '변경큐를 재처리하지 못했습니다.'));
+    })
+    .processPortalChangeQueueFromHealthP209();
+}
+
 function getSystemHealthErrorP208_(err, fallback) {
   let msg = '';
   try { msg = typeof getErrorMessage_ === 'function' ? getErrorMessage_(err) : ''; } catch (e) {}

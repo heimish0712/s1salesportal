@@ -12,18 +12,19 @@
       <div class="brand">S1 Sales Portal<small>정보통신 유지보수 영업전산</small></div>
       <div class="nav-item active" data-page="home" onclick="switchPage('home')"><span class="nav-icon">⌂</span><span class="nav-label">Home</span></div>
       <div class="nav-item" data-page="notices" onclick="switchPage('notices')"><span class="nav-icon">!</span><span class="nav-label">공지사항</span></div>
+      <div class="nav-item" data-page="today" onclick="switchPage('today')"><span class="nav-icon">✓</span><span class="nav-label">오늘 할 일</span></div>
       <div class="nav-item" data-page="customers" onclick="switchPage('customers')"><span class="nav-icon">⌕</span><span class="nav-label">고객 상세 검색</span></div>
       <div class="nav-item" data-page="favorites" onclick="switchPage('favorites')"><span class="nav-icon">★</span><span class="nav-label">고객 즐겨찾기</span></div>
-      <div class="nav-item" data-page="contracts" onclick="switchPage('contracts')"><span class="nav-icon">▤</span><span class="nav-label">계약종합관리</span></div>
       <div class="nav-item" data-page="send" onclick="switchPage('send')"><span class="nav-icon">✉</span><span class="nav-label">견적/자료 발송</span></div>
+      <div class="nav-item" data-page="contracts" onclick="switchPage('contracts')"><span class="nav-icon">▤</span><span class="nav-label">계약종합관리</span></div>
       <div class="nav-item" data-page="support" onclick="switchPage('support')"><span class="nav-icon">▣</span><span class="nav-label">영업지원 요청</span></div>
       <div class="nav-item" data-page="activityLog" onclick="switchPage('activityLog')"><span class="nav-icon">◷</span><span class="nav-label">작업로그</span></div>
-      <div class="nav-item system-health-nav-p208" data-page="systemHealth" onclick="switchPage('systemHealth')"><span class="nav-icon">⌁</span><span class="nav-label">시스템 점검</span></div>
-      <div class="nav-item" data-page="today" onclick="switchPage('today')"><span class="nav-icon">✓</span><span class="nav-label">오늘 할 일</span></div>
-      <div class="nav-item" data-page="settings" onclick="switchPage('settings')"><span class="nav-icon">⚙</span><span class="nav-label">설정</span></div>
       <div class="support-work-hint" id="supportWorkHint" style="display:none;"></div>
       <div class="sidebar-company">시큐리티홀딩스</div>
-      <div class="sidebar-bottom" onclick="switchPage('settings')">설정</div>
+      <div class="sidebar-bottom-links">
+        <button type="button" class="sidebar-bottom-link system-health-nav-p208" onclick="switchPage('systemHealth')">시스템 점검</button>
+        <button type="button" class="sidebar-bottom-link" onclick="switchPage('settings')">설정</button>
+      </div>
     </aside>
     <main class="main">
       <div class="topbar">

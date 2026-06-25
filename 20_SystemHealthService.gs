@@ -9,7 +9,7 @@ const PORTAL_SYSTEM_HEALTH_REQUIRED_MASTER_HEADERS_P208 = [
 ];
 
 const PORTAL_SYSTEM_HEALTH_REQUIRED_DB_SHEETS_P208 = [
-  '검색인덱스_DB', '고객즐겨찾기_DB', '컨택이력_DB', '오늘할일_DB', '공지사항_DB', '작업로그_DB'
+  '검색인덱스_DB', '고객즐겨찾기_DB', '컨택이력_DB', '공지사항_DB', '작업로그_DB', '변경큐_DB'
 ];
 
 function getPortalSystemHealthP208() {
@@ -138,6 +138,15 @@ function getPortalSystemHealthP208() {
     detail: requestGuard.detail
   });
 
+  const changeQueue = checkPortalChangeQueueP209_();
+  addCheck({
+    group: '마스터 변경큐',
+    name: '검색인덱스 재처리 대기',
+    status: changeQueue.error ? 'danger' : ((changeQueue.pending + changeQueue.errorCount) ? 'warn' : 'ok'),
+    message: changeQueue.error ? changeQueue.error : ((changeQueue.pending + changeQueue.errorCount) ? ('대기 ' + changeQueue.pending + '건 / 오류 ' + changeQueue.errorCount + '건') : '미처리 변경건 없음'),
+    detail: changeQueue.detail
+  });
+
   const todayCheck = checkPortalTodayRowsP208_(webSs);
   addCheck({
     group: '오늘 할 일',
@@ -174,6 +183,15 @@ function installPortalMasterSyncTriggerFromHealthP208() {
     return installMasterSheetEditSyncTriggerP201();
   }
   throw new Error('마스터시트 수정 감지 트리거 설치 함수가 없습니다.');
+}
+
+function processPortalChangeQueueFromHealthP209() {
+  const userInfo = getPortalSystemHealthUserP208_();
+  assertPortalSystemHealthAllowedP208_(userInfo);
+  if (typeof processPortalChangeQueueP209 === 'function') {
+    return processPortalChangeQueueP209({ limit: 80, includeErrors: true });
+  }
+  throw new Error('변경큐 재처리 함수가 없습니다. 21_ChangeQueueService.gs를 확인해 주세요.');
 }
 
 function getPortalSystemHealthUserP208_() {
@@ -320,6 +338,27 @@ function checkPortalRequestGuardPropsP208_() {
     } catch (err) {}
   });
   return { runningCount: running, staleRunningCount: stale, detail: sample.join('\n') };
+}
+
+
+function checkPortalChangeQueueP209_() {
+  if (typeof getPortalChangeQueueStatsP209 !== 'function') {
+    return { pending: 0, errorCount: 0, detail: '변경큐 서비스 파일 없음', error: '변경큐 서비스 파일이 없습니다.' };
+  }
+  try {
+    const res = getPortalChangeQueueStatsP209();
+    const stats = (res && res.stats) || {};
+    const samples = Array.isArray(stats.samples) ? stats.samples : [];
+    return {
+      pending: Number(stats.pending || 0) || 0,
+      errorCount: Number(stats.error || 0) || 0,
+      detail: samples.length ? samples.map(function(s) {
+        return '마스터행 ' + (s.masterRow || '-') + ' / 고객번호 ' + (s.customerNo || '-') + ' / ' + (s.status || '') + (s.error ? ' / ' + s.error : '');
+      }).join('\n') : ('전체 ' + (stats.total || 0) + '건, 완료 ' + (stats.done || 0) + '건, 건너뜀 ' + (stats.skipped || 0) + '건')
+    };
+  } catch (err) {
+    return { pending: 0, errorCount: 0, detail: '', error: err && err.message ? err.message : String(err) };
+  }
 }
 
 function checkPortalTodayRowsP208_(webSs) {

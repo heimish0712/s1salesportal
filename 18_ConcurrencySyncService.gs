@@ -133,20 +133,46 @@ function onMasterSheetEditSyncP201(e) {
     const targetRows = filterMeaningfulMasterRowsForMetaP204_(sheet, candidateRows, getHeaderMap_(sheet));
     if (!targetRows.length) return false;
 
-    targetRows.forEach(function(r, idx) {
+    const changedColumnNames = getPortalEditedMasterColumnNamesP209_(sheet, getHeaderMap_(sheet), colStart, colEnd);
+    const customerNoCol = findFirstExistingHeaderCol_(getHeaderMap_(sheet), ['고객번호']);
+    const queueItems = targetRows.map(function(r, idx) {
       const version = versionBase + '-' + r + '-' + idx;
       sheet.getRange(r, updatedAtCol).setValue(nowText);
       sheet.getRange(r, versionCol).setValue(version);
       sheet.getRange(r, editorCol).setValue(editor);
+      let customerNo = '';
+      try { if (customerNoCol) customerNo = String(sheet.getRange(r, customerNoCol).getDisplayValue() || '').trim(); } catch (err) {}
+      return {
+        rowNo: r,
+        customerNo: customerNo,
+        changedColumns: changedColumnNames.join(', '),
+        editor: editor,
+        status: 'PENDING'
+      };
     });
     SpreadsheetApp.flush();
 
+    let queueIds = [];
+    if (typeof appendPortalChangeQueueRowsP209_ === 'function') {
+      try { queueIds = appendPortalChangeQueueRowsP209_(queueItems); }
+      catch (queueErr) { markCustomerSearchIndexDirty_('CHANGE_QUEUE_APPEND_FAIL', queueErr && queueErr.message ? queueErr.message : String(queueErr)); }
+    }
+
     const maxImmediate = 25;
-    targetRows.slice(0, maxImmediate).forEach(function(r) {
-      try { updateCustomerSearchIndexRow_(r); } catch (err) { markCustomerSearchIndexDirty_('MASTER_ONEDIT_ROW_REFRESH_FAIL', 'row ' + r + ': ' + (err && err.message ? err.message : String(err))); }
+    const processedQueueIds = [];
+    targetRows.slice(0, maxImmediate).forEach(function(r, idx) {
+      try {
+        const res = updateCustomerSearchIndexRow_(r);
+        if (queueIds[idx] && res && res.ok && typeof markPortalChangeQueueRowsDoneByIdsP209_ === 'function') processedQueueIds.push(queueIds[idx]);
+      } catch (err) {
+        markCustomerSearchIndexDirty_('MASTER_ONEDIT_ROW_REFRESH_FAIL', 'row ' + r + ': ' + (err && err.message ? err.message : String(err)));
+      }
     });
+    if (processedQueueIds.length && typeof markPortalChangeQueueRowsDoneByIdsP209_ === 'function') {
+      try { markPortalChangeQueueRowsDoneByIdsP209_(processedQueueIds, 'DONE', ''); } catch (err) {}
+    }
     if (targetRows.length > maxImmediate) {
-      markCustomerSearchIndexDirty_('MASTER_ONEDIT_MANY_ROWS', targetRows.length + ' rows edited');
+      markCustomerSearchIndexDirty_('MASTER_ONEDIT_MANY_ROWS', targetRows.length + ' rows edited; 변경큐에 남겨 재처리 필요');
     }
     markPortalMasterDataChangedP201_('마스터시트 직접수정 rows=' + targetRows.join(','));
     return true;
@@ -198,6 +224,23 @@ function filterMeaningfulMasterRowsForMetaP204_(sheet, rowNumbers, headerMap) {
     }
     return false;
   });
+}
+
+
+function getPortalEditedMasterColumnNamesP209_(sheet, headerMap, colStart, colEnd) {
+  headerMap = headerMap || getHeaderMap_(sheet);
+  const reverse = {};
+  Object.keys(headerMap || {}).forEach(function(h) {
+    const c = Number(headerMap[h]) || 0;
+    if (c && !reverse[c]) reverse[c] = h;
+  });
+  const names = [];
+  for (let c = Number(colStart) || 1; c <= (Number(colEnd) || Number(colStart) || 1); c++) {
+    const name = reverse[c] || ('COL' + c);
+    if (PORTAL_MASTER_META_HEADERS_P201.indexOf(name) >= 0) continue;
+    names.push(name);
+  }
+  return names;
 }
 
 /**
