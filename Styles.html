@@ -4170,6 +4170,31 @@ button[disabled], .portal-btn-pending {
   .system-health-check-status-p208 { width: max-content; }
 }
 
+
+/* STEP14/P251: 발주여부 X (발주하기) 한줄 표시 */
+.customer-expand-form-cell.key-orderStatus .customer-expand-form-value {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 2px;
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.customer-expand-form-cell.key-orderStatus .customer-order-status {
+  flex: 0 0 auto;
+}
+.customer-expand-form-cell.key-orderStatus .customer-order-paren {
+  flex: 0 0 auto;
+}
+.customer-expand-form-cell.key-orderStatus .customer-order-btn {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-left: 7px;
+  padding-right: 7px;
+}
+
 /* STEP13/P250: 고객 상세검색 발주여부/발주확정 모달 */
 .customer-order-status {
   display: inline-flex;
