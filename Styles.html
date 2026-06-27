@@ -1956,13 +1956,14 @@ button .portal-guide-help,
 .send-file-preset-popover {
   position: relative;
   margin: 2px 0 18px 0;
-  padding: 14px 18px 16px 18px;
-  min-height: 86px;
+  padding: 12px 16px 13px 16px;
+  min-height: 72px;
   border-radius: 18px;
   background: #a9cfef;
   display: flex;
   align-items: center;
-  gap: 26px;
+  justify-content: flex-start;
+  gap: 14px;
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
 }
 
@@ -1971,25 +1972,27 @@ button .portal-guide-help,
 }
 
 .send-file-preset-label {
-  min-width: 96px;
+  min-width: 54px;
   color: #ffffff;
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   align-self: center;
   padding-top: 0;
   white-space: nowrap;
 }
 
 .send-file-preset-actions {
-  flex: 1;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(110px, 1fr));
-  gap: 12px 16px;
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 12px;
   align-items: center;
+  justify-content: flex-start;
 }
 
 .send-file-preset-btn {
+  min-width: 110px;
   min-height: 42px;
   border-radius: 999px;
   background: rgba(255,255,255,.94);
@@ -2000,6 +2003,7 @@ button .portal-guide-help,
   font-weight: 650;
   letter-spacing: -0.025em;
   padding: 7px 16px;
+  white-space: nowrap;
 }
 
 .send-file-preset-btn:hover:not(:disabled) {
@@ -2009,6 +2013,9 @@ button .portal-guide-help,
 }
 
 .send-file-clear-btn {
+  min-width: 154px;
+  padding-left: 22px;
+  padding-right: 22px;
   color: #475467;
   background: rgba(255,255,255,.82);
 }
@@ -2032,7 +2039,7 @@ button .portal-guide-help,
     gap: 10px;
   }
   .send-file-preset-actions {
-    grid-template-columns: repeat(2, minmax(120px, 1fr));
+    flex-wrap: wrap;
   }
 }
 
