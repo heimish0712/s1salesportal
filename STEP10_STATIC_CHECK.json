@@ -1,0 +1,47 @@
+{
+  "baseline": "영업전산포탈_STEP9_onEdit메타Batch처리개선.zip",
+  "changed_files": [
+    "Client_Router.html",
+    "Index.html"
+  ],
+  "added_files": [
+    "22_ConcurrencyTestService.gs",
+    "Component_ConcurrencyTest.html",
+    "STEP10_CHANGED_DIFF.patch",
+    "STEP10_CONCURRENCY_TEST_PANEL_REPORT.txt",
+    "STEP10_STATIC_CHECK.json"
+  ],
+  "deleted_files": [],
+  "syntax_error_count": 0,
+  "syntax_errors": [],
+  "new_duplicate_function_count": 0,
+  "new_duplicate_functions": {},
+  "preexisting_duplicate_helpers_unchanged": {
+    "08_TodayService.gs": {
+      "add": 2
+    },
+    "Component_Today.html": {
+      "add": 2
+    }
+  },
+  "required_function_presence": {
+    "preparePortalMailFilesForReviewFromUi": true,
+    "sendPortalMailFromUi": true,
+    "saveCustomerDetailFast": true,
+    "saveCustomerMemoFast": true,
+    "savePortalSupportRequest": true,
+    "savePortalTodosForDate": true,
+    "onMasterSheetEditSyncP201": true,
+    "getPortalConcurrencyTestInitP240": true,
+    "runPortalConcurrencyTestActionP240": true,
+    "summarizePortalConcurrencyTestRunP240": true,
+    "cleanupPortalConcurrencyTestRunP240": true,
+    "loadConcurrencyTestPageP240": true
+  },
+  "safety_notes": [
+    "실제 메일 발송 함수는 호출하지 않음",
+    "영업지원/오늘할일 테스트 데이터는 [CONCURRENCY_TEST:runId] 마커 사용",
+    "고객 메모 테스트는 rowNo 입력시에만 실행되며 원본 메모를 상태 시트에 보관 후 cleanup 복구 가능",
+    "관리자/서무 canUseAdminHome 권한이 없으면 패널/서버 함수 차단"
+  ]
+}

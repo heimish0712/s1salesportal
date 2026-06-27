@@ -44,7 +44,7 @@ const PORTAL_PERMISSION_SEED_ROWS = [
 
 // STEP6 P230: 권한_DB 반복 조회를 줄이기 위한 짧은 서버 캐시입니다.
 // 권한 정책은 그대로 두고, 같은 사용자 이메일의 계산 완료 권한 객체만 5분 이내 재사용합니다.
-const PORTAL_PERMISSION_CACHE_PREFIX_P230 = 'PORTAL_PERMISSION_P230_';
+const PORTAL_PERMISSION_CACHE_PREFIX_P230 = 'PORTAL_PERMISSION_P250_';
 const PORTAL_PERMISSION_CACHE_BUST_PROP_P230 = 'PORTAL_PERMISSION_CACHE_BUST_P230';
 const PORTAL_PERMISSION_CACHE_TTL_SEC_P230 = 300;
 const PORTAL_PERMISSION_GUEST_CACHE_TTL_SEC_P230 = 60;
@@ -324,11 +324,14 @@ function buildPortalPermissionFromRow_(row, rowNo, sessionEmail) {
   // - 영업지원완료처리: 영업지원 처리/완료 입력 권한
   // - 작업로그전체열람/작업로그비교통계: 작업로그 전용 권한
   // SALES 계정에 전체고객열람=Y가 있어도 HOME/작업로그/완료처리는 관리자 권한으로 보지 않습니다.
+  const active = String(v(14) || 'Y').toUpperCase() !== 'N';
   const baseAdmin = isPortalAdminPermissionValues_(level, role, rank, defaultScope);
   const canViewAllCustomers = baseAdmin || yn_(v(8)) || defaultScope === 'ALL';
   const canWriteNotice = baseAdmin || yn_(v(9));
   const canDeleteNotice = baseAdmin || yn_(v(10));
-  const canWriteSupport = baseAdmin || yn_(v(11));
+  // STEP11 P250: 영업지원 요청 작성은 모든 등록/활성 사용자에게 허용합니다.
+  // 완료 처리/전체 열람 권한은 기존 권한_DB 정책을 그대로 유지합니다.
+  const canWriteSupport = active;
   const canReadAllSupport = baseAdmin || yn_(v(12));
   const canCompleteSupport = baseAdmin || yn_(v(13));
   const canViewAllActivityLogs = baseAdmin || yn_(v(16));
@@ -355,7 +358,7 @@ function buildPortalPermissionFromRow_(row, rowNo, sessionEmail) {
     canWriteSupport: canWriteSupport,
     canReadAllSupport: canReadAllSupport,
     canCompleteSupport: canCompleteSupport,
-    active: String(v(14) || 'Y').toUpperCase() !== 'N',
+    active: active,
     note: v(15),
     canViewAllActivityLogs: canViewAllActivityLogs,
     canCompareActivityLogs: canCompareActivityLogs
@@ -610,7 +613,7 @@ function assertPortalCanDeleteNotice_() {
 
 function assertPortalCanWriteSupport_() {
   const perm = getPortalCurrentPermission_();
-  if (perm.canWriteSupport) return true;
+  if (perm && perm.active !== false && perm.canWriteSupport) return true;
   throw new Error('영업지원 요청 작성 권한이 없습니다.');
 }
 

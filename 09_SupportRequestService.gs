@@ -9,15 +9,47 @@
 // 이 파일에서는 PORTAL_SUPPORT_REQUEST_TYPES / PORTAL_SUPPORT_REQUESTER_OPTIONS /
 // PORTAL_SUPPORT_STATUS_OPTIONS / PORTAL_SUPPORT_MEMO_HEADER를 절대 재선언하지 않습니다.
 
-function buildPortalSupportRequesterOptions_(currentUser) {
+function getPortalSupportDelegatedRequesterNamesP250_() {
+  return (PORTAL_SUPPORT_REQUESTER_OPTIONS || ['문형진', '방수원', '박새봄', '김경아', '최보람', '이옥희']).slice();
+}
+
+function canPortalChooseDelegatedSupportRequesterP250_(perm) {
+  perm = perm || getPortalCurrentPermission_();
+  return !!(perm && perm.active !== false && (perm.canUseAdminHome || perm.canCompleteSupport || perm.isAdmin));
+}
+
+function buildPortalSupportRequesterOptions_(currentUser, perm) {
+  perm = perm || getPortalCurrentPermission_();
+  currentUser = String(currentUser || getPortalCurrentUserName_() || '').trim();
   const out = [];
   function add(v) {
     v = String(v || '').trim();
     if (v && out.indexOf(v) < 0) out.push(v);
   }
-  add(currentUser || getPortalCurrentUserName_());
-  (PORTAL_SUPPORT_REQUESTER_OPTIONS || []).forEach(add);
+
+  if (canPortalChooseDelegatedSupportRequesterP250_(perm)) {
+    getPortalSupportDelegatedRequesterNamesP250_().forEach(add);
+    add(currentUser);
+  } else {
+    add(currentUser);
+  }
   return out;
+}
+
+function assertPortalSupportRequesterAllowedP250_(requester, perm) {
+  perm = perm || getPortalCurrentPermission_();
+  requester = String(requester || '').trim();
+  const currentUser = getPortalCurrentUserName_();
+  const options = buildPortalSupportRequesterOptions_(currentUser, perm);
+  const normalizedRequester = normalizePortalNameForPermission_(requester);
+  const ok = options.some(function(v) {
+    return normalizePortalNameForPermission_(v) === normalizedRequester;
+  });
+  if (ok) return true;
+  if (canPortalChooseDelegatedSupportRequesterP250_(perm)) {
+    throw new Error('요청자는 지정된 요청자 목록에서만 선택할 수 있습니다.');
+  }
+  throw new Error('요청자는 본인만 선택할 수 있습니다.');
 }
 
 
@@ -121,7 +153,7 @@ function getPortalSupportData(options) {
     requestTypes: PORTAL_SUPPORT_REQUEST_TYPES,
     statusOptions: PORTAL_SUPPORT_STATUS_OPTIONS,
     currentUser: getPortalCurrentUserName_(),
-    requesterOptions: buildPortalSupportRequesterOptions_(getPortalCurrentUserName_()),
+    requesterOptions: buildPortalSupportRequesterOptions_(getPortalCurrentUserName_(), perm),
     permission: sanitizePortalPermissionForClient_(perm),
     meta: { mode: 'full', recent: false, complete: true, limit: limit, keyword: keyword, status: statusFilter, loadedAt: new Date().toISOString() }
   };
@@ -347,7 +379,7 @@ function buildPortalSupportDataResponseV55_(rows, total, meta) {
     requestTypes: PORTAL_SUPPORT_REQUEST_TYPES,
     statusOptions: PORTAL_SUPPORT_STATUS_OPTIONS,
     currentUser: getPortalCurrentUserName_(),
-    requesterOptions: buildPortalSupportRequesterOptions_(getPortalCurrentUserName_()),
+    requesterOptions: buildPortalSupportRequesterOptions_(getPortalCurrentUserName_(), perm),
     permission: sanitizePortalPermissionForClient_(perm),
     meta: meta
   };
@@ -356,7 +388,7 @@ function buildPortalSupportDataResponseV55_(rows, total, meta) {
 // v78: 상세/처리 팝업 빠른 로딩용 상세 캐시 API
 // - 목록 행에서 즉시 팝업을 채우고, 서버 상세는 ScriptCache를 먼저 봅니다.
 // - 저장 시 bumpPortalSupportCacheBustV64_()가 호출되어 목록/상세 캐시가 같이 무효화됩니다.
-const PORTAL_SUPPORT_DETAIL_CACHE_PREFIX_V78 = 'supportDetail:v78:';
+const PORTAL_SUPPORT_DETAIL_CACHE_PREFIX_V78 = 'supportDetail:v250:';
 const PORTAL_SUPPORT_DETAIL_CACHE_TTL_SEC_V78 = 300;
 
 function makePortalSupportDetailCacheKeyV78_(rowNo) {
@@ -379,8 +411,12 @@ function getPortalSupportRequestDetailFastV78(rowNo, options) {
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed && parsed.item) {
+          const perm = getPortalCurrentPermission_();
           parsed.fromCache = true;
           parsed.loadedAt = parsed.loadedAt || new Date().toISOString();
+          parsed.currentUser = getPortalCurrentUserName_();
+          parsed.requesterOptions = buildPortalSupportRequesterOptions_(parsed.currentUser, perm);
+          parsed.permission = sanitizePortalPermissionForClient_(perm);
           return parsed;
         }
       }
@@ -393,13 +429,14 @@ function getPortalSupportRequestDetailFastV78(rowNo, options) {
   const item = buildPortalSupportRowObject_(values, rowNo, headerMap);
   if (!item || (!item.requestText && !item.customerNo && !item.customerName)) throw new Error('영업지원 요청을 찾지 못했습니다.');
 
+  const perm = getPortalCurrentPermission_();
   const result = {
     item: item,
     requestTypes: PORTAL_SUPPORT_REQUEST_TYPES,
     statusOptions: PORTAL_SUPPORT_STATUS_OPTIONS,
     currentUser: getPortalCurrentUserName_(),
-    requesterOptions: buildPortalSupportRequesterOptions_(getPortalCurrentUserName_()),
-    permission: sanitizePortalPermissionForClient_(getPortalCurrentPermission_()),
+    requesterOptions: buildPortalSupportRequesterOptions_(getPortalCurrentUserName_(), perm),
+    permission: sanitizePortalPermissionForClient_(perm),
     fromCache: false,
     loadedAt: new Date().toISOString()
   };
@@ -592,6 +629,7 @@ function savePortalSupportRequestCoreP210_(payload) {
 
   if (!requestType) throw new Error('업무유형을 선택하세요.');
   if (!requester) throw new Error('요청자를 입력하세요.');
+  assertPortalSupportRequesterAllowedP250_(requester, permForSupport);
   if (!requestText) throw new Error('요청업무를 입력하세요.');
 
   const receiptNo = String(payload.receiptNo || '').trim() || getExistingOrNextPortalSupportReceiptNo_(sheet, headerMap, rowNo);

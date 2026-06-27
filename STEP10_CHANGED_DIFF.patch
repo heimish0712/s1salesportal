@@ -1,0 +1,958 @@
+diff -ruN '--exclude=STEP10_CHANGED_DIFF.patch' portal_step9_base_for_step10/22_ConcurrencyTestService.gs portal_step10_work/22_ConcurrencyTestService.gs
+--- portal_step9_base_for_step10/22_ConcurrencyTestService.gs	1970-01-01 00:00:00.000000000 +0000
++++ portal_step10_work/22_ConcurrencyTestService.gs	2026-06-27 03:33:03.296839418 +0000
+@@ -0,0 +1,487 @@
++/***************************************
++ * S1 Sales Portal - 22_ConcurrencyTestService.gs
++ * STEP10: 관리자 전용 동시성 테스트 패널
++ * - 기존 운영 기능을 변경하지 않고 테스트용 서버 API만 추가합니다.
++ * - 테스트 데이터는 [CONCURRENCY_TEST:runId] 마커로 식별합니다.
++ * - 실제 메일 발송은 이 서비스에서 호출하지 않습니다.
++ ***************************************/
++
++const PORTAL_CONCURRENCY_TEST_LOG_SHEET_NAME_P240 = '포털_동시성테스트로그';
++const PORTAL_CONCURRENCY_TEST_STATE_SHEET_NAME_P240 = '포털_동시성테스트상태';
++const PORTAL_CONCURRENCY_TEST_MAX_COUNT_P240 = 20;
++const PORTAL_CONCURRENCY_TEST_LOG_HEADERS_P240 = [
++  '기록일시',
++  '실행ID',
++  '시나리오',
++  '순번',
++  '결과',
++  '소요ms',
++  'rowNo',
++  'receiptNo',
++  'taskId',
++  'customerNo',
++  '메시지',
++  '상세JSON'
++];
++const PORTAL_CONCURRENCY_TEST_STATE_HEADERS_P240 = [
++  '기록일시',
++  '실행ID',
++  '구분',
++  'rowNo',
++  'customerNo',
++  '원본값',
++  '복구여부',
++  '복구일시',
++  '비고'
++];
++
++function getPortalConcurrencyTestInitP240() {
++  const perm = assertPortalCanRunConcurrencyTestP240_();
++  const recent = getPortalConcurrencyRecentLogsP240_(20);
++  return {
++    ok: true,
++    now: new Date().toISOString(),
++    user: getPortalCurrentUserName_(),
++    permission: sanitizePortalPermissionForClient_(perm),
++    maxCount: PORTAL_CONCURRENCY_TEST_MAX_COUNT_P240,
++    scenarios: [
++      { key: 'SUPPORT_CREATE', label: '영업지원요청 동시 신규등록', safe: true, cleanup: true },
++      { key: 'TODAY_UPSERT', label: '오늘할일 동시 upsert 저장', safe: true, cleanup: true },
++      { key: 'CUSTOMER_MEMO', label: '고객 메모 동시 저장', safe: false, cleanup: true }
++    ],
++    notes: [
++      '실제 메일 발송은 호출하지 않습니다.',
++      '영업지원/오늘할일 테스트 데이터에는 [CONCURRENCY_TEST:실행ID] 마커가 붙습니다.',
++      '고객 메모 테스트는 입력한 rowNo의 실제 메모를 바꾼 뒤 cleanup으로 원복합니다.'
++    ],
++    recentLogs: recent
++  };
++}
++
++function runPortalConcurrencyTestActionP240(payload) {
++  payload = payload || {};
++  assertPortalCanRunConcurrencyTestP240_();
++  const scenario = String(payload.scenario || '').trim().toUpperCase();
++  const runId = sanitizePortalConcurrencyRunIdP240_(payload.runId || makePortalConcurrencyRunIdP240_());
++  const seq = Math.max(1, Math.min(9999, Number(payload.seq) || 1));
++  const marker = makePortalConcurrencyMarkerP240_(runId);
++  const started = Date.now();
++  const jitterMs = Math.max(0, Math.min(1500, Number(payload.jitterMs) || 0));
++  if (jitterMs) Utilities.sleep(Math.floor(Math.random() * jitterMs));
++
++  let result = null;
++  let ok = false;
++  try {
++    if (scenario === 'SUPPORT_CREATE') {
++      result = runPortalConcurrencySupportCreateP240_(runId, seq, marker, payload);
++    } else if (scenario === 'TODAY_UPSERT') {
++      result = runPortalConcurrencyTodayUpsertP240_(runId, seq, marker, payload);
++    } else if (scenario === 'CUSTOMER_MEMO') {
++      result = runPortalConcurrencyCustomerMemoP240_(runId, seq, marker, payload);
++    } else {
++      throw new Error('지원하지 않는 동시성 테스트 시나리오입니다: ' + scenario);
++    }
++    ok = true;
++    result = result || {};
++    result.ok = true;
++  } catch (err) {
++    ok = false;
++    result = {
++      ok: false,
++      error: String(err && err.message || err),
++      errorCode: err && err.code || '',
++      stack: String(err && err.stack || '').slice(0, 2000)
++    };
++  }
++
++  const elapsedMs = Date.now() - started;
++  result.runId = runId;
++  result.scenario = scenario;
++  result.seq = seq;
++  result.elapsedMs = elapsedMs;
++  result.marker = marker;
++  appendPortalConcurrencyTestLogP240_({
++    runId: runId,
++    scenario: scenario,
++    seq: seq,
++    ok: ok,
++    elapsedMs: elapsedMs,
++    rowNo: result.rowNo || '',
++    receiptNo: result.receiptNo || '',
++    taskId: result.taskId || '',
++    customerNo: result.customerNo || '',
++    message: result.message || result.error || '',
++    detail: result
++  });
++  return result;
++}
++
++function summarizePortalConcurrencyTestRunP240(payload) {
++  payload = payload || {};
++  assertPortalCanRunConcurrencyTestP240_();
++  const scenario = String(payload.scenario || '').trim().toUpperCase();
++  const runId = sanitizePortalConcurrencyRunIdP240_(payload.runId || '');
++  const results = Array.isArray(payload.results) ? payload.results : [];
++  const success = results.filter(function(r) { return !!(r && r.ok); }).length;
++  const failed = results.length - success;
++  const elapsedValues = results.map(function(r) { return Number(r && r.elapsedMs) || 0; }).filter(function(v) { return v >= 0; });
++  const avgMs = elapsedValues.length ? Math.round(elapsedValues.reduce(function(a, b) { return a + b; }, 0) / elapsedValues.length) : 0;
++  const maxMs = elapsedValues.length ? Math.max.apply(null, elapsedValues) : 0;
++  const duplicateRowNos = findPortalConcurrencyDuplicatesP240_(results, 'rowNo');
++  const duplicateReceipts = findPortalConcurrencyDuplicatesP240_(results, 'receiptNo');
++  const duplicateTaskIds = findPortalConcurrencyDuplicatesP240_(results, 'taskId');
++  const verification = verifyPortalConcurrencyScenarioP240_(scenario, runId, results);
++  const pass = failed === 0 && duplicateRowNos.length === 0 && duplicateReceipts.length === 0 && duplicateTaskIds.length === 0 && verification.ok !== false;
++
++  const summary = {
++    ok: true,
++    pass: pass,
++    runId: runId,
++    scenario: scenario,
++    total: results.length,
++    success: success,
++    failed: failed,
++    avgMs: avgMs,
++    maxMs: maxMs,
++    duplicateRowNos: duplicateRowNos,
++    duplicateReceipts: duplicateReceipts,
++    duplicateTaskIds: duplicateTaskIds,
++    verification: verification,
++    completedAt: new Date().toISOString()
++  };
++  appendPortalConcurrencyTestLogP240_({
++    runId: runId,
++    scenario: scenario,
++    seq: 'SUMMARY',
++    ok: pass,
++    elapsedMs: maxMs,
++    message: pass ? 'PASS' : 'CHECK_REQUIRED',
++    detail: summary
++  });
++  return summary;
++}
++
++function cleanupPortalConcurrencyTestRunP240(payload) {
++  payload = payload || {};
++  assertPortalCanRunConcurrencyTestP240_();
++  const runId = sanitizePortalConcurrencyRunIdP240_(payload.runId || '');
++  if (!runId) throw new Error('정리할 실행ID가 없습니다.');
++  const marker = makePortalConcurrencyMarkerP240_(runId);
++  const support = cleanupPortalConcurrencySupportRowsP240_(marker);
++  const today = cleanupPortalConcurrencyTodayRowsP240_(marker);
++  const customer = payload.restoreCustomer === false ? { restored: 0, skipped: true } : restorePortalConcurrencyCustomerMemosP240_(runId);
++  const result = { ok: true, runId: runId, marker: marker, support: support, today: today, customer: customer };
++  appendPortalConcurrencyTestLogP240_({
++    runId: runId,
++    scenario: 'CLEANUP',
++    seq: '-',
++    ok: true,
++    message: '테스트 데이터 정리 완료',
++    detail: result
++  });
++  return result;
++}
++
++function runPortalConcurrencySupportCreateP240_(runId, seq, marker, payload) {
++  const clientRequestId = 'CONC-' + runId + '-SUPPORT-' + seq;
++  const res = savePortalSupportRequest({
++    requestType: '기타요청',
++    requester: '동시성테스트',
++    customerNo: '',
++    customerName: 'TEST_동시성검증_' + runId,
++    requestText: marker + ' 영업지원요청 동시등록 seq=' + seq,
++    status: '접수',
++    processContent: '',
++    clientRequestId: clientRequestId,
++    masterMemo: '동시성 테스트 데이터입니다. cleanup으로 삭제하세요.'
++  });
++  return {
++    rowNo: res && res.rowNo || '',
++    receiptNo: res && res.receiptNo || '',
++    duplicate: !!(res && res.duplicate),
++    message: res && res.message || '영업지원요청 저장 완료'
++  };
++}
++
++function runPortalConcurrencyTodayUpsertP240_(runId, seq, marker, payload) {
++  const dateText = normalizePortalTodoDate_(payload.date || new Date());
++  const taskId = 'CONC_TODAY_' + runId + '_' + seq;
++  const res = savePortalTodosForDate({
++    date: dateText,
++    baseDateVersion: String(payload.baseDateVersion || 'STALE_BASE_' + runId),
++    baseTaskIds: [],
++    tasks: [{
++      id: taskId,
++      content: marker + ' 오늘할일 동시저장 seq=' + seq,
++      done: false,
++      tags: ['동시성테스트'],
++      category: '할일',
++      sourceType: 'MANUAL',
++      priority: '보통',
++      detail: '동시성 테스트 데이터입니다. cleanup으로 삭제 처리하세요.'
++    }]
++  });
++  return {
++    taskId: taskId,
++    selectedDate: dateText,
++    rowNo: '',
++    saveMeta: res && res.saveMeta || null,
++    mergedDueToStaleBase: !!(res && res.mergedDueToStaleBase),
++    message: '오늘할일 저장 완료'
++  };
++}
++
++function runPortalConcurrencyCustomerMemoP240_(runId, seq, marker, payload) {
++  const rowNo = Number(payload.customerRowNo || payload.rowNo) || 0;
++  const customerNo = String(payload.customerNo || '').trim();
++  if (!rowNo || rowNo < PORTAL_CONFIG.DATA_START_ROW) {
++    throw new Error('고객 메모 테스트는 테스트용 고객 rowNo를 입력해야 실행됩니다. 실제 고객 메모가 바뀔 수 있으므로 TEST 고객 행만 사용하세요.');
++  }
++  const original = capturePortalConcurrencyCustomerMemoOriginalP240_(runId, rowNo, customerNo);
++  const memoText = marker + ' 고객메모 동시저장 seq=' + seq + '\n실행시각=' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
++  const res = saveCustomerMemoFast({
++    rowNo: rowNo,
++    customerNo: customerNo || original.customerNo || '',
++    memo: memoText
++  });
++  return {
++    rowNo: res && res.rowNo || rowNo,
++    customerNo: res && res.customerNo || customerNo || original.customerNo || '',
++    masterVersion: res && res.masterVersion || '',
++    message: res && res.message || '고객 메모 저장 완료'
++  };
++}
++
++function capturePortalConcurrencyCustomerMemoOriginalP240_(runId, rowNo, customerNo) {
++  const stateSheet = ensurePortalConcurrencyTestStateSheetP240_();
++  const lock = LockService.getScriptLock();
++  lock.waitLock(8000);
++  try {
++    const lastRow = stateSheet.getLastRow();
++    if (lastRow >= 2) {
++      const values = stateSheet.getRange(2, 1, lastRow - 1, PORTAL_CONCURRENCY_TEST_STATE_HEADERS_P240.length).getValues();
++      for (let i = 0; i < values.length; i++) {
++        if (String(values[i][1] || '') === runId && String(values[i][2] || '') === 'CUSTOMER_MEMO_ORIGINAL' && Number(values[i][3]) === rowNo) {
++          return { rowNo: rowNo, customerNo: String(values[i][4] || customerNo || ''), originalMemo: String(values[i][5] || '') };
++        }
++      }
++    }
++    const master = getMasterSpreadsheet_();
++    const sheet = master.getSheetByName(PORTAL_CONFIG.MASTER_SHEET_NAME);
++    if (!sheet) throw new Error('마스터시트를 찾지 못했습니다.');
++    const headerMap = getHeaderMap_(sheet);
++    const memoCol = findMasterFieldCol_(headerMap, 'memo') || findFirstExistingHeaderCol_(headerMap, PORTAL_CONFIG.MEMO_HEADER_CANDIDATES || ['메모']);
++    const customerNoCol = findFirstExistingHeaderCol_(headerMap, ['고객번호']);
++    if (!memoCol) throw new Error('메모 컬럼을 찾지 못했습니다.');
++    const originalMemo = String(sheet.getRange(rowNo, memoCol).getDisplayValue() || '');
++    const resolvedCustomerNo = customerNo || (customerNoCol ? String(sheet.getRange(rowNo, customerNoCol).getDisplayValue() || '').trim() : '');
++    stateSheet.appendRow([new Date(), runId, 'CUSTOMER_MEMO_ORIGINAL', rowNo, resolvedCustomerNo, originalMemo, '', '', 'cleanup 시 복구 대상']);
++    return { rowNo: rowNo, customerNo: resolvedCustomerNo, originalMemo: originalMemo };
++  } finally {
++    try { lock.releaseLock(); } catch (err) {}
++  }
++}
++
++function restorePortalConcurrencyCustomerMemosP240_(runId) {
++  const stateSheet = ensurePortalConcurrencyTestStateSheetP240_();
++  const lastRow = stateSheet.getLastRow();
++  if (lastRow < 2) return { restored: 0, skipped: 0 };
++  const width = PORTAL_CONCURRENCY_TEST_STATE_HEADERS_P240.length;
++  const values = stateSheet.getRange(2, 1, lastRow - 1, width).getValues();
++  let restored = 0;
++  let skipped = 0;
++  values.forEach(function(row, i) {
++    const rowNo = Number(row[3]) || 0;
++    const already = String(row[6] || '').toUpperCase() === 'Y';
++    if (String(row[1] || '') !== runId || String(row[2] || '') !== 'CUSTOMER_MEMO_ORIGINAL' || !rowNo || already) {
++      skipped++;
++      return;
++    }
++    const customerNo = String(row[4] || '').trim();
++    const originalMemo = String(row[5] || '');
++    try {
++      saveCustomerMemoFast({ rowNo: rowNo, customerNo: customerNo, memo: originalMemo });
++      const sheetRow = i + 2;
++      stateSheet.getRange(sheetRow, 7, 1, 2).setValues([['Y', new Date()]]);
++      restored++;
++    } catch (err) {
++      stateSheet.getRange(i + 2, 9).setValue('복구 실패: ' + String(err && err.message || err));
++      skipped++;
++    }
++  });
++  return { restored: restored, skipped: skipped };
++}
++
++function cleanupPortalConcurrencySupportRowsP240_(marker) {
++  const masterSs = getMasterSpreadsheet_();
++  const sheet = getPortalSupportSheetFastV64_(masterSs);
++  const headerMap = getPortalSupportHeaderMap_(sheet);
++  const requestCol = headerMap['요청업무'];
++  if (!requestCol) return { deleted: 0, reason: '요청업무 컬럼 없음' };
++  const lastRow = sheet.getLastRow();
++  if (lastRow < PORTAL_CONFIG.SUPPORT_DATA_START_ROW) return { deleted: 0 };
++  const rowCount = lastRow - PORTAL_CONFIG.SUPPORT_DATA_START_ROW + 1;
++  const values = sheet.getRange(PORTAL_CONFIG.SUPPORT_DATA_START_ROW, requestCol, rowCount, 1).getDisplayValues();
++  const rows = [];
++  values.forEach(function(r, i) {
++    if (String(r[0] || '').indexOf(marker) >= 0) rows.push(PORTAL_CONFIG.SUPPORT_DATA_START_ROW + i);
++  });
++  deleteRowsBottomUpP240_(sheet, rows);
++  try { bumpPortalSupportCacheBustV64_(); } catch (err) {}
++  return { deleted: rows.length };
++}
++
++function cleanupPortalConcurrencyTodayRowsP240_(marker) {
++  const sheet = ensurePortalTodaySheet_();
++  const lastRow = sheet.getLastRow();
++  if (lastRow < 2) return { markedDeleted: 0 };
++  const headers = PORTAL_CONFIG.TODAY_HEADERS;
++  const contentCol = headers.indexOf('내용') + 1;
++  const deleteCol = headers.indexOf('삭제여부') + 1;
++  if (!contentCol || !deleteCol) return { markedDeleted: 0, reason: '오늘할일 헤더 없음' };
++  const rowCount = lastRow - 1;
++  const values = sheet.getRange(2, contentCol, rowCount, 1).getDisplayValues();
++  const rows = [];
++  values.forEach(function(r, i) {
++    if (String(r[0] || '').indexOf(marker) >= 0) rows.push(i + 2);
++  });
++  rows.forEach(function(rowNo) {
++    sheet.getRange(rowNo, deleteCol).setValue('Y');
++  });
++  return { markedDeleted: rows.length };
++}
++
++function verifyPortalConcurrencyScenarioP240_(scenario, runId, results) {
++  const marker = makePortalConcurrencyMarkerP240_(runId);
++  if (scenario === 'SUPPORT_CREATE') {
++    const masterSs = getMasterSpreadsheet_();
++    const sheet = getPortalSupportSheetFastV64_(masterSs);
++    const headerMap = getPortalSupportHeaderMap_(sheet);
++    const requestCol = headerMap['요청업무'];
++    if (!requestCol || sheet.getLastRow() < PORTAL_CONFIG.SUPPORT_DATA_START_ROW) return { ok: false, activeRows: 0 };
++    const values = sheet.getRange(PORTAL_CONFIG.SUPPORT_DATA_START_ROW, requestCol, sheet.getLastRow() - PORTAL_CONFIG.SUPPORT_DATA_START_ROW + 1, 1).getDisplayValues();
++    const count = values.filter(function(r) { return String(r[0] || '').indexOf(marker) >= 0; }).length;
++    return { ok: count >= results.filter(function(r) { return r && r.ok; }).length, activeRows: count };
++  }
++  if (scenario === 'TODAY_UPSERT') {
++    const sheet = ensurePortalTodaySheet_();
++    if (sheet.getLastRow() < 2) return { ok: false, activeRows: 0 };
++    const headers = PORTAL_CONFIG.TODAY_HEADERS;
++    const contentCol = headers.indexOf('내용') + 1;
++    const deleteCol = headers.indexOf('삭제여부') + 1;
++    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(headers.length, sheet.getLastColumn())).getDisplayValues();
++    const count = rows.filter(function(r) {
++      return String(r[contentCol - 1] || '').indexOf(marker) >= 0 && String(r[deleteCol - 1] || '').toUpperCase() !== 'Y';
++    }).length;
++    return { ok: count >= results.filter(function(r) { return r && r.ok; }).length, activeRows: count };
++  }
++  if (scenario === 'CUSTOMER_MEMO') {
++    return { ok: true, note: '고객 메모는 최종값 1개가 남는 last-write-wins 구조입니다. cleanup으로 원복하세요.' };
++  }
++  return { ok: true };
++}
++
++function appendPortalConcurrencyTestLogP240_(entry) {
++  entry = entry || {};
++  try {
++    const sheet = ensurePortalConcurrencyTestLogSheetP240_();
++    const detail = JSON.stringify(entry.detail || {});
++    const row = [
++      new Date(),
++      entry.runId || '',
++      entry.scenario || '',
++      entry.seq == null ? '' : entry.seq,
++      entry.ok ? 'OK' : 'FAIL',
++      Number(entry.elapsedMs) || 0,
++      entry.rowNo || '',
++      entry.receiptNo || '',
++      entry.taskId || '',
++      entry.customerNo || '',
++      String(entry.message || '').slice(0, 500),
++      detail.length > 45000 ? detail.slice(0, 45000) + '...[truncated]' : detail
++    ];
++    const lock = LockService.getScriptLock();
++    try { lock.waitLock(4000); } catch (lockErr) {}
++    try { sheet.appendRow(row); } finally { try { lock.releaseLock(); } catch (err) {} }
++  } catch (err) {
++    Logger.log('동시성 테스트 로그 기록 실패: ' + (err && err.stack || err));
++  }
++}
++
++function getPortalConcurrencyRecentLogsP240_(limit) {
++  limit = Math.max(1, Math.min(100, Number(limit) || 20));
++  const sheet = ensurePortalConcurrencyTestLogSheetP240_();
++  const lastRow = sheet.getLastRow();
++  if (lastRow < 2) return [];
++  const start = Math.max(2, lastRow - limit + 1);
++  const values = sheet.getRange(start, 1, lastRow - start + 1, PORTAL_CONCURRENCY_TEST_LOG_HEADERS_P240.length).getDisplayValues();
++  return values.reverse().map(function(r) {
++    return {
++      at: r[0],
++      runId: r[1],
++      scenario: r[2],
++      seq: r[3],
++      result: r[4],
++      elapsedMs: r[5],
++      message: r[10]
++    };
++  });
++}
++
++function ensurePortalConcurrencyTestLogSheetP240_() {
++  const ss = getWebAppDbSpreadsheet_();
++  let sheet = ss.getSheetByName(PORTAL_CONCURRENCY_TEST_LOG_SHEET_NAME_P240);
++  if (!sheet) sheet = ss.insertSheet(PORTAL_CONCURRENCY_TEST_LOG_SHEET_NAME_P240);
++  ensureSheetHeaders_(sheet, PORTAL_CONCURRENCY_TEST_LOG_HEADERS_P240);
++  try { sheet.setFrozenRows(1); sheet.getRange(1, 1, 1, PORTAL_CONCURRENCY_TEST_LOG_HEADERS_P240.length).setFontWeight('bold').setBackground('#f2f4f7'); } catch (err) {}
++  return sheet;
++}
++
++function ensurePortalConcurrencyTestStateSheetP240_() {
++  const ss = getWebAppDbSpreadsheet_();
++  let sheet = ss.getSheetByName(PORTAL_CONCURRENCY_TEST_STATE_SHEET_NAME_P240);
++  if (!sheet) sheet = ss.insertSheet(PORTAL_CONCURRENCY_TEST_STATE_SHEET_NAME_P240);
++  ensureSheetHeaders_(sheet, PORTAL_CONCURRENCY_TEST_STATE_HEADERS_P240);
++  try { sheet.setFrozenRows(1); sheet.getRange(1, 1, 1, PORTAL_CONCURRENCY_TEST_STATE_HEADERS_P240.length).setFontWeight('bold').setBackground('#f2f4f7'); } catch (err) {}
++  return sheet;
++}
++
++function assertPortalCanRunConcurrencyTestP240_() {
++  const perm = getPortalCurrentPermission_();
++  if (!perm || perm.active === false || !perm.canUseAdminHome) {
++    throw new Error('동시성 테스트는 관리자/서무 권한에서만 실행할 수 있습니다.');
++  }
++  return perm;
++}
++
++function sanitizePortalConcurrencyRunIdP240_(value) {
++  return String(value || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
++}
++
++function makePortalConcurrencyRunIdP240_() {
++  return 'CT' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyMMddHHmmss') + '_' + Math.floor(Math.random() * 10000);
++}
++
++function makePortalConcurrencyMarkerP240_(runId) {
++  runId = sanitizePortalConcurrencyRunIdP240_(runId || makePortalConcurrencyRunIdP240_());
++  return '[CONCURRENCY_TEST:' + runId + ']';
++}
++
++function findPortalConcurrencyDuplicatesP240_(results, key) {
++  const seen = {};
++  const dup = {};
++  (results || []).forEach(function(r) {
++    const v = String(r && r[key] || '').trim();
++    if (!v) return;
++    if (seen[v]) dup[v] = true;
++    seen[v] = true;
++  });
++  return Object.keys(dup);
++}
++
++function deleteRowsBottomUpP240_(sheet, rows) {
++  rows = (rows || []).map(function(v) { return Number(v) || 0; }).filter(Boolean).sort(function(a, b) { return b - a; });
++  rows.forEach(function(rowNo) {
++    try { sheet.deleteRow(rowNo); } catch (err) {}
++  });
++}
+diff -ruN '--exclude=STEP10_CHANGED_DIFF.patch' portal_step9_base_for_step10/Client_Router.html portal_step10_work/Client_Router.html
+--- portal_step9_base_for_step10/Client_Router.html	2026-06-27 01:38:42.000000000 +0000
++++ portal_step10_work/Client_Router.html	2026-06-27 03:32:07.846934802 +0000
+@@ -127,6 +127,14 @@
+     return;
+   }
+ 
++  if (page === 'concurrencyTest') {
++    document.getElementById('concurrencyTestSection').classList.add('active');
++    pageTitle.textContent = '동시성 테스트';
++    pageSubtitle.textContent = '저장 Lock, 동시 요청, 테스트 데이터 정리를 관리자 전용으로 검증합니다.';
++    loadConcurrencyTestPageP240(false);
++    return;
++  }
++
+   if (page === 'today') {
+     document.getElementById('todaySection').classList.add('active');
+     pageTitle.textContent = '오늘 할 일';
+diff -ruN '--exclude=STEP10_CHANGED_DIFF.patch' portal_step9_base_for_step10/Component_ConcurrencyTest.html portal_step10_work/Component_ConcurrencyTest.html
+--- portal_step9_base_for_step10/Component_ConcurrencyTest.html	1970-01-01 00:00:00.000000000 +0000
++++ portal_step10_work/Component_ConcurrencyTest.html	2026-06-27 03:33:55.114900797 +0000
+@@ -0,0 +1,279 @@
++<style>
++.concurrency-test-section-p240 { max-width: 1180px; }
++.concurrency-wrap-p240 { display:flex; flex-direction:column; gap:14px; }
++.concurrency-head-p240 { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:16px; border:1px solid #d7dde8; border-radius:16px; background:#fff; }
++.concurrency-title-p240 { font-size:18px; font-weight:800; color:#172033; }
++.concurrency-sub-p240 { margin-top:4px; font-size:12px; color:#667085; line-height:1.5; }
++.concurrency-actions-p240 { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
++.concurrency-grid-p240 { display:grid; grid-template-columns: 1.1fr .9fr; gap:14px; }
++.concurrency-card-p240 { border:1px solid #d7dde8; border-radius:16px; background:#fff; padding:16px; }
++.concurrency-card-title-p240 { font-size:15px; font-weight:800; margin-bottom:8px; color:#1d2939; }
++.concurrency-form-p240 { display:grid; grid-template-columns: 140px 1fr; gap:10px; align-items:center; }
++.concurrency-form-p240 label { font-size:12px; font-weight:700; color:#475467; }
++.concurrency-form-p240 input, .concurrency-form-p240 select { width:100%; min-height:34px; border:1px solid #cfd6e4; border-radius:10px; padding:7px 10px; font-size:13px; box-sizing:border-box; }
++.concurrency-scenario-buttons-p240 { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
++.concurrency-note-p240 { padding:10px 12px; border-radius:12px; background:#fff8e6; border:1px solid #f1d08a; color:#7a4b00; font-size:12px; line-height:1.55; }
++.concurrency-danger-note-p240 { padding:10px 12px; border-radius:12px; background:#fff1f0; border:1px solid #ffb8b0; color:#9f1c12; font-size:12px; line-height:1.55; margin-top:10px; }
++.concurrency-progress-p240 { min-height:10px; height:10px; background:#edf1f7; border-radius:999px; overflow:hidden; margin:10px 0 4px; }
++.concurrency-progress-bar-p240 { height:100%; width:0%; background:#246bfe; transition:width .15s ease; }
++.concurrency-result-summary-p240 { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:8px; margin-top:12px; }
++.concurrency-metric-p240 { border:1px solid #e3e8f2; border-radius:12px; padding:10px; background:#fafbff; }
++.concurrency-metric-p240 span { display:block; font-size:11px; color:#667085; }
++.concurrency-metric-p240 strong { display:block; margin-top:3px; font-size:18px; color:#101828; }
++.concurrency-log-table-p240 { width:100%; border-collapse:collapse; font-size:12px; }
++.concurrency-log-table-p240 th, .concurrency-log-table-p240 td { padding:7px 8px; border-bottom:1px solid #edf1f7; text-align:left; vertical-align:top; }
++.concurrency-log-table-p240 th { background:#f8fafc; color:#475467; font-weight:800; }
++.concurrency-status-p240 { display:inline-flex; align-items:center; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:800; }
++.concurrency-status-p240.ok { background:#e8f7ee; color:#027a48; }
++.concurrency-status-p240.fail { background:#fff1f0; color:#b42318; }
++.concurrency-status-p240.info { background:#eef4ff; color:#175cd3; }
++.concurrency-small-p240 { color:#667085; font-size:12px; line-height:1.5; }
++.concurrency-json-p240 { max-height:220px; overflow:auto; background:#101828; color:#f2f4f7; padding:10px; border-radius:12px; font-size:11px; white-space:pre-wrap; }
++.concurrency-denied-p240 { padding:18px; border:1px solid #ffd0cc; background:#fff5f4; color:#9f1c12; border-radius:14px; }
++@media (max-width: 960px) { .concurrency-grid-p240 { grid-template-columns:1fr; } .concurrency-result-summary-p240 { grid-template-columns:repeat(2, minmax(0,1fr)); } }
++</style>
++<script>
++let concurrencyInitP240_ = null;
++let concurrencyRunningP240_ = false;
++let concurrencyLastRunP240_ = null;
++
++function loadConcurrencyTestPageP240(force) {
++  const area = document.getElementById('concurrencyTestAreaP240');
++  if (!area) return;
++  const p = typeof getPortalPermission_ === 'function' ? getPortalPermission_() : null;
++  if (!(p && p.canUseAdminHome)) {
++    area.innerHTML = '<div class="concurrency-denied-p240">동시성 테스트는 관리자/서무 권한에서만 사용할 수 있습니다.</div>';
++    return;
++  }
++  if (concurrencyInitP240_ && !force) {
++    renderConcurrencyTestPageP240_(concurrencyInitP240_);
++    return;
++  }
++  area.innerHTML = '<div class="loading">동시성 테스트 패널을 불러오는 중입니다...</div>';
++  google.script.run
++    .withSuccessHandler(function(res) {
++      concurrencyInitP240_ = res || {};
++      renderConcurrencyTestPageP240_(concurrencyInitP240_);
++    })
++    .withFailureHandler(function(err) {
++      area.innerHTML = '<div class="concurrency-denied-p240">동시성 테스트 패널을 불러오지 못했습니다.<br>' + escapeHtml_(getConcurrencyErrorP240_(err)) + '</div>';
++    })
++    .getPortalConcurrencyTestInitP240();
++}
++
++function renderConcurrencyTestPageP240_(init) {
++  const area = document.getElementById('concurrencyTestAreaP240');
++  if (!area) return;
++  init = init || {};
++  const maxCount = Number(init.maxCount) || 20;
++  const recentRows = Array.isArray(init.recentLogs) ? init.recentLogs : [];
++  let html = '';
++  html += '<div class="concurrency-wrap-p240">';
++  html += '<div class="concurrency-head-p240">';
++  html += '<div><div class="concurrency-title-p240">관리자 전용 동시성 테스트</div>';
++  html += '<div class="concurrency-sub-p240">여러 개의 google.script.run 요청을 동시에 발사해 Lock, 저장 충돌, 테스트 데이터 정리를 확인합니다. 실제 메일 발송은 하지 않습니다.</div></div>';
++  html += '<div class="concurrency-actions-p240"><button class="secondary" onclick="loadConcurrencyTestPageP240(true)">새로고침</button><button class="secondary" onclick="cleanupLastConcurrencyRunP240_()">마지막 실행ID 정리</button></div>';
++  html += '</div>';
++
++  html += '<div class="concurrency-grid-p240">';
++  html += '<div class="concurrency-card-p240">';
++  html += '<div class="concurrency-card-title-p240">테스트 설정</div>';
++  html += '<div class="concurrency-form-p240">';
++  html += '<label>동시 요청 수</label><input id="concCountP240" type="number" min="1" max="' + maxCount + '" value="10">';
++  html += '<label>랜덤 지연(ms)</label><input id="concJitterP240" type="number" min="0" max="1500" value="150" title="각 요청 시작 전에 0~입력값 ms 랜덤 지연을 줍니다.">';
++  html += '<label>오늘할일 날짜</label><input id="concTodayDateP240" type="date" value="' + escapeHtml_(getTodayIsoDateP240_()) + '">';
++  html += '<label>고객 메모 rowNo</label><input id="concCustomerRowNoP240" type="number" min="3" placeholder="TEST 고객 행 번호만 입력">';
++  html += '<label>고객번호 선택</label><input id="concCustomerNoP240" placeholder="선택 입력. rowNo만으로도 실행 가능">';
++  html += '</div>';
++  html += '<div class="concurrency-scenario-buttons-p240">';
++  html += '<button onclick="runConcurrencyScenarioP240_(\'SUPPORT_CREATE\')">영업지원요청 10건 동시등록</button>';
++  html += '<button onclick="runConcurrencyScenarioP240_(\'TODAY_UPSERT\')">오늘할일 10건 동시저장</button>';
++  html += '<button class="danger" onclick="runConcurrencyScenarioP240_(\'CUSTOMER_MEMO\')">고객 메모 동시저장</button>';
++  html += '</div>';
++  html += '<div class="concurrency-note-p240">권장 순서: 영업지원요청 → 오늘할일 → 고객 메모. 고객 메모 테스트는 실제 메모를 덮어쓴 뒤 상태 시트에 저장된 원본값으로 복구합니다.</div>';
++  html += '<div class="concurrency-danger-note-p240">고객 메모 테스트는 반드시 TEST 고객 rowNo로만 실행하세요. 실제 고객 rowNo를 넣으면 그 고객 메모가 테스트 문구로 잠시 바뀝니다.</div>';
++  html += '</div>';
++
++  html += '<div class="concurrency-card-p240">';
++  html += '<div class="concurrency-card-title-p240">실행 상태</div>';
++  html += '<div id="concurrencyRunInfoP240" class="concurrency-small-p240">아직 실행한 테스트가 없습니다.</div>';
++  html += '<div class="concurrency-progress-p240"><div id="concurrencyProgressBarP240" class="concurrency-progress-bar-p240"></div></div>';
++  html += '<div id="concurrencySummaryP240"></div>';
++  html += '<pre id="concurrencyJsonP240" class="concurrency-json-p240" style="display:none"></pre>';
++  html += '</div>';
++  html += '</div>';
++
++  html += '<div class="concurrency-card-p240">';
++  html += '<div class="concurrency-card-title-p240">최근 테스트 로그</div>';
++  html += renderConcurrencyRecentLogTableP240_(recentRows);
++  html += '</div>';
++  html += '</div>';
++  area.innerHTML = html;
++}
++
++function renderConcurrencyRecentLogTableP240_(rows) {
++  rows = Array.isArray(rows) ? rows : [];
++  if (!rows.length) return '<div class="concurrency-small-p240">아직 로그가 없습니다.</div>';
++  let html = '<table class="concurrency-log-table-p240"><thead><tr><th>시각</th><th>실행ID</th><th>시나리오</th><th>순번</th><th>결과</th><th>메시지</th></tr></thead><tbody>';
++  rows.forEach(function(r) {
++    const ok = String(r.result || '').toUpperCase() === 'OK';
++    html += '<tr><td>' + escapeHtml_(r.at || '') + '</td><td>' + escapeHtml_(r.runId || '') + '</td><td>' + escapeHtml_(r.scenario || '') + '</td><td>' + escapeHtml_(r.seq || '') + '</td><td><span class="concurrency-status-p240 ' + (ok ? 'ok' : 'fail') + '">' + escapeHtml_(r.result || '') + '</span></td><td>' + escapeHtml_(r.message || '') + '</td></tr>';
++  });
++  html += '</tbody></table>';
++  return html;
++}
++
++function runConcurrencyScenarioP240_(scenario) {
++  if (concurrencyRunningP240_) {
++    toast('이미 동시성 테스트가 실행 중입니다.');
++    return;
++  }
++  const count = clampConcurrencyCountP240_();
++  const jitterMs = clampConcurrencyJitterP240_();
++  const runId = makeClientConcurrencyRunIdP240_();
++  const marker = '[CONCURRENCY_TEST:' + runId + ']';
++  const customerRowNo = Number((document.getElementById('concCustomerRowNoP240') || {}).value) || 0;
++  const customerNo = String((document.getElementById('concCustomerNoP240') || {}).value || '').trim();
++  const date = String((document.getElementById('concTodayDateP240') || {}).value || '').trim();
++  if (scenario === 'CUSTOMER_MEMO') {
++    if (!customerRowNo || customerRowNo < 3) {
++      toast('고객 메모 테스트는 TEST 고객 rowNo를 먼저 입력해야 합니다.');
++      return;
++    }
++    if (!confirm('고객 메모 테스트는 입력한 rowNo의 실제 메모를 잠시 덮어씁니다. TEST 고객 행이 맞습니까?')) return;
++  }
++  concurrencyRunningP240_ = true;
++  concurrencyLastRunP240_ = { runId: runId, scenario: scenario, marker: marker };
++  updateConcurrencyProgressP240_(0, count, runId, scenario);
++  setConcurrencySummaryP240_('실행 중', { total: count, success: 0, failed: 0, avgMs: '-', maxMs: '-' }, null);
++  const promises = [];
++  for (let i = 1; i <= count; i++) {
++    promises.push(callConcurrencyActionP240_({
++      scenario: scenario,
++      runId: runId,
++      seq: i,
++      jitterMs: jitterMs,
++      date: date,
++      customerRowNo: customerRowNo,
++      customerNo: customerNo
++    }).then(function(res) {
++      const done = promises.filter(function(p) { return p.__done; }).length + 1;
++      promises[i - 1].__done = true;
++      updateConcurrencyProgressP240_(done, count, runId, scenario);
++      return res;
++    }));
++  }
++  Promise.all(promises).then(function(results) {
++    return callConcurrencySummaryP240_({ scenario: scenario, runId: runId, results: results }).then(function(summary) {
++      concurrencyRunningP240_ = false;
++      setConcurrencySummaryP240_(summary && summary.pass ? 'PASS' : '확인 필요', summary || {}, results);
++      loadConcurrencyTestPageP240(true);
++      return summary;
++    });
++  }).catch(function(err) {
++    concurrencyRunningP240_ = false;
++    setConcurrencySummaryP240_('실행 실패', { error: getConcurrencyErrorP240_(err) }, null);
++  });
++}
++
++function callConcurrencyActionP240_(payload) {
++  return new Promise(function(resolve) {
++    google.script.run
++      .withSuccessHandler(function(res) { resolve(res || { ok: false, error: 'empty response' }); })
++      .withFailureHandler(function(err) { resolve({ ok: false, error: getConcurrencyErrorP240_(err), scenario: payload.scenario, seq: payload.seq, elapsedMs: 0 }); })
++      .runPortalConcurrencyTestActionP240(payload);
++  });
++}
++
++function callConcurrencySummaryP240_(payload) {
++  return new Promise(function(resolve) {
++    google.script.run
++      .withSuccessHandler(function(res) { resolve(res || {}); })
++      .withFailureHandler(function(err) { resolve({ ok: false, pass: false, error: getConcurrencyErrorP240_(err), total: (payload.results || []).length }); })
++      .summarizePortalConcurrencyTestRunP240(payload);
++  });
++}
++
++function cleanupLastConcurrencyRunP240_() {
++  const runId = concurrencyLastRunP240_ && concurrencyLastRunP240_.runId;
++  const manual = prompt('정리할 실행ID를 입력하세요. 마지막 실행ID가 자동 입력되어 있습니다.', runId || '');
++  const targetRunId = String(manual || '').trim();
++  if (!targetRunId) return;
++  if (!confirm(targetRunId + ' 실행ID의 테스트 데이터를 정리합니다. 진행할까요?')) return;
++  google.script.run
++    .withSuccessHandler(function(res) {
++      toast('테스트 데이터 정리 완료');
++      const box = document.getElementById('concurrencyJsonP240');
++      if (box) { box.style.display = 'block'; box.textContent = JSON.stringify(res || {}, null, 2); }
++      loadConcurrencyTestPageP240(true);
++    })
++    .withFailureHandler(function(err) { toast(getConcurrencyErrorP240_(err)); })
++    .cleanupPortalConcurrencyTestRunP240({ runId: targetRunId, restoreCustomer: true });
++}
++
++function updateConcurrencyProgressP240_(done, total, runId, scenario) {
++  const pct = total ? Math.round(done / total * 100) : 0;
++  const bar = document.getElementById('concurrencyProgressBarP240');
++  if (bar) bar.style.width = pct + '%';
++  const info = document.getElementById('concurrencyRunInfoP240');
++  if (info) info.innerHTML = '<b>실행ID:</b> ' + escapeHtml_(runId || '-') + ' · <b>시나리오:</b> ' + escapeHtml_(scenario || '-') + ' · ' + done + '/' + total + ' 완료';
++}
++
++function setConcurrencySummaryP240_(label, summary, results) {
++  const el = document.getElementById('concurrencySummaryP240');
++  if (!el) return;
++  summary = summary || {};
++  const okClass = label === 'PASS' || label === '실행 중' ? 'ok' : 'fail';
++  let html = '<div style="margin-top:10px"><span class="concurrency-status-p240 ' + okClass + '">' + escapeHtml_(label || '-') + '</span></div>';
++  html += '<div class="concurrency-result-summary-p240">';
++  html += '<div class="concurrency-metric-p240"><span>전체</span><strong>' + escapeHtml_(String(summary.total || 0)) + '</strong></div>';
++  html += '<div class="concurrency-metric-p240"><span>성공</span><strong>' + escapeHtml_(String(summary.success || 0)) + '</strong></div>';
++  html += '<div class="concurrency-metric-p240"><span>실패</span><strong>' + escapeHtml_(String(summary.failed || 0)) + '</strong></div>';
++  html += '<div class="concurrency-metric-p240"><span>평균ms</span><strong>' + escapeHtml_(String(summary.avgMs || '-')) + '</strong></div>';
++  html += '<div class="concurrency-metric-p240"><span>최대ms</span><strong>' + escapeHtml_(String(summary.maxMs || '-')) + '</strong></div>';
++  html += '</div>';
++  if (summary.duplicateRowNos && summary.duplicateRowNos.length) html += '<div class="concurrency-danger-note-p240">중복 rowNo 감지: ' + escapeHtml_(summary.duplicateRowNos.join(', ')) + '</div>';
++  if (summary.duplicateReceipts && summary.duplicateReceipts.length) html += '<div class="concurrency-danger-note-p240">중복 접수번호 감지: ' + escapeHtml_(summary.duplicateReceipts.join(', ')) + '</div>';
++  if (summary.error) html += '<div class="concurrency-danger-note-p240">' + escapeHtml_(summary.error) + '</div>';
++  el.innerHTML = html;
++  const box = document.getElementById('concurrencyJsonP240');
++  if (box) {
++    box.style.display = summary && Object.keys(summary).length ? 'block' : 'none';
++    box.textContent = JSON.stringify({ summary: summary, sampleResults: (results || []).slice(0, 10) }, null, 2);
++  }
++}
++
++function clampConcurrencyCountP240_() {
++  const initMax = Number(concurrencyInitP240_ && concurrencyInitP240_.maxCount) || 20;
++  const el = document.getElementById('concCountP240');
++  const v = Math.max(1, Math.min(initMax, Number(el && el.value) || 10));
++  if (el) el.value = v;
++  return v;
++}
++
++function clampConcurrencyJitterP240_() {
++  const el = document.getElementById('concJitterP240');
++  const v = Math.max(0, Math.min(1500, Number(el && el.value) || 0));
++  if (el) el.value = v;
++  return v;
++}
++
++function makeClientConcurrencyRunIdP240_() {
++  const d = new Date();
++  const pad = function(n) { return String(n).padStart(2, '0'); };
++  return 'CT' + String(d.getFullYear()).slice(2) + pad(d.getMonth() + 1) + pad(d.getDate()) + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '_' + Math.floor(Math.random() * 10000);
++}
++
++function getTodayIsoDateP240_() {
++  const d = new Date();
++  const pad = function(n) { return String(n).padStart(2, '0'); };
++  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
++}
++
++function getConcurrencyErrorP240_(err) {
++  let msg = '';
++  try { msg = typeof getErrorMessage_ === 'function' ? getErrorMessage_(err) : ''; } catch (e) {}
++  if (!msg) msg = err && err.message ? err.message : String(err || '');
++  return String(msg || '처리하지 못했습니다.').replace(/Exception:|ScriptError/gi, '').trim();
++}
++</script>
+diff -ruN '--exclude=STEP10_CHANGED_DIFF.patch' portal_step9_base_for_step10/Index.html portal_step10_work/Index.html
+--- portal_step9_base_for_step10/Index.html	2026-06-27 01:38:42.000000000 +0000
++++ portal_step10_work/Index.html	2026-06-27 03:32:07.846615433 +0000
+@@ -23,6 +23,7 @@
+       <div class="sidebar-company">시큐리티홀딩스</div>
+       <div class="sidebar-bottom-links">
+         <button type="button" class="sidebar-bottom-link system-health-nav-p208" onclick="switchPage('systemHealth')">시스템 점검</button>
++        <button type="button" class="sidebar-bottom-link concurrency-test-nav-p240" onclick="switchPage('concurrencyTest')">동시성 테스트</button>
+         <button type="button" class="sidebar-bottom-link" onclick="switchPage('settings')">설정</button>
+       </div>
+     </aside>
+@@ -188,6 +189,10 @@
+         <div id="systemHealthAreaP208"><div class="loading">시스템 점검 정보를 불러오는 중입니다.</div></div>
+       </section>
+ 
++      <section class="panel page-section concurrency-test-section-p240" id="concurrencyTestSection">
++        <div id="concurrencyTestAreaP240"><div class="loading">동시성 테스트 패널을 준비하는 중입니다.</div></div>
++      </section>
++
+       <section class="panel page-section" id="placeholderSection"><div class="placeholder-panel"><div class="placeholder-title" id="placeholderTitle">준비 중</div><div class="placeholder-desc" id="placeholderDesc">이 메뉴는 다음 단계에서 붙일 예정입니다.</div></div></section>
+     </main>
+   </div>
+@@ -380,6 +385,7 @@
+   <?!= include('Component_Today'); ?>
+   <?!= include('Component_ActivityLog'); ?>
+   <?!= include('Component_SystemHealth'); ?>
++  <?!= include('Component_ConcurrencyTest'); ?>
+   <?!= include('Component_Modals'); ?>
+ </body>
+ </html>
+diff -ruN '--exclude=STEP10_CHANGED_DIFF.patch' portal_step9_base_for_step10/STEP10_CONCURRENCY_TEST_PANEL_REPORT.txt portal_step10_work/STEP10_CONCURRENCY_TEST_PANEL_REPORT.txt
+--- portal_step9_base_for_step10/STEP10_CONCURRENCY_TEST_PANEL_REPORT.txt	1970-01-01 00:00:00.000000000 +0000
++++ portal_step10_work/STEP10_CONCURRENCY_TEST_PANEL_REPORT.txt	2026-06-27 03:35:46.931164362 +0000
+@@ -0,0 +1,81 @@
++STEP10 관리자 전용 동시성 테스트 패널 추가 보고서
++
++기준선
++- 영업전산포탈_STEP9_onEdit메타Batch처리개선.zip
++
++수정/추가 범위
++- 수정: Index.html
++  · 사이드바 하단에 동시성 테스트 메뉴 추가
++  · concurrencyTestSection 섹션 추가
++  · Component_ConcurrencyTest include 추가
++- 수정: Client_Router.html
++  · switchPage('concurrencyTest') 라우팅 추가
++- 추가: 22_ConcurrencyTestService.gs
++  · 관리자 전용 테스트 서버 API 추가
++  · 테스트 로그/상태 시트 관리
++  · 영업지원요청 동시 신규등록 테스트
++  · 오늘할일 동시 upsert 저장 테스트
++  · 고객 메모 동시 저장 테스트 및 원본 복구 지원
++- 추가: Component_ConcurrencyTest.html
++  · 관리자 전용 테스트 UI 추가
++  · 브라우저에서 google.script.run 요청을 N개 동시 발사
++  · 결과 요약/최근 로그/cleanup 실행 제공
++
++안전장치
++1. 실제 메일 발송 함수는 호출하지 않음.
++2. 관리자/서무 권한(canUseAdminHome)이 없으면 화면과 서버 함수 모두 차단.
++3. 영업지원/오늘할일 테스트 데이터는 [CONCURRENCY_TEST:실행ID] 마커 사용.
++4. 영업지원 테스트는 고객번호를 비워 마스터 메모 반영을 피함.
++5. cleanupPortalConcurrencyTestRunP240()로 실행ID 기준 테스트 데이터 정리 가능.
++6. 고객 메모 테스트는 rowNo 입력 시에만 실행되며, 실행 전 원본 메모를 포털_동시성테스트상태 시트에 저장함.
++7. 고객 메모 테스트 cleanup 시 저장된 원본 메모로 복구함.
++
++추가되는 테스트 시트
++- 포털_동시성테스트로그
++  · 테스트 액션별 결과, 소요시간, rowNo, receiptNo, taskId, 상세JSON 기록
++- 포털_동시성테스트상태
++  · 고객 메모 테스트 원본값 보관/복구 상태 기록
++
++테스트 시나리오
++1. SUPPORT_CREATE
++   - savePortalSupportRequest()를 여러 요청에서 동시에 호출
++   - 접수번호 중복, rowNo 중복, Lock timeout 여부 확인
++   - cleanup 시 요청업무에 marker가 있는 테스트 행만 삭제
++
++2. TODAY_UPSERT
++   - savePortalTodosForDate()를 여러 요청에서 동시에 호출
++   - 각 요청은 고유 할일ID를 사용
++   - baseTaskIds=[]를 명시해 기존 다른 할일 삭제를 방지
++   - cleanup 시 marker가 있는 오늘할일만 삭제여부=Y 처리
++
++3. CUSTOMER_MEMO
++   - 입력한 rowNo에 대해 saveCustomerMemoFast()를 여러 요청에서 동시에 호출
++   - 실제 고객 메모를 바꾸므로 TEST 고객 rowNo에서만 사용 권장
++   - 실행 전 원본 메모를 상태 시트에 저장
++   - cleanup 시 원본 메모로 복구
++
++사용 방법
++1. 새 배포 후 관리자/서무 계정으로 포털 접속
++2. 좌측 하단 [동시성 테스트] 클릭
++3. 동시 요청 수 5 또는 10부터 시작
++4. 영업지원요청 테스트 실행
++5. 오늘할일 테스트 실행
++6. 필요 시 TEST 고객 rowNo를 입력하고 고객 메모 테스트 실행
++7. 실행 후 [마지막 실행ID 정리]로 테스트 데이터 cleanup
++
++권장 테스트 순서
++- 1차: 동시 요청 수 5, 랜덤 지연 150ms
++- 2차: 동시 요청 수 10, 랜덤 지연 150ms
++- 3차: 동시 요청 수 20, 랜덤 지연 300ms
++- 고객 메모 테스트는 TEST 고객 rowNo로만 별도 실행
++
++회귀 방지
++- 기존 메일 발송, 고객 저장, 영업지원, 오늘할일, onEdit 함수는 삭제/이름변경하지 않음.
++- 기존 운영 함수 호출부는 수정하지 않음.
++- 테스트 패널은 신규 route/section/server API로 분리.
++
++검증
++- 모든 .gs 문법 검사 통과
++- 모든 .html script 문법 검사 통과
++- STEP10에서 새로 생긴 함수명 중복 없음
++- 주요 기존 함수 존재 확인 완료
+diff -ruN '--exclude=STEP10_CHANGED_DIFF.patch' portal_step9_base_for_step10/STEP10_STATIC_CHECK.json portal_step10_work/STEP10_STATIC_CHECK.json
+--- portal_step9_base_for_step10/STEP10_STATIC_CHECK.json	1970-01-01 00:00:00.000000000 +0000
++++ portal_step10_work/STEP10_STATIC_CHECK.json	2026-06-27 03:35:19.805311606 +0000
+@@ -0,0 +1,46 @@
++{
++  "baseline": "영업전산포탈_STEP9_onEdit메타Batch처리개선.zip",
++  "changed_files": [
++    "Client_Router.html",
++    "Index.html"
++  ],
++  "added_files": [
++    "22_ConcurrencyTestService.gs",
++    "Component_ConcurrencyTest.html",
++    "STEP10_CHANGED_DIFF.patch",
++    "STEP10_STATIC_CHECK.json"
++  ],
++  "deleted_files": [],
++  "syntax_error_count": 0,
++  "syntax_errors": [],
++  "new_duplicate_function_count": 0,
++  "new_duplicate_functions": {},
++  "preexisting_duplicate_helpers_unchanged": {
++    "08_TodayService.gs": {
++      "add": 2
++    },
++    "Component_Today.html": {
++      "add": 2
++    }
++  },
++  "required_function_presence": {
++    "preparePortalMailFilesForReviewFromUi": true,
++    "sendPortalMailFromUi": true,
++    "saveCustomerDetailFast": true,
++    "saveCustomerMemoFast": true,
++    "savePortalSupportRequest": true,
++    "savePortalTodosForDate": true,
++    "onMasterSheetEditSyncP201": true,
++    "getPortalConcurrencyTestInitP240": true,
++    "runPortalConcurrencyTestActionP240": true,
++    "summarizePortalConcurrencyTestRunP240": true,
++    "cleanupPortalConcurrencyTestRunP240": true,
++    "loadConcurrencyTestPageP240": true
++  },
++  "safety_notes": [
++    "실제 메일 발송 함수는 호출하지 않음",
++    "영업지원/오늘할일 테스트 데이터는 [CONCURRENCY_TEST:runId] 마커 사용",
++    "고객 메모 테스트는 rowNo 입력시에만 실행되며 원본 메모를 상태 시트에 보관 후 cleanup 복구 가능",
++    "관리자/서무 canUseAdminHome 권한이 없으면 패널/서버 함수 차단"
++  ]
++}
+\ No newline at end of file

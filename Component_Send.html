@@ -92,6 +92,7 @@ function renderSendFileQuickPresetPanel_() {
         '<button type="button" class="send-file-preset-btn" onclick="applySendFileQuickPreset_(&quot;first&quot;)">#최초</button>' +
         '<button type="button" class="send-file-preset-btn" onclick="applySendFileQuickPreset_(&quot;required&quot;)">#필수</button>' +
         '<button type="button" class="send-file-preset-btn" onclick="applySendFileQuickPreset_(&quot;contractor&quot;)">#수행사</button>' +
+        '<button type="button" class="send-file-preset-btn send-file-clear-btn" onclick="clearAllSendFileChecksP250_()">모든 체크 해제</button>' +
       '</div>' +
     '</div>';
 }
@@ -124,6 +125,18 @@ function applySendFileQuickPreset_(preset) {
   sendSelectedFileKeysV50 = selected.slice();
   clearSendReviewSessionV75_('file quick preset changed');
   renderSendPreview();
+}
+
+function clearAllSendFileChecksP250_() {
+  document.querySelectorAll('.send-file-check').forEach(function(el) {
+    el.checked = false;
+  });
+  sendSelectedFileKeysV50 = [];
+  clearSendReviewSessionV75_('all file checks cleared');
+  captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
+  renderSendPreview();
+  renderSendWorkspaceTabsP211_();
+  toast('발송자료 체크를 모두 해제했습니다.');
 }
 
 // PATCH N: 견적/자료 발송 고객검색은 화면 부담을 줄이기 위해 5건 단위로 표시합니다.
@@ -654,6 +667,7 @@ function restoreSendWorkspacesFromStorageP213_() {
       const base = buildSendWorkspaceP211_(idx + 1);
       const merged = Object.assign(base, ws || {});
       merged.order = idx + 1;
+      merged.createdAt = Number(merged.createdAt || (savedAt ? savedAt + idx : Date.now() + idx));
       merged.mailProgressPollTimer = null;
       merged.recipientTouched = Object.assign({ to:false, cc:false }, merged.recipientTouched || {});
       merged.searchState = Object.assign({ keyword:'', page:0, pageSize:SEND_CUSTOMER_PAGE_SIZE }, merged.searchState || {});
@@ -685,6 +699,7 @@ function buildSendWorkspaceP211_(order) {
   return {
     id: 'send_ws_' + (Date.now()) + '_' + (sendWorkspaceSeedP211_++),
     order: Number(order || 1),
+    createdAt: Date.now(),
     title: '발송고객 ' + Number(order || 1),
     customerName: '',
     searchState: { keyword: '', page: 0, pageSize: SEND_CUSTOMER_PAGE_SIZE },
@@ -1196,14 +1211,15 @@ function searchSendCustomersPage(page) {
   });
 }
 
-function selectSendCustomer(rowNo) {
+function selectSendCustomer(rowNo, options) {
+  options = options || {};
   const ws = getActiveSendWorkspaceP211_();
   if (!ws) return;
   applySendWorkspaceToGlobalsP211_(ws);
   rowNo = Number(rowNo) || 0;
   const summary = findCustomerRowSummaryByRowNo_(rowNo) || {};
   const targetCustomerNo = normalizeCustomerNoForKey_(summary.customerNo || (sendSelectedDetail && sendSelectedDetail.customerNo) || sendSelectedCustomerNoV50);
-  const dupWs = findSendWorkspaceByCustomerNoP212_(targetCustomerNo, ws.id);
+  const dupWs = options.skipDuplicateCheck ? null : findSendWorkspaceByCustomerNoP212_(targetCustomerNo, ws.id);
   if (dupWs) {
     toast('이미 다른 발송 작업창에서 선택한 고객입니다. 해당 탭으로 이동합니다.');
     activateSendWorkspaceTabP211_(dupWs.id);
@@ -1651,11 +1667,58 @@ function sendPortalMailFromUi(mode) {
   });
 }
 
+function resetSendWorkspaceForExternalOpenP250_(ws) {
+  if (!ws) return null;
+  const oldOrder = Number(ws.order || 1) || 1;
+  try { if (ws.mailProgressPollTimer) clearTimeout(ws.mailProgressPollTimer); } catch (err) {}
+  const next = buildSendWorkspaceP211_(oldOrder);
+  Object.keys(ws).forEach(function(k) { delete ws[k]; });
+  Object.assign(ws, next, { order: oldOrder, title: '발송고객 ' + oldOrder, customerName: '' });
+  return ws;
+}
+
+function getOldestSendWorkspaceForReuseP250_() {
+  ensureSendWorkspacesP211_();
+  if (!sendWorkspacesP211_.length) return null;
+  return sendWorkspacesP211_.slice().sort(function(a, b) {
+    const at = Number(a && a.createdAt || 0) || Number(a && a.order || 0) || 0;
+    const bt = Number(b && b.createdAt || 0) || Number(b && b.order || 0) || 0;
+    if (at !== bt) return at - bt;
+    return (Number(a && a.order || 0) || 0) - (Number(b && b.order || 0) || 0);
+  })[0] || null;
+}
+
+function createSendWorkspaceForCustomerOpenP250_() {
+  ensureSendWorkspacesP211_();
+  const current = getActiveSendWorkspaceP211_();
+  if (current) captureSendGlobalsToWorkspaceP211_(current);
+
+  let ws;
+  if (sendWorkspacesP211_.length < SEND_WORKSPACE_MAX_P211_) {
+    ws = buildSendWorkspaceP211_(sendWorkspacesP211_.length + 1);
+    sendWorkspacesP211_.push(ws);
+  } else {
+    ws = resetSendWorkspaceForExternalOpenP250_(getOldestSendWorkspaceForReuseP250_());
+    toast('발송 작업창이 5개라 가장 오래된 작업창을 새 고객으로 교체합니다.');
+  }
+
+  sendWorkspacesP211_.forEach(function(item, i) {
+    item.order = i + 1;
+    if (!item.customerName) item.title = '발송고객 ' + (i + 1);
+  });
+  sendActiveWorkspaceIdP211_ = ws ? ws.id : '';
+  persistSendWorkspacesP213_(true);
+  return ws;
+}
+
 function openSendForCustomer(rowNo) {
   switchPage('send', true);
   setTimeout(function(){
-    if (!getActiveSendWorkspaceP211_()) ensureSendWorkspacesP211_();
-    selectSendCustomer(Number(rowNo));
+    const ws = createSendWorkspaceForCustomerOpenP250_();
+    if (!ws) return;
+    renderSendWorkspaceTabsP211_();
+    renderSendWorkspaceBodyP211_();
+    selectSendCustomer(Number(rowNo), { skipDuplicateCheck: true });
   }, 120);
 }
 

@@ -345,27 +345,48 @@ function renderSupportInlineEntryRow_() {
 }
 
 function getSupportRequesterOptions_() {
-  const base = ['김경아','최보람','이옥희','김서하','방수원'];
   const current = (supportCurrentData && supportCurrentData.currentUser) || '';
   const fromServer = (supportCurrentData && supportCurrentData.requesterOptions) || [];
   const out = [];
   function add(v) { v = String(v || '').trim(); if (v && out.indexOf(v) < 0) out.push(v); }
-  add(current);
   fromServer.forEach(add);
-  base.forEach(add);
+  add(current);
   return out;
 }
 
+function renderSupportRequesterOptionsHtml_(selected) {
+  const options = getSupportRequesterOptions_();
+  selected = String(selected || '').trim();
+  if (selected && options.indexOf(selected) < 0) options.unshift(selected);
+  return options.map(function(v) {
+    const sel = String(v || '') === selected ? ' selected' : '';
+    return '<option value="' + escAttr(v) + '"' + sel + '>' + esc(v) + '</option>';
+  }).join('');
+}
+
+function fillSupportRequesterSelect_(id, selected) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const current = String(selected || (supportCurrentData && supportCurrentData.currentUser) || '').trim();
+  if (el.tagName && String(el.tagName).toUpperCase() === 'SELECT') {
+    el.innerHTML = renderSupportRequesterOptionsHtml_(current);
+    if (current) el.value = current;
+  } else {
+    el.value = current;
+    const options = getSupportRequesterOptions_();
+    if (options.length <= 1) el.readOnly = true;
+  }
+}
+
 function initSupportInlineEntryDefaults_() {
-  const requester = document.getElementById('supportInlineRequester');
-  if (requester && supportCurrentData && supportCurrentData.currentUser) requester.value = supportCurrentData.currentUser;
+  fillSupportRequesterSelect_('supportInlineRequester', (supportCurrentData && supportCurrentData.currentUser) || '');
   window.__supportInlineCustomer = null;
 }
 
 function resetSupportInlineEntry() {
   ['supportInlineCustomerNo','supportInlineCustomerName','supportInlineRequestText'].forEach(function(id){ const el=document.getElementById(id); if(el) el.value=''; });
   const type = document.getElementById('supportInlineRequestType'); if (type) type.value = '';
-  const requester = document.getElementById('supportInlineRequester'); if (requester && supportCurrentData && supportCurrentData.currentUser) requester.value = supportCurrentData.currentUser;
+  fillSupportRequesterSelect_('supportInlineRequester', (supportCurrentData && supportCurrentData.currentUser) || '');
   const summary = document.getElementById('supportInlineContractSummary');
   if (summary) { summary.textContent = '고객번호 입력 후 적용을 누르면 계약조건과 고객 정보가 자동으로 표시됩니다.'; summary.className = 'support-inline-placeholder'; }
   renderSupportInlineCustomerHistoryP19_(null);
@@ -729,7 +750,7 @@ function openSupportRequestModal(rowNo, options) {
 
   if (!supportCurrentRowNo) {
     document.getElementById('supportModalTitle').textContent = '영업지원 요청 추가';
-    document.getElementById('supportRequester').value = (supportCurrentData && supportCurrentData.currentUser) || '';
+    fillSupportRequesterSelect_('supportRequester', (supportCurrentData && supportCurrentData.currentUser) || '');
     document.getElementById('supportStatus').value = '접수';
     setTimeout(function(){ const el=document.getElementById('supportCustomerNo'); if(el) el.focus(); }, 80);
     return;
@@ -771,7 +792,10 @@ function resetSupportModal_() {
 function fillSupportSelects_(types, statuses) {
   const typeSel = document.getElementById('supportRequestType');
   const statusSel = document.getElementById('supportStatus');
+  const requesterSel = document.getElementById('supportRequester');
+  const prevRequester = requesterSel ? requesterSel.value : '';
   if (typeSel) typeSel.innerHTML = '<option value="">선택</option>' + (types || []).map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
+  fillSupportRequesterSelect_('supportRequester', prevRequester || (supportCurrentData && supportCurrentData.currentUser) || '');
   if (statusSel) {
     statusSel.innerHTML = (statuses || []).map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
     if (!canPortal_('canCompleteSupport')) {
@@ -785,7 +809,7 @@ function fillSupportModal_(item) {
   item = item || {};
   document.getElementById('supportReceiptNo').value = item.receiptNo || '';
   document.getElementById('supportRequestType').value = item.requestType || '';
-  document.getElementById('supportRequester').value = item.requester || '';
+  fillSupportRequesterSelect_('supportRequester', item.requester || '');
   document.getElementById('supportHandler').value = item.handler || '';
   document.getElementById('supportCustomerNo').value = item.customerNo || '';
   document.getElementById('supportCustomerName').value = item.customerName || '';
