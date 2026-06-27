@@ -1260,6 +1260,10 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   const discountRate = getCustomerMasterHeaderValueK2_(obj, 'discountRate');
   const specialTerms = getCustomerMasterHeaderValueK2_(obj, 'specialTerms');
 
+  const orderInfoP250 = (options.lite || options.includeOrderInfo === false || typeof getPortalCustomerOrderInfoByTargetP250_ !== 'function')
+    ? null
+    : getPortalCustomerOrderInfoByTargetP250_({ customerNo: customerNo, rowNo: rowNo, obj: obj });
+
   const detail = {
     rowNo: rowNo,
     company: company,
@@ -1296,6 +1300,7 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     detailFields: buildDetailFieldValues_(obj),
     quoteCalcDefaults: buildQuoteCalcDefaults_(obj),
     contactLogs: options.includeLogs === false ? [] : getContactHistoryByCustomer_(customerNo, rowNo),
+    orderInfo: orderInfoP250 || { exists: false, contractNo: '', rowNo: 0, customerNo: customerNo, company: company },
     raw: options.includeRaw === false ? {} : obj,
     __lite: !!options.lite,
     __source: options.lite ? 'master-lite' : 'master',

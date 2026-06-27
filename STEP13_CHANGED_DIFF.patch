@@ -1,0 +1,684 @@
+--- STEP12/05_CustomerService.gs
++++ STEP13/05_CustomerService.gs
+@@ -1260,6 +1260,10 @@
+   const discountRate = getCustomerMasterHeaderValueK2_(obj, 'discountRate');
+   const specialTerms = getCustomerMasterHeaderValueK2_(obj, 'specialTerms');
+ 
++  const orderInfoP250 = (options.lite || options.includeOrderInfo === false || typeof getPortalCustomerOrderInfoByTargetP250_ !== 'function')
++    ? null
++    : getPortalCustomerOrderInfoByTargetP250_({ customerNo: customerNo, rowNo: rowNo, obj: obj });
++
+   const detail = {
+     rowNo: rowNo,
+     company: company,
+@@ -1296,6 +1300,7 @@
+     detailFields: buildDetailFieldValues_(obj),
+     quoteCalcDefaults: buildQuoteCalcDefaults_(obj),
+     contactLogs: options.includeLogs === false ? [] : getContactHistoryByCustomer_(customerNo, rowNo),
++    orderInfo: orderInfoP250 || { exists: false, contractNo: '', rowNo: 0, customerNo: customerNo, company: company },
+     raw: options.includeRaw === false ? {} : obj,
+     __lite: !!options.lite,
+     __source: options.lite ? 'master-lite' : 'master',
+--- STEP12/16_ContractCompleteService.gs
++++ STEP13/16_ContractCompleteService.gs
+@@ -6,6 +6,7 @@
+  ***************************************/
+ 
+ const PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69 = '수주확정/계약완료';
++const PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250 = ['수주확정/계약완료', '수주확정계약완료'];
+ const PORTAL_CONTRACT_COMPLETE_CACHE_KEY_V69 = 'PORTAL_CONTRACT_COMPLETE_LIST_V69';
+ const PORTAL_CONTRACT_COMPLETE_CACHE_SECONDS_V69 = 180;
+ 
+@@ -47,6 +48,26 @@
+   { key: 'performanceDone', label: '성능점검완료여부', headers: ['성능점검완료여부', '성능점검 완료 여부'] }
+ ];
+ 
++
++
++function getContractCompleteSheetV69_(ss) {
++  ss = ss || getMasterSpreadsheet_();
++  const names = (typeof PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250 !== 'undefined' && PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250)
++    ? PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250
++    : [PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69, '수주확정계약완료'];
++  for (let i = 0; i < names.length; i++) {
++    const name = String(names[i] || '').trim();
++    if (!name) continue;
++    const sheet = ss.getSheetByName(name);
++    if (sheet) return sheet;
++  }
++  return null;
++}
++
++function clearContractCompleteCacheV69_() {
++  try { CacheService.getScriptCache().remove(PORTAL_CONTRACT_COMPLETE_CACHE_KEY_V69); } catch (err) {}
++}
++
+ function listContractCompleteRowsV69(options) {
+   options = options || {};
+   const force = options.force === true;
+@@ -64,7 +85,7 @@
+   }
+ 
+   const ss = getMasterSpreadsheet_();
+-  const sheet = ss.getSheetByName(PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69);
++  const sheet = getContractCompleteSheetV69_(ss);
+   if (!sheet) {
+     throw new Error('마스터 파일에서 `' + PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69 + '` 시트를 찾지 못했습니다.');
+   }
+@@ -205,6 +226,329 @@
+ }
+ 
+ 
++
++
++/**
++ * STEP13/P250: 고객 상세검색 펼침 영역의 `발주하기` 버튼에서 호출합니다.
++ * - 동일 고객번호가 이미 수주확정/계약완료 시트에 있으면 새 행을 만들지 않고 기존 계약번호를 반환합니다.
++ * - 신규 발주 확정 시 계약번호는 현재 시트의 최대 계약번호 + 1로 순차 부여합니다.
++ * - 마스터시트 진행현황은 `발주완료`로 보정하여 고객검색/필터와 발주여부 표시가 어긋나지 않게 합니다.
++ */
++function createPortalCustomerOrderFromSearchP250(payload) {
++  payload = payload || {};
++  return runPortalContractOrderLockedP250_(function() {
++    const target = assertCustomerTarget_({
++      rowNo: payload.rowNo,
++      customerNo: payload.customerNo
++    }, '발주 처리', { readObject: true });
++    assertPortalCanAccessCustomerTarget_(target, '발주 처리');
++
++    const ss = getMasterSpreadsheet_();
++    const completeSheet = getContractCompleteSheetV69_(ss);
++    if (!completeSheet) {
++      throw new Error('영업관리대장에서 `' + PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69 + '` 시트를 찾지 못했습니다.');
++    }
++
++    const lastCol = Math.max(completeSheet.getLastColumn(), PORTAL_CONTRACT_COMPLETE_FIELDS_V69.length);
++    const headers = completeSheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
++    const headerMap = buildContractCompleteHeaderMapV69_(headers);
++    const customerNo = String(target.customerNo || getMasterFieldValue_(target.obj, 'customerNo') || '').trim();
++    const company = String(getCompanyValue_(target.obj) || '').trim();
++
++    const existing = findContractCompleteExistingOrderP250_(completeSheet, headerMap, customerNo, company);
++    if (existing && existing.contractNo) {
++      markCustomerMasterStatusOrderedP250_(target);
++      return buildPortalCustomerOrderResultP250_(target, existing, true);
++    }
++
++    const nextContractNo = getNextContractNumberP250_(completeSheet, headerMap);
++    const rowObject = buildContractCompleteAppendObjectFromCustomerP250_(target, nextContractNo);
++    const targetRow = getNextContractCompleteAppendRowP250_(completeSheet, headerMap);
++    if (targetRow > completeSheet.getMaxRows()) completeSheet.insertRowsAfter(completeSheet.getMaxRows(), targetRow - completeSheet.getMaxRows());
++
++    const rowValues = new Array(lastCol).fill('');
++    PORTAL_CONTRACT_COMPLETE_FIELDS_V69.forEach(function(def) {
++      const idx = getContractCompleteFieldColumnIndexV69_(headerMap, def.key);
++      if (idx < 0 || idx >= lastCol) return;
++      rowValues[idx] = rowObject[def.key] == null ? '' : rowObject[def.key];
++    });
++
++    completeSheet.getRange(targetRow, 1, 1, lastCol).setValues([rowValues]);
++    try {
++      if (targetRow > 2) completeSheet.getRange(targetRow - 1, 1, 1, lastCol).copyTo(completeSheet.getRange(targetRow, 1, 1, lastCol), { formatOnly: true });
++    } catch (styleErr) {}
++
++    markCustomerMasterStatusOrderedP250_(target);
++    clearContractCompleteCacheV69_();
++    try { markPortalMasterDataChangedP201_('발주확정 customerNo=' + customerNo + ', contractNo=' + nextContractNo); } catch (err) {}
++
++    const displayRow = completeSheet.getRange(targetRow, 1, 1, lastCol).getDisplayValues()[0];
++    const appended = buildContractCompleteRowV69_(displayRow, headerMap, targetRow);
++    try {
++      appendPortalActivityLog_({
++        actionType: '발주확정',
++        screen: '고객 상세 검색',
++        customerNo: customerNo,
++        company: company,
++        summary: '발주 확정 등록 #' + nextContractNo,
++        detail: { contractNo: nextContractNo, masterRowNo: target.rowNo, contractRowNo: targetRow }
++      });
++    } catch (logErr) {}
++
++    return buildPortalCustomerOrderResultP250_(target, appended, false);
++  });
++}
++
++function runPortalContractOrderLockedP250_(callback) {
++  if (typeof withPortalScriptLockP201_ === 'function') {
++    return withPortalScriptLockP201_('contract-order-create', callback, { attempts: 5, waitMs: 900, sleepBaseMs: 220 });
++  }
++  return callback();
++}
++
++function buildPortalCustomerOrderResultP250_(target, orderRow, alreadyExists) {
++  orderRow = orderRow || {};
++  const orderInfo = {
++    exists: true,
++    contractNo: String(orderRow.contractNo || '').trim(),
++    rowNo: Number(orderRow.rowNo) || 0,
++    company: String(orderRow.company || getCompanyValue_(target && target.obj) || '').trim(),
++    customerNo: String(orderRow.customerNo || (target && target.customerNo) || '').trim(),
++    alreadyExists: !!alreadyExists
++  };
++  return {
++    ok: true,
++    alreadyExists: !!alreadyExists,
++    customerNo: orderInfo.customerNo,
++    rowNo: target && target.rowNo,
++    company: orderInfo.company,
++    contractNo: orderInfo.contractNo,
++    orderInfo: orderInfo,
++    message: orderInfo.company + '의 발주번호(계약번호)는 ' + orderInfo.contractNo + '번 입니다.'
++  };
++}
++
++function findContractCompleteExistingOrderP250_(sheet, headerMap, customerNo, company) {
++  customerNo = String(customerNo || '').trim();
++  company = normalizeContractOrderCompanyKeyP250_(company);
++  const lastRow = sheet.getLastRow();
++  const lastCol = sheet.getLastColumn();
++  if (lastRow < 2) return null;
++
++  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
++  for (let i = 0; i < values.length; i++) {
++    const row = values[i];
++    const item = buildContractCompleteRowV69_(row, headerMap, i + 2);
++    const itemCustomerNo = String(item.customerNo || '').trim();
++    if (customerNo && itemCustomerNo && itemCustomerNo === customerNo) return item;
++    if (!customerNo && company && normalizeContractOrderCompanyKeyP250_(item.company) === company) return item;
++  }
++  return null;
++}
++
++function getNextContractNumberP250_(sheet, headerMap) {
++  const idx = getContractCompleteFieldColumnIndexV69_(headerMap, 'contractNo');
++  const lastRow = sheet.getLastRow();
++  let maxNo = 0;
++  if (idx >= 0 && lastRow >= 2) {
++    const values = sheet.getRange(2, idx + 1, lastRow - 1, 1).getDisplayValues();
++    values.forEach(function(row) {
++      const n = parseContractNumberV69_(row && row[0]);
++      if (!isNaN(n) && n > maxNo) maxNo = n;
++    });
++  }
++  return maxNo + 1;
++}
++
++function getNextContractCompleteAppendRowP250_(sheet, headerMap) {
++  const lastRow = sheet.getLastRow();
++  const lastCol = sheet.getLastColumn();
++  if (lastRow < 2) return 2;
++  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
++  let lastDataOffset = -1;
++  for (let i = values.length - 1; i >= 0; i--) {
++    const row = values[i];
++    const item = buildContractCompleteRowV69_(row, headerMap, i + 2);
++    if (String(item.contractNo || item.customerNo || item.company || '').trim()) {
++      lastDataOffset = i;
++      break;
++    }
++  }
++  return lastDataOffset >= 0 ? lastDataOffset + 3 : 2;
++}
++
++function buildContractCompleteAppendObjectFromCustomerP250_(target, contractNo) {
++  const obj = target && target.obj ? target.obj : {};
++  const address = getMasterFieldValue_(obj, 'address');
++  const parsed = parseContractOrderRegionCityP250_(address, getMasterFieldValue_(obj, 'region'));
++  const appointment = getMasterFieldValue_(obj, 'appointment');
++  const contractUnit = getMasterFieldValue_(obj, 'contractUnit');
++  const result = {
++    contractNo: contractNo,
++    customerNo: getMasterFieldValue_(obj, 'customerNo'),
++    contractDate: new Date(),
++    vendorSentDate: '',
++    businessRegSaved: '',
++    orderMailSaved: '',
++    contractSaved: '',
++    region: parsed.region,
++    city: parsed.city,
++    referrer: '',
++    contractRep: getMasterFieldValue_(obj, 'salesRep'),
++    company: getCompanyValue_(obj),
++    contactName: getMasterFieldValue_(obj, 'contact'),
++    phone: joinUniqueContractOrderValuesP250_([getMasterFieldValue_(obj, 'phone'), getMasterFieldValue_(obj, 'directPhone')], ' / '),
++    email: getMasterFieldValue_(obj, 'email'),
++    area: toContractOrderNumberOrTextP250_(getMasterFieldValue_(obj, 'area')),
++    grade: getMasterFieldValue_(obj, 'grade'),
++    contractPrice: toContractOrderNumberOrTextP250_(getMasterFieldValue_(obj, 'finalQuote')),
++    vat: getMasterFieldValue_(obj, 'vat'),
++    vendor: normalizeContractOrderVendorP250_(getMasterFieldValue_(obj, 'vendor')),
++    businessNo: getMasterFieldValue_(obj, 'businessNo'),
++    representativeName: getMasterFieldValue_(obj, 'representativeName'),
++    businessType: buildContractOrderBusinessTypeP250_(obj),
++    customerAddress: address,
++    contractPeriod: getContractOrderExplicitPeriodP250_(obj),
++    appointment: normalizeContractOrderAppointmentMonthsP250_(appointment, contractUnit),
++    maintenance: parseContractOrderCountP250_(getMasterFieldValue_(obj, 'maintenance')),
++    performance: parseContractOrderCountP250_(getMasterFieldValue_(obj, 'performance')),
++    billingMemo: '',
++    appointmentDue: '',
++    firstMaintenanceDue: '',
++    performanceDue: '',
++    appointmentDone: '',
++    maintenanceDone: '',
++    performanceDone: ''
++  };
++  return result;
++}
++
++function markCustomerMasterStatusOrderedP250_(target) {
++  try {
++    if (!target || !target.sheet || !target.rowNo) return;
++    const sheet = target.sheet;
++    const headerMap = getHeaderMap_(sheet);
++    const statusCol = findMasterFieldCol_(headerMap, 'status');
++    if (!statusCol) return;
++    const current = String(sheet.getRange(target.rowNo, statusCol).getDisplayValue() || '').trim();
++    if (current === '발주완료' || current === '계약완료') return;
++    sheet.getRange(target.rowNo, statusCol).setValue('발주완료');
++    if (typeof updateCustomerSearchIndexRowFastByPatch_ === 'function') {
++      try { updateCustomerSearchIndexRowFastByPatch_(target.rowNo, target.customerNo, { status: '발주완료' }); } catch (idxErr) {}
++    }
++  } catch (err) {}
++}
++
++function getPortalCustomerOrderInfoP250(payload) {
++  payload = payload || {};
++  const target = assertCustomerTarget_({
++    rowNo: payload.rowNo,
++    customerNo: payload.customerNo
++  }, '발주여부 조회', { readObject: true });
++  assertPortalCanAccessCustomerTarget_(target, '발주여부 조회');
++  return getPortalCustomerOrderInfoByTargetP250_(target);
++}
++
++function getPortalCustomerOrderInfoByTargetP250_(target) {
++  const customerNo = String((target && target.customerNo) || '').trim();
++  const company = String((target && target.obj && getCompanyValue_(target.obj)) || '').trim();
++  const rows = listContractCompleteRowsV69({ force: false }).rows || [];
++  const companyKey = normalizeContractOrderCompanyKeyP250_(company);
++  for (let i = 0; i < rows.length; i++) {
++    const row = rows[i] || {};
++    if (customerNo && String(row.customerNo || '').trim() === customerNo) {
++      return { exists: true, contractNo: String(row.contractNo || '').trim(), rowNo: Number(row.rowNo) || 0, customerNo: customerNo, company: row.company || company };
++    }
++    if (!customerNo && companyKey && normalizeContractOrderCompanyKeyP250_(row.company) === companyKey) {
++      return { exists: true, contractNo: String(row.contractNo || '').trim(), rowNo: Number(row.rowNo) || 0, customerNo: row.customerNo || '', company: row.company || company };
++    }
++  }
++  return { exists: false, contractNo: '', rowNo: 0, customerNo: customerNo, company: company };
++}
++
++function normalizeContractOrderCompanyKeyP250_(value) {
++  return String(value || '')
++    .replace(/\s+/g, '')
++    .replace(/주식회사/g, '')
++    .replace(/[()（）]/g, '')
++    .replace(/㈜/g, '')
++    .trim()
++    .toLowerCase();
++}
++
++function normalizeContractOrderVendorP250_(value) {
++  const raw = String(value || '').trim();
++  if (!raw) return '';
++  const norm = raw.replace(/\s+/g, '').toLowerCase();
++  if (norm === 'kj' || norm.indexOf('케이제이') >= 0 || norm.indexOf('기술사') >= 0) return '케이제이';
++  return raw;
++}
++
++function toContractOrderNumberOrTextP250_(value) {
++  const raw = String(value == null ? '' : value).trim();
++  if (!raw) return '';
++  const numText = raw.replace(/[,원㎡\s]/g, '');
++  if (/^-?\d+(\.\d+)?$/.test(numText)) return Number(numText);
++  return raw;
++}
++
++function parseContractOrderCountP250_(value) {
++  const m = String(value || '').match(/(\d+(?:\.\d+)?)/);
++  return m ? Number(m[1]) : '';
++}
++
++function normalizeContractOrderAppointmentMonthsP250_(appointment, contractUnit) {
++  const app = String(appointment || '').trim();
++  if (!app || app === '미선임' || app === '해당없음') return '';
++  const months = parseContractOrderCountP250_(contractUnit);
++  return months || 12;
++}
++
++function buildContractOrderBusinessTypeP250_(obj) {
++  const businessType = getValueByHeaderCandidates_(obj, ['업종', '업태/종목', '업태 및 종목']);
++  const kind = getValueByHeaderCandidates_(obj, ['업태']);
++  const item = getValueByHeaderCandidates_(obj, ['종목']);
++  if (businessType) return businessType;
++  return joinUniqueContractOrderValuesP250_([kind, item], '/');
++}
++
++function getContractOrderExplicitPeriodP250_(obj) {
++  return getValueByHeaderCandidates_(obj, ['계약기간', '계약 기간', '계약기간\n(상세 작성 요구한 경우만)']);
++}
++
++function joinUniqueContractOrderValuesP250_(values, delimiter) {
++  const seen = {};
++  const out = [];
++  (values || []).forEach(function(value) {
++    const text = String(value || '').trim();
++    if (!text || seen[text]) return;
++    seen[text] = true;
++    out.push(text);
++  });
++  return out.join(delimiter || ' / ');
++}
++
++function parseContractOrderRegionCityP250_(address, fallbackRegion) {
++  const addr = String(address || '').trim();
++  const fb = String(fallbackRegion || '').replace(/권$/,'').trim();
++  const tokens = addr.split(/\s+/).filter(Boolean);
++  let region = fb || '';
++  let city = '';
++  if (tokens.length) {
++    const first = tokens[0];
++    const second = tokens[1] || '';
++    if (/서울/.test(first)) { region = '수도권'; city = '서울'; }
++    else if (/인천/.test(first)) { region = '수도권'; city = '인천'; }
++    else if (/경기/.test(first)) { region = '경기'; city = second.replace(/시|군|구$/,''); }
++    else if (/충청|대전|세종/.test(first)) { region = '충청'; city = /대전|세종/.test(first) ? first.replace(/광역시|특별자치시|특별자치도|시$/,'') : second.replace(/시|군|구$/,''); }
++    else if (/전라|광주/.test(first)) { region = '호남'; city = /광주/.test(first) ? '광주' : second.replace(/시|군|구$/,''); }
++    else if (/경상|부산|울산|대구/.test(first)) { region = '부울경'; city = /부산|울산|대구/.test(first) ? first.replace(/광역시|시$/,'') : second.replace(/시|군|구$/,''); }
++    else if (/강원/.test(first)) { region = '강원'; city = second.replace(/시|군|구$/,''); }
++    else if (/제주/.test(first)) { region = '제주'; city = second.replace(/시|군|구$/,'') || '제주'; }
++  }
++  return { region: region, city: city };
++}
++
+ function updateContractCompleteRowV69(payload) {
+   payload = payload || {};
+   const rowNo = Number(payload.rowNo) || 0;
+@@ -212,7 +556,7 @@
+   if (rowNo < 2) throw new Error('계약종합관리 저장 대상 행 번호가 올바르지 않습니다.');
+ 
+   const ss = getMasterSpreadsheet_();
+-  const sheet = ss.getSheetByName(PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69);
++  const sheet = getContractCompleteSheetV69_(ss);
+   if (!sheet) throw new Error('마스터 파일에서 `' + PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69 + '` 시트를 찾지 못했습니다.');
+ 
+   const lastRow = sheet.getLastRow();
+@@ -247,7 +591,7 @@
+   });
+ 
+   sheet.getRange(rowNo, 1, 1, lastCol).setValues([rowValues]);
+-  try { CacheService.getScriptCache().remove(PORTAL_CONTRACT_COMPLETE_CACHE_KEY_V69); } catch (err) {}
++  clearContractCompleteCacheV69_()
+ 
+   const displayRow = sheet.getRange(rowNo, 1, 1, lastCol).getDisplayValues()[0];
+   const updatedRow = buildContractCompleteRowV69_(displayRow, headerMap, rowNo);
+--- STEP12/Component_CustomerSearch.html
++++ STEP13/Component_CustomerSearch.html
+@@ -1335,7 +1335,7 @@
+       { key:'status', label:'진행현황' }
+     ],
+     [
+-      { key:'customerRank', label:'고객등급' },
++      { key:'orderStatus', label:'발주여부' },
+       { key:'contact', label:'담당자' },
+       { key:'phone', label:'대표전화번호' },
+       { key:'directPhone', label:'직통번호' }
+@@ -1435,7 +1435,9 @@
+   const rawValue = item.value;
+   const displayValue = formatCustomerExpandDisplayValue_(def.key, rawValue, detail);
+   const span = Math.max(1, Math.min(4, Number(def.span) || 1));
+-  const valueHtml = def.key === 'status' ? renderStatusChip_(displayValue) : renderCustomerExpandValueHtml_(displayValue);
++  const valueHtml = def.key === 'orderStatus'
++    ? renderCustomerExpandOrderStatusHtmlP250_(detail)
++    : (def.key === 'status' ? renderStatusChip_(displayValue) : renderCustomerExpandValueHtml_(displayValue));
+   return '<div class="customer-expand-form-cell key-' + escAttr(String(def.key || '').replace(/[^a-zA-Z0-9_-]/g, '-')) + ' span-' + span + '">' +
+     '<div class="customer-expand-form-label">' + esc(label) + '</div>' +
+     '<div class="customer-expand-form-value key-' + escAttr(String(def.key || '').replace(/[^a-zA-Z0-9_-]/g, '-')) + (def.key === 'status' ? ' status-value' : '') + '">' + valueHtml + '</div>' +
+@@ -1465,6 +1467,131 @@
+   return text.split(/\n+/).map(function(line) {
+     return '<span class="customer-expand-multi-line">' + esc(line || '-') + '</span>';
+   }).join('');
++}
++
++
++function renderCustomerExpandOrderStatusHtmlP250_(detail) {
++  detail = detail || {};
++  const orderInfo = detail.orderInfo || null;
++  if (!orderInfo || typeof orderInfo.exists === 'undefined') {
++    return '<span class="customer-order-status pending">확인중</span>';
++  }
++  if (orderInfo.exists) {
++    const contractNo = String(orderInfo.contractNo || '').trim();
++    return '<span class="customer-order-status done" title="' + escAttr(contractNo ? '계약번호 ' + contractNo + '번' : '발주완료') + '">O</span>';
++  }
++  const rowNo = Number(detail.rowNo) || 0;
++  return '<span class="customer-order-status not-done">X</span>' +
++    ' <span class="customer-order-paren">(</span>' +
++    '<button type="button" class="customer-order-btn" onclick="event.stopPropagation(); openCustomerOrderConfirmModalP250_(' + rowNo + ')">발주하기</button>' +
++    '<span class="customer-order-paren">)</span>';
++}
++
++let customerOrderModalStateP250 = null;
++
++function openCustomerOrderConfirmModalP250_(rowNo) {
++  rowNo = Number(rowNo) || 0;
++  if (!rowNo) return;
++  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
++  const detail = getCustomerDetailCache_(rowNo, rowSummary.customerNo) || buildCustomerDetailFromRowSummary_(rowSummary, rowNo);
++  const company = String(detail.company || rowSummary.company || '').trim() || '해당 고객';
++  customerOrderModalStateP250 = {
++    rowNo: rowNo,
++    customerNo: detail.customerNo || rowSummary.customerNo || '',
++    company: company
++  };
++  renderCustomerOrderModalP250_('confirm', '');
++}
++
++function renderCustomerOrderModalP250_(mode, message) {
++  closeCustomerOrderModalP250_({ silent: true });
++  const state = customerOrderModalStateP250 || {};
++  const company = String(state.company || '해당 고객').trim();
++  const isResult = mode === 'result';
++  const isLoading = mode === 'loading';
++  const bodyText = isResult
++    ? (message || '')
++    : (isLoading ? '발주번호를 생성하고 수주확정/계약완료 시트에 이관하는 중입니다...' : '(' + company + ')의 계약이 확정되었습니까?');
++
++  const overlay = document.createElement('div');
++  overlay.className = 'customer-order-modal-overlay';
++  overlay.id = 'customerOrderModalP250';
++  overlay.innerHTML = '' +
++    '<div class="customer-order-modal" onclick="event.stopPropagation();">' +
++      '<button type="button" class="customer-order-modal-x" onclick="closeCustomerOrderModalP250_()">×</button>' +
++      '<div class="customer-order-modal-title">발주 확인</div>' +
++      '<div class="customer-order-modal-body">' + esc(bodyText) + '</div>' +
++      '<div class="customer-order-modal-actions">' +
++        (isResult
++          ? '<button type="button" class="primary" onclick="closeCustomerOrderModalP250_()">확인</button>'
++          : '<button type="button" class="secondary" onclick="closeCustomerOrderModalP250_()" ' + (isLoading ? 'disabled' : '') + '>취소</button>' +
++            '<button type="button" class="primary" id="customerOrderConfirmBtnP250" onclick="confirmCustomerOrderP250_()" ' + (isLoading ? 'disabled' : '') + '>예</button>') +
++      '</div>' +
++    '</div>';
++  overlay.addEventListener('click', function() { if (!isLoading) closeCustomerOrderModalP250_(); });
++  document.body.appendChild(overlay);
++}
++
++function closeCustomerOrderModalP250_(options) {
++  options = options || {};
++  const el = document.getElementById('customerOrderModalP250');
++  if (el && el.parentNode) el.parentNode.removeChild(el);
++  if (!options.silent) customerOrderModalStateP250 = null;
++}
++
++function confirmCustomerOrderP250_() {
++  const state = customerOrderModalStateP250 || {};
++  const rowNo = Number(state.rowNo) || 0;
++  if (!rowNo) return;
++  renderCustomerOrderModalP250_('loading', '');
++
++  google.script.run
++    .withSuccessHandler(function(res) {
++      res = res || {};
++      applyCustomerOrderResultToCachesP250_(res);
++      const company = String(res.company || state.company || '해당 고객').trim();
++      const contractNo = String(res.contractNo || (res.orderInfo && res.orderInfo.contractNo) || '').trim();
++      customerOrderModalStateP250 = Object.assign({}, state, { company: company, contractNo: contractNo });
++      const msg = '(' + company + ')의 발주번호(계약번호)는 ' + (contractNo || '-') + '번 입니다.';
++      renderCustomerOrderModalP250_('result', msg);
++      if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
++    })
++    .withFailureHandler(function(err) {
++      const msg = '발주 처리 실패: ' + getErrorMessage_(err);
++      customerOrderModalStateP250 = state;
++      renderCustomerOrderModalP250_('result', msg);
++    })
++    .createPortalCustomerOrderFromSearchP250({
++      rowNo: rowNo,
++      customerNo: state.customerNo || ''
++    });
++}
++
++function applyCustomerOrderResultToCachesP250_(res) {
++  res = res || {};
++  const rowNo = Number(res.rowNo) || Number(customerOrderModalStateP250 && customerOrderModalStateP250.rowNo) || 0;
++  const customerNo = res.customerNo || (customerOrderModalStateP250 && customerOrderModalStateP250.customerNo) || '';
++  const orderInfo = res.orderInfo || { exists: true, contractNo: res.contractNo || '', rowNo: 0, customerNo: customerNo, company: res.company || '' };
++  const detail = getCustomerDetailCache_(rowNo, customerNo);
++  if (detail) {
++    detail.orderInfo = orderInfo;
++    if (detail.status !== '계약완료') detail.status = '발주완료';
++    setCustomerDetailCache_(detail, { source: 'orderResult', force: true, allowIndexPatch: false, skipStorage: false });
++  }
++  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo);
++  if (rowSummary) {
++    rowSummary.orderInfo = orderInfo;
++    if (rowSummary.status !== '계약완료') rowSummary.status = '발주완료';
++  }
++  try {
++    if (lastCustomerResultResponse && Array.isArray(lastCustomerResultResponse.rows)) {
++      lastCustomerResultResponse.rows.forEach(function(row) {
++        if (Number(row && row.rowNo) !== rowNo) return;
++        row.orderInfo = orderInfo;
++        if (row.status !== '계약완료') row.status = '발주완료';
++      });
++    }
++  } catch (err) {}
+ }
+ 
+ function splitCustomerExpandPhoneLines_(value) {
+@@ -1552,7 +1679,8 @@
+     performance: detail.performance,
+     vat: detail.vat,
+     discountRate: detail.discountRate,
+-    specialTerms: detail.specialTerms
++    specialTerms: detail.specialTerms,
++    orderStatus: detail.orderInfo && detail.orderInfo.exists ? 'O' : 'X'
+   };
+   if (Object.prototype.hasOwnProperty.call(directMap, key) && String(directMap[key] || '').trim() !== '') {
+     return { label: key, value: directMap[key] || '' };
+--- STEP12/Styles.html
++++ STEP13/Styles.html
+@@ -4169,4 +4169,102 @@
+   .system-health-check-p208 { grid-template-columns: 1fr; }
+   .system-health-check-status-p208 { width: max-content; }
+ }
++
++/* STEP13/P250: 고객 상세검색 발주여부/발주확정 모달 */
++.customer-order-status {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  min-width: 18px;
++  font-weight: 800;
++}
++.customer-order-status.done {
++  color: #0f766e;
++}
++.customer-order-status.not-done {
++  color: #991b1b;
++}
++.customer-order-status.pending {
++  color: #64748b;
++  font-size: 12px;
++  font-weight: 700;
++}
++.customer-order-btn {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  min-height: 24px;
++  padding: 3px 9px;
++  border-radius: 999px;
++  border: 1px solid #bfdbfe;
++  background: #eff6ff;
++  color: #1d4ed8;
++  font-size: 12px;
++  font-weight: 800;
++  cursor: pointer;
++}
++.customer-order-btn:hover {
++  background: #dbeafe;
++  border-color: #93c5fd;
++}
++.customer-order-paren {
++  color: #64748b;
++  font-weight: 700;
++}
++.customer-order-modal-overlay {
++  position: fixed;
++  inset: 0;
++  z-index: 20000;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  background: rgba(15, 23, 42, 0.42);
++}
++.customer-order-modal {
++  position: relative;
++  width: min(420px, calc(100vw - 40px));
++  border-radius: 18px;
++  background: #ffffff;
++  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
++  padding: 24px 24px 20px;
++}
++.customer-order-modal-x {
++  position: absolute;
++  top: 12px;
++  right: 12px;
++  width: 30px;
++  height: 30px;
++  border: 0;
++  border-radius: 50%;
++  background: #f1f5f9;
++  color: #475569;
++  font-size: 20px;
++  line-height: 1;
++  cursor: pointer;
++}
++.customer-order-modal-x:hover {
++  background: #e2e8f0;
++}
++.customer-order-modal-title {
++  font-size: 18px;
++  font-weight: 900;
++  color: #0f172a;
++  margin-bottom: 12px;
++}
++.customer-order-modal-body {
++  min-height: 42px;
++  color: #334155;
++  font-size: 15px;
++  line-height: 1.55;
++  white-space: pre-line;
++}
++.customer-order-modal-actions {
++  display: flex;
++  justify-content: flex-end;
++  gap: 8px;
++  margin-top: 20px;
++}
++.customer-order-modal-actions button {
++  min-width: 82px;
++}
+ </style>

@@ -6,6 +6,7 @@
  ***************************************/
 
 const PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69 = '수주확정/계약완료';
+const PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250 = ['수주확정/계약완료', '수주확정계약완료'];
 const PORTAL_CONTRACT_COMPLETE_CACHE_KEY_V69 = 'PORTAL_CONTRACT_COMPLETE_LIST_V69';
 const PORTAL_CONTRACT_COMPLETE_CACHE_SECONDS_V69 = 180;
 
@@ -47,6 +48,26 @@ const PORTAL_CONTRACT_COMPLETE_FIELDS_V69 = [
   { key: 'performanceDone', label: '성능점검완료여부', headers: ['성능점검완료여부', '성능점검 완료 여부'] }
 ];
 
+
+
+function getContractCompleteSheetV69_(ss) {
+  ss = ss || getMasterSpreadsheet_();
+  const names = (typeof PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250 !== 'undefined' && PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250)
+    ? PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250
+    : [PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69, '수주확정계약완료'];
+  for (let i = 0; i < names.length; i++) {
+    const name = String(names[i] || '').trim();
+    if (!name) continue;
+    const sheet = ss.getSheetByName(name);
+    if (sheet) return sheet;
+  }
+  return null;
+}
+
+function clearContractCompleteCacheV69_() {
+  try { CacheService.getScriptCache().remove(PORTAL_CONTRACT_COMPLETE_CACHE_KEY_V69); } catch (err) {}
+}
+
 function listContractCompleteRowsV69(options) {
   options = options || {};
   const force = options.force === true;
@@ -64,7 +85,7 @@ function listContractCompleteRowsV69(options) {
   }
 
   const ss = getMasterSpreadsheet_();
-  const sheet = ss.getSheetByName(PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69);
+  const sheet = getContractCompleteSheetV69_(ss);
   if (!sheet) {
     throw new Error('마스터 파일에서 `' + PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69 + '` 시트를 찾지 못했습니다.');
   }
@@ -205,6 +226,329 @@ function formatContractCompleteLoadedAtV69_(date) {
 }
 
 
+
+
+/**
+ * STEP13/P250: 고객 상세검색 펼침 영역의 `발주하기` 버튼에서 호출합니다.
+ * - 동일 고객번호가 이미 수주확정/계약완료 시트에 있으면 새 행을 만들지 않고 기존 계약번호를 반환합니다.
+ * - 신규 발주 확정 시 계약번호는 현재 시트의 최대 계약번호 + 1로 순차 부여합니다.
+ * - 마스터시트 진행현황은 `발주완료`로 보정하여 고객검색/필터와 발주여부 표시가 어긋나지 않게 합니다.
+ */
+function createPortalCustomerOrderFromSearchP250(payload) {
+  payload = payload || {};
+  return runPortalContractOrderLockedP250_(function() {
+    const target = assertCustomerTarget_({
+      rowNo: payload.rowNo,
+      customerNo: payload.customerNo
+    }, '발주 처리', { readObject: true });
+    assertPortalCanAccessCustomerTarget_(target, '발주 처리');
+
+    const ss = getMasterSpreadsheet_();
+    const completeSheet = getContractCompleteSheetV69_(ss);
+    if (!completeSheet) {
+      throw new Error('영업관리대장에서 `' + PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69 + '` 시트를 찾지 못했습니다.');
+    }
+
+    const lastCol = Math.max(completeSheet.getLastColumn(), PORTAL_CONTRACT_COMPLETE_FIELDS_V69.length);
+    const headers = completeSheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+    const headerMap = buildContractCompleteHeaderMapV69_(headers);
+    const customerNo = String(target.customerNo || getMasterFieldValue_(target.obj, 'customerNo') || '').trim();
+    const company = String(getCompanyValue_(target.obj) || '').trim();
+
+    const existing = findContractCompleteExistingOrderP250_(completeSheet, headerMap, customerNo, company);
+    if (existing && existing.contractNo) {
+      markCustomerMasterStatusOrderedP250_(target);
+      return buildPortalCustomerOrderResultP250_(target, existing, true);
+    }
+
+    const nextContractNo = getNextContractNumberP250_(completeSheet, headerMap);
+    const rowObject = buildContractCompleteAppendObjectFromCustomerP250_(target, nextContractNo);
+    const targetRow = getNextContractCompleteAppendRowP250_(completeSheet, headerMap);
+    if (targetRow > completeSheet.getMaxRows()) completeSheet.insertRowsAfter(completeSheet.getMaxRows(), targetRow - completeSheet.getMaxRows());
+
+    const rowValues = new Array(lastCol).fill('');
+    PORTAL_CONTRACT_COMPLETE_FIELDS_V69.forEach(function(def) {
+      const idx = getContractCompleteFieldColumnIndexV69_(headerMap, def.key);
+      if (idx < 0 || idx >= lastCol) return;
+      rowValues[idx] = rowObject[def.key] == null ? '' : rowObject[def.key];
+    });
+
+    completeSheet.getRange(targetRow, 1, 1, lastCol).setValues([rowValues]);
+    try {
+      if (targetRow > 2) completeSheet.getRange(targetRow - 1, 1, 1, lastCol).copyTo(completeSheet.getRange(targetRow, 1, 1, lastCol), { formatOnly: true });
+    } catch (styleErr) {}
+
+    markCustomerMasterStatusOrderedP250_(target);
+    clearContractCompleteCacheV69_();
+    try { markPortalMasterDataChangedP201_('발주확정 customerNo=' + customerNo + ', contractNo=' + nextContractNo); } catch (err) {}
+
+    const displayRow = completeSheet.getRange(targetRow, 1, 1, lastCol).getDisplayValues()[0];
+    const appended = buildContractCompleteRowV69_(displayRow, headerMap, targetRow);
+    try {
+      appendPortalActivityLog_({
+        actionType: '발주확정',
+        screen: '고객 상세 검색',
+        customerNo: customerNo,
+        company: company,
+        summary: '발주 확정 등록 #' + nextContractNo,
+        detail: { contractNo: nextContractNo, masterRowNo: target.rowNo, contractRowNo: targetRow }
+      });
+    } catch (logErr) {}
+
+    return buildPortalCustomerOrderResultP250_(target, appended, false);
+  });
+}
+
+function runPortalContractOrderLockedP250_(callback) {
+  if (typeof withPortalScriptLockP201_ === 'function') {
+    return withPortalScriptLockP201_('contract-order-create', callback, { attempts: 5, waitMs: 900, sleepBaseMs: 220 });
+  }
+  return callback();
+}
+
+function buildPortalCustomerOrderResultP250_(target, orderRow, alreadyExists) {
+  orderRow = orderRow || {};
+  const orderInfo = {
+    exists: true,
+    contractNo: String(orderRow.contractNo || '').trim(),
+    rowNo: Number(orderRow.rowNo) || 0,
+    company: String(orderRow.company || getCompanyValue_(target && target.obj) || '').trim(),
+    customerNo: String(orderRow.customerNo || (target && target.customerNo) || '').trim(),
+    alreadyExists: !!alreadyExists
+  };
+  return {
+    ok: true,
+    alreadyExists: !!alreadyExists,
+    customerNo: orderInfo.customerNo,
+    rowNo: target && target.rowNo,
+    company: orderInfo.company,
+    contractNo: orderInfo.contractNo,
+    orderInfo: orderInfo,
+    message: orderInfo.company + '의 발주번호(계약번호)는 ' + orderInfo.contractNo + '번 입니다.'
+  };
+}
+
+function findContractCompleteExistingOrderP250_(sheet, headerMap, customerNo, company) {
+  customerNo = String(customerNo || '').trim();
+  company = normalizeContractOrderCompanyKeyP250_(company);
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2) return null;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const item = buildContractCompleteRowV69_(row, headerMap, i + 2);
+    const itemCustomerNo = String(item.customerNo || '').trim();
+    if (customerNo && itemCustomerNo && itemCustomerNo === customerNo) return item;
+    if (!customerNo && company && normalizeContractOrderCompanyKeyP250_(item.company) === company) return item;
+  }
+  return null;
+}
+
+function getNextContractNumberP250_(sheet, headerMap) {
+  const idx = getContractCompleteFieldColumnIndexV69_(headerMap, 'contractNo');
+  const lastRow = sheet.getLastRow();
+  let maxNo = 0;
+  if (idx >= 0 && lastRow >= 2) {
+    const values = sheet.getRange(2, idx + 1, lastRow - 1, 1).getDisplayValues();
+    values.forEach(function(row) {
+      const n = parseContractNumberV69_(row && row[0]);
+      if (!isNaN(n) && n > maxNo) maxNo = n;
+    });
+  }
+  return maxNo + 1;
+}
+
+function getNextContractCompleteAppendRowP250_(sheet, headerMap) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2) return 2;
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  let lastDataOffset = -1;
+  for (let i = values.length - 1; i >= 0; i--) {
+    const row = values[i];
+    const item = buildContractCompleteRowV69_(row, headerMap, i + 2);
+    if (String(item.contractNo || item.customerNo || item.company || '').trim()) {
+      lastDataOffset = i;
+      break;
+    }
+  }
+  return lastDataOffset >= 0 ? lastDataOffset + 3 : 2;
+}
+
+function buildContractCompleteAppendObjectFromCustomerP250_(target, contractNo) {
+  const obj = target && target.obj ? target.obj : {};
+  const address = getMasterFieldValue_(obj, 'address');
+  const parsed = parseContractOrderRegionCityP250_(address, getMasterFieldValue_(obj, 'region'));
+  const appointment = getMasterFieldValue_(obj, 'appointment');
+  const contractUnit = getMasterFieldValue_(obj, 'contractUnit');
+  const result = {
+    contractNo: contractNo,
+    customerNo: getMasterFieldValue_(obj, 'customerNo'),
+    contractDate: new Date(),
+    vendorSentDate: '',
+    businessRegSaved: '',
+    orderMailSaved: '',
+    contractSaved: '',
+    region: parsed.region,
+    city: parsed.city,
+    referrer: '',
+    contractRep: getMasterFieldValue_(obj, 'salesRep'),
+    company: getCompanyValue_(obj),
+    contactName: getMasterFieldValue_(obj, 'contact'),
+    phone: joinUniqueContractOrderValuesP250_([getMasterFieldValue_(obj, 'phone'), getMasterFieldValue_(obj, 'directPhone')], ' / '),
+    email: getMasterFieldValue_(obj, 'email'),
+    area: toContractOrderNumberOrTextP250_(getMasterFieldValue_(obj, 'area')),
+    grade: getMasterFieldValue_(obj, 'grade'),
+    contractPrice: toContractOrderNumberOrTextP250_(getMasterFieldValue_(obj, 'finalQuote')),
+    vat: getMasterFieldValue_(obj, 'vat'),
+    vendor: normalizeContractOrderVendorP250_(getMasterFieldValue_(obj, 'vendor')),
+    businessNo: getMasterFieldValue_(obj, 'businessNo'),
+    representativeName: getMasterFieldValue_(obj, 'representativeName'),
+    businessType: buildContractOrderBusinessTypeP250_(obj),
+    customerAddress: address,
+    contractPeriod: getContractOrderExplicitPeriodP250_(obj),
+    appointment: normalizeContractOrderAppointmentMonthsP250_(appointment, contractUnit),
+    maintenance: parseContractOrderCountP250_(getMasterFieldValue_(obj, 'maintenance')),
+    performance: parseContractOrderCountP250_(getMasterFieldValue_(obj, 'performance')),
+    billingMemo: '',
+    appointmentDue: '',
+    firstMaintenanceDue: '',
+    performanceDue: '',
+    appointmentDone: '',
+    maintenanceDone: '',
+    performanceDone: ''
+  };
+  return result;
+}
+
+function markCustomerMasterStatusOrderedP250_(target) {
+  try {
+    if (!target || !target.sheet || !target.rowNo) return;
+    const sheet = target.sheet;
+    const headerMap = getHeaderMap_(sheet);
+    const statusCol = findMasterFieldCol_(headerMap, 'status');
+    if (!statusCol) return;
+    const current = String(sheet.getRange(target.rowNo, statusCol).getDisplayValue() || '').trim();
+    if (current === '발주완료' || current === '계약완료') return;
+    sheet.getRange(target.rowNo, statusCol).setValue('발주완료');
+    if (typeof updateCustomerSearchIndexRowFastByPatch_ === 'function') {
+      try { updateCustomerSearchIndexRowFastByPatch_(target.rowNo, target.customerNo, { status: '발주완료' }); } catch (idxErr) {}
+    }
+  } catch (err) {}
+}
+
+function getPortalCustomerOrderInfoP250(payload) {
+  payload = payload || {};
+  const target = assertCustomerTarget_({
+    rowNo: payload.rowNo,
+    customerNo: payload.customerNo
+  }, '발주여부 조회', { readObject: true });
+  assertPortalCanAccessCustomerTarget_(target, '발주여부 조회');
+  return getPortalCustomerOrderInfoByTargetP250_(target);
+}
+
+function getPortalCustomerOrderInfoByTargetP250_(target) {
+  const customerNo = String((target && target.customerNo) || '').trim();
+  const company = String((target && target.obj && getCompanyValue_(target.obj)) || '').trim();
+  const rows = listContractCompleteRowsV69({ force: false }).rows || [];
+  const companyKey = normalizeContractOrderCompanyKeyP250_(company);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || {};
+    if (customerNo && String(row.customerNo || '').trim() === customerNo) {
+      return { exists: true, contractNo: String(row.contractNo || '').trim(), rowNo: Number(row.rowNo) || 0, customerNo: customerNo, company: row.company || company };
+    }
+    if (!customerNo && companyKey && normalizeContractOrderCompanyKeyP250_(row.company) === companyKey) {
+      return { exists: true, contractNo: String(row.contractNo || '').trim(), rowNo: Number(row.rowNo) || 0, customerNo: row.customerNo || '', company: row.company || company };
+    }
+  }
+  return { exists: false, contractNo: '', rowNo: 0, customerNo: customerNo, company: company };
+}
+
+function normalizeContractOrderCompanyKeyP250_(value) {
+  return String(value || '')
+    .replace(/\s+/g, '')
+    .replace(/주식회사/g, '')
+    .replace(/[()（）]/g, '')
+    .replace(/㈜/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeContractOrderVendorP250_(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const norm = raw.replace(/\s+/g, '').toLowerCase();
+  if (norm === 'kj' || norm.indexOf('케이제이') >= 0 || norm.indexOf('기술사') >= 0) return '케이제이';
+  return raw;
+}
+
+function toContractOrderNumberOrTextP250_(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const numText = raw.replace(/[,원㎡\s]/g, '');
+  if (/^-?\d+(\.\d+)?$/.test(numText)) return Number(numText);
+  return raw;
+}
+
+function parseContractOrderCountP250_(value) {
+  const m = String(value || '').match(/(\d+(?:\.\d+)?)/);
+  return m ? Number(m[1]) : '';
+}
+
+function normalizeContractOrderAppointmentMonthsP250_(appointment, contractUnit) {
+  const app = String(appointment || '').trim();
+  if (!app || app === '미선임' || app === '해당없음') return '';
+  const months = parseContractOrderCountP250_(contractUnit);
+  return months || 12;
+}
+
+function buildContractOrderBusinessTypeP250_(obj) {
+  const businessType = getValueByHeaderCandidates_(obj, ['업종', '업태/종목', '업태 및 종목']);
+  const kind = getValueByHeaderCandidates_(obj, ['업태']);
+  const item = getValueByHeaderCandidates_(obj, ['종목']);
+  if (businessType) return businessType;
+  return joinUniqueContractOrderValuesP250_([kind, item], '/');
+}
+
+function getContractOrderExplicitPeriodP250_(obj) {
+  return getValueByHeaderCandidates_(obj, ['계약기간', '계약 기간', '계약기간\n(상세 작성 요구한 경우만)']);
+}
+
+function joinUniqueContractOrderValuesP250_(values, delimiter) {
+  const seen = {};
+  const out = [];
+  (values || []).forEach(function(value) {
+    const text = String(value || '').trim();
+    if (!text || seen[text]) return;
+    seen[text] = true;
+    out.push(text);
+  });
+  return out.join(delimiter || ' / ');
+}
+
+function parseContractOrderRegionCityP250_(address, fallbackRegion) {
+  const addr = String(address || '').trim();
+  const fb = String(fallbackRegion || '').replace(/권$/,'').trim();
+  const tokens = addr.split(/\s+/).filter(Boolean);
+  let region = fb || '';
+  let city = '';
+  if (tokens.length) {
+    const first = tokens[0];
+    const second = tokens[1] || '';
+    if (/서울/.test(first)) { region = '수도권'; city = '서울'; }
+    else if (/인천/.test(first)) { region = '수도권'; city = '인천'; }
+    else if (/경기/.test(first)) { region = '경기'; city = second.replace(/시|군|구$/,''); }
+    else if (/충청|대전|세종/.test(first)) { region = '충청'; city = /대전|세종/.test(first) ? first.replace(/광역시|특별자치시|특별자치도|시$/,'') : second.replace(/시|군|구$/,''); }
+    else if (/전라|광주/.test(first)) { region = '호남'; city = /광주/.test(first) ? '광주' : second.replace(/시|군|구$/,''); }
+    else if (/경상|부산|울산|대구/.test(first)) { region = '부울경'; city = /부산|울산|대구/.test(first) ? first.replace(/광역시|시$/,'') : second.replace(/시|군|구$/,''); }
+    else if (/강원/.test(first)) { region = '강원'; city = second.replace(/시|군|구$/,''); }
+    else if (/제주/.test(first)) { region = '제주'; city = second.replace(/시|군|구$/,'') || '제주'; }
+  }
+  return { region: region, city: city };
+}
+
 function updateContractCompleteRowV69(payload) {
   payload = payload || {};
   const rowNo = Number(payload.rowNo) || 0;
@@ -212,7 +556,7 @@ function updateContractCompleteRowV69(payload) {
   if (rowNo < 2) throw new Error('계약종합관리 저장 대상 행 번호가 올바르지 않습니다.');
 
   const ss = getMasterSpreadsheet_();
-  const sheet = ss.getSheetByName(PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69);
+  const sheet = getContractCompleteSheetV69_(ss);
   if (!sheet) throw new Error('마스터 파일에서 `' + PORTAL_CONTRACT_COMPLETE_SHEET_NAME_V69 + '` 시트를 찾지 못했습니다.');
 
   const lastRow = sheet.getLastRow();
@@ -247,7 +591,7 @@ function updateContractCompleteRowV69(payload) {
   });
 
   sheet.getRange(rowNo, 1, 1, lastCol).setValues([rowValues]);
-  try { CacheService.getScriptCache().remove(PORTAL_CONTRACT_COMPLETE_CACHE_KEY_V69); } catch (err) {}
+  clearContractCompleteCacheV69_()
 
   const displayRow = sheet.getRange(rowNo, 1, 1, lastCol).getDisplayValues()[0];
   const updatedRow = buildContractCompleteRowV69_(displayRow, headerMap, rowNo);

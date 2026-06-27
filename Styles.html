@@ -4169,4 +4169,102 @@ button[disabled], .portal-btn-pending {
   .system-health-check-p208 { grid-template-columns: 1fr; }
   .system-health-check-status-p208 { width: max-content; }
 }
+
+/* STEP13/P250: 고객 상세검색 발주여부/발주확정 모달 */
+.customer-order-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  font-weight: 800;
+}
+.customer-order-status.done {
+  color: #0f766e;
+}
+.customer-order-status.not-done {
+  color: #991b1b;
+}
+.customer-order-status.pending {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+.customer-order-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.customer-order-btn:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+.customer-order-paren {
+  color: #64748b;
+  font-weight: 700;
+}
+.customer-order-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.42);
+}
+.customer-order-modal {
+  position: relative;
+  width: min(420px, calc(100vw - 40px));
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+  padding: 24px 24px 20px;
+}
+.customer-order-modal-x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.customer-order-modal-x:hover {
+  background: #e2e8f0;
+}
+.customer-order-modal-title {
+  font-size: 18px;
+  font-weight: 900;
+  color: #0f172a;
+  margin-bottom: 12px;
+}
+.customer-order-modal-body {
+  min-height: 42px;
+  color: #334155;
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+.customer-order-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+.customer-order-modal-actions button {
+  min-width: 82px;
+}
 </style>

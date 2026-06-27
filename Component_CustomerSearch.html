@@ -1335,7 +1335,7 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
       { key:'status', label:'진행현황' }
     ],
     [
-      { key:'customerRank', label:'고객등급' },
+      { key:'orderStatus', label:'발주여부' },
       { key:'contact', label:'담당자' },
       { key:'phone', label:'대표전화번호' },
       { key:'directPhone', label:'직통번호' }
@@ -1435,7 +1435,9 @@ function renderCustomerExpandFormCell_(detail, sectionKey, def) {
   const rawValue = item.value;
   const displayValue = formatCustomerExpandDisplayValue_(def.key, rawValue, detail);
   const span = Math.max(1, Math.min(4, Number(def.span) || 1));
-  const valueHtml = def.key === 'status' ? renderStatusChip_(displayValue) : renderCustomerExpandValueHtml_(displayValue);
+  const valueHtml = def.key === 'orderStatus'
+    ? renderCustomerExpandOrderStatusHtmlP250_(detail)
+    : (def.key === 'status' ? renderStatusChip_(displayValue) : renderCustomerExpandValueHtml_(displayValue));
   return '<div class="customer-expand-form-cell key-' + escAttr(String(def.key || '').replace(/[^a-zA-Z0-9_-]/g, '-')) + ' span-' + span + '">' +
     '<div class="customer-expand-form-label">' + esc(label) + '</div>' +
     '<div class="customer-expand-form-value key-' + escAttr(String(def.key || '').replace(/[^a-zA-Z0-9_-]/g, '-')) + (def.key === 'status' ? ' status-value' : '') + '">' + valueHtml + '</div>' +
@@ -1465,6 +1467,131 @@ function renderCustomerExpandValueHtml_(value) {
   return text.split(/\n+/).map(function(line) {
     return '<span class="customer-expand-multi-line">' + esc(line || '-') + '</span>';
   }).join('');
+}
+
+
+function renderCustomerExpandOrderStatusHtmlP250_(detail) {
+  detail = detail || {};
+  const orderInfo = detail.orderInfo || null;
+  if (!orderInfo || typeof orderInfo.exists === 'undefined') {
+    return '<span class="customer-order-status pending">확인중</span>';
+  }
+  if (orderInfo.exists) {
+    const contractNo = String(orderInfo.contractNo || '').trim();
+    return '<span class="customer-order-status done" title="' + escAttr(contractNo ? '계약번호 ' + contractNo + '번' : '발주완료') + '">O</span>';
+  }
+  const rowNo = Number(detail.rowNo) || 0;
+  return '<span class="customer-order-status not-done">X</span>' +
+    ' <span class="customer-order-paren">(</span>' +
+    '<button type="button" class="customer-order-btn" onclick="event.stopPropagation(); openCustomerOrderConfirmModalP250_(' + rowNo + ')">발주하기</button>' +
+    '<span class="customer-order-paren">)</span>';
+}
+
+let customerOrderModalStateP250 = null;
+
+function openCustomerOrderConfirmModalP250_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const detail = getCustomerDetailCache_(rowNo, rowSummary.customerNo) || buildCustomerDetailFromRowSummary_(rowSummary, rowNo);
+  const company = String(detail.company || rowSummary.company || '').trim() || '해당 고객';
+  customerOrderModalStateP250 = {
+    rowNo: rowNo,
+    customerNo: detail.customerNo || rowSummary.customerNo || '',
+    company: company
+  };
+  renderCustomerOrderModalP250_('confirm', '');
+}
+
+function renderCustomerOrderModalP250_(mode, message) {
+  closeCustomerOrderModalP250_({ silent: true });
+  const state = customerOrderModalStateP250 || {};
+  const company = String(state.company || '해당 고객').trim();
+  const isResult = mode === 'result';
+  const isLoading = mode === 'loading';
+  const bodyText = isResult
+    ? (message || '')
+    : (isLoading ? '발주번호를 생성하고 수주확정/계약완료 시트에 이관하는 중입니다...' : '(' + company + ')의 계약이 확정되었습니까?');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'customer-order-modal-overlay';
+  overlay.id = 'customerOrderModalP250';
+  overlay.innerHTML = '' +
+    '<div class="customer-order-modal" onclick="event.stopPropagation();">' +
+      '<button type="button" class="customer-order-modal-x" onclick="closeCustomerOrderModalP250_()">×</button>' +
+      '<div class="customer-order-modal-title">발주 확인</div>' +
+      '<div class="customer-order-modal-body">' + esc(bodyText) + '</div>' +
+      '<div class="customer-order-modal-actions">' +
+        (isResult
+          ? '<button type="button" class="primary" onclick="closeCustomerOrderModalP250_()">확인</button>'
+          : '<button type="button" class="secondary" onclick="closeCustomerOrderModalP250_()" ' + (isLoading ? 'disabled' : '') + '>취소</button>' +
+            '<button type="button" class="primary" id="customerOrderConfirmBtnP250" onclick="confirmCustomerOrderP250_()" ' + (isLoading ? 'disabled' : '') + '>예</button>') +
+      '</div>' +
+    '</div>';
+  overlay.addEventListener('click', function() { if (!isLoading) closeCustomerOrderModalP250_(); });
+  document.body.appendChild(overlay);
+}
+
+function closeCustomerOrderModalP250_(options) {
+  options = options || {};
+  const el = document.getElementById('customerOrderModalP250');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+  if (!options.silent) customerOrderModalStateP250 = null;
+}
+
+function confirmCustomerOrderP250_() {
+  const state = customerOrderModalStateP250 || {};
+  const rowNo = Number(state.rowNo) || 0;
+  if (!rowNo) return;
+  renderCustomerOrderModalP250_('loading', '');
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      res = res || {};
+      applyCustomerOrderResultToCachesP250_(res);
+      const company = String(res.company || state.company || '해당 고객').trim();
+      const contractNo = String(res.contractNo || (res.orderInfo && res.orderInfo.contractNo) || '').trim();
+      customerOrderModalStateP250 = Object.assign({}, state, { company: company, contractNo: contractNo });
+      const msg = '(' + company + ')의 발주번호(계약번호)는 ' + (contractNo || '-') + '번 입니다.';
+      renderCustomerOrderModalP250_('result', msg);
+      if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+    })
+    .withFailureHandler(function(err) {
+      const msg = '발주 처리 실패: ' + getErrorMessage_(err);
+      customerOrderModalStateP250 = state;
+      renderCustomerOrderModalP250_('result', msg);
+    })
+    .createPortalCustomerOrderFromSearchP250({
+      rowNo: rowNo,
+      customerNo: state.customerNo || ''
+    });
+}
+
+function applyCustomerOrderResultToCachesP250_(res) {
+  res = res || {};
+  const rowNo = Number(res.rowNo) || Number(customerOrderModalStateP250 && customerOrderModalStateP250.rowNo) || 0;
+  const customerNo = res.customerNo || (customerOrderModalStateP250 && customerOrderModalStateP250.customerNo) || '';
+  const orderInfo = res.orderInfo || { exists: true, contractNo: res.contractNo || '', rowNo: 0, customerNo: customerNo, company: res.company || '' };
+  const detail = getCustomerDetailCache_(rowNo, customerNo);
+  if (detail) {
+    detail.orderInfo = orderInfo;
+    if (detail.status !== '계약완료') detail.status = '발주완료';
+    setCustomerDetailCache_(detail, { source: 'orderResult', force: true, allowIndexPatch: false, skipStorage: false });
+  }
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo);
+  if (rowSummary) {
+    rowSummary.orderInfo = orderInfo;
+    if (rowSummary.status !== '계약완료') rowSummary.status = '발주완료';
+  }
+  try {
+    if (lastCustomerResultResponse && Array.isArray(lastCustomerResultResponse.rows)) {
+      lastCustomerResultResponse.rows.forEach(function(row) {
+        if (Number(row && row.rowNo) !== rowNo) return;
+        row.orderInfo = orderInfo;
+        if (row.status !== '계약완료') row.status = '발주완료';
+      });
+    }
+  } catch (err) {}
 }
 
 function splitCustomerExpandPhoneLines_(value) {
@@ -1552,7 +1679,8 @@ function getCustomerExpandFieldValue_(detail, sectionKey, key) {
     performance: detail.performance,
     vat: detail.vat,
     discountRate: detail.discountRate,
-    specialTerms: detail.specialTerms
+    specialTerms: detail.specialTerms,
+    orderStatus: detail.orderInfo && detail.orderInfo.exists ? 'O' : 'X'
   };
   if (Object.prototype.hasOwnProperty.call(directMap, key) && String(directMap[key] || '').trim() !== '') {
     return { label: key, value: directMap[key] || '' };
