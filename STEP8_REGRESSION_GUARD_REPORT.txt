@@ -1,0 +1,25 @@
+STEP8 회귀 방지 체크리스트
+
+1. 최신 기준선 고정
+- 입력 기준: STEP7 zip
+- STEP7 이전 기능을 임의로 되돌리거나 덮어쓰지 않음
+
+2. 수정 범위 제한
+- 변경 파일: 05_CustomerService.gs, 15_PermissionService.gs
+- 미변경 확인: Component_Send.html, Component_Today.html, Component_Support.html, Client_State.html, Component_CustomerSearch.html 등 STEP1~STEP7 주요 수정 파일의 추가 변경 없음
+
+3. 기능 보존 확인
+- 자료발송 다중 탭 / 발송 진행률 / 파일 확인 / 메일 발송 함수명 보존
+- 영업지원요청 저장 함수명 savePortalSupportRequest 보존
+- 오늘할일 저장 함수명 savePortalTodosForDate 보존
+- 고객 상세 저장 함수명 saveCustomerDetailFast, saveCustomerMemoFast 보존
+- 고객 상세 batch API getCustomerDetailsBatch, getCustomerDetailsBatchFast 보존
+
+4. 권한 정책 보존
+- 권한 없는 고객 제외 정책 유지
+- SALES 기본 OWN scope 정책 유지
+- 관리자/서무 ALL 조회 가능 정책 유지
+- 권한_DB 판정 로직 자체는 변경하지 않음
+
+5. 검사 결과
+- 자세한 기계검사 결과: STEP8_STATIC_CHECK.json

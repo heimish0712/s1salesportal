@@ -418,7 +418,7 @@ function renderTodayTodoRow_(todo, idx) {
     : '고객연동';
   return '<div class="today-task-row today-task-row-compact today-task-row-p122 today-task-row-p123 ' + (todo.done ? 'done ' : '') + dueClass + (!visible ? 'today-task-hidden ' : '') + '" ' +
       'data-id="' + escAttrP117_(todo.id) + '" data-category="' + escAttrP117_(todo.category) + '" data-source-type="' + escAttrP117_(todo.sourceType) + '" data-source-id="' + escAttrP117_(todo.sourceId) + '" ' +
-      'data-customer-no="' + escAttrP117_(todo.customerNo) + '" data-company="' + escAttrP117_(todo.company) + '" data-row-no="' + escAttrP117_(todo.rowNo) + '" data-time-text="' + escAttrP117_(todo.timeText) + '" data-priority="' + escAttrP117_(todo.priority) + '">' +
+      'data-customer-no="' + escAttrP117_(todo.customerNo) + '" data-company="' + escAttrP117_(todo.company) + '" data-row-no="' + escAttrP117_(todo.rowNo) + '" data-time-text="' + escAttrP117_(todo.timeText) + '" data-priority="' + escAttrP117_(todo.priority) + '" data-updated-at="' + escAttrP117_(todo.updatedAt || '') + '">' +
     '<label class="today-task-check"><input type="checkbox" class="todayTodoDone" onchange="onTodayTaskDoneChangeP117_(this)" ' + (todo.done ? 'checked' : '') + '><span></span></label>' +
     '<div class="today-task-body">' +
       '<div class="today-task-topline today-task-topline-p119 today-task-topline-p122 today-task-topline-p123">' +
@@ -792,6 +792,11 @@ function collectTodayTodos_() {
 function saveTodayTodos(options) {
   options = options || {};
   const tasks = collectTodayTodos_();
+  const baseData = todayCurrentData || {};
+  const baseDateVersion = String(baseData.dateVersion || '').trim();
+  const baseTaskIds = (Array.isArray(baseData.activeTaskIds) ? baseData.activeTaskIds : (Array.isArray(baseData.tasks) ? baseData.tasks.map(function(t) { return t && t.id; }) : []))
+    .map(function(v) { return String(v || '').trim(); })
+    .filter(Boolean);
   const prev = todayCurrentData ? JSON.parse(JSON.stringify(todayCurrentData)) : null;
   const saveStartedAt = Date.now();
   const saveSeq = ++todaySaveSeqP120_;
@@ -803,22 +808,25 @@ function saveTodayTodos(options) {
   if (!options.silent) toast('오늘 할 일을 저장 중입니다.');
   google.script.run
     .withSuccessHandler(function(data) {
+      if (saveSeq !== todaySaveSeqP120_) return;
       const stillTypingAfterRequest = todayLastLocalEditAtP120_ > saveStartedAt;
       data = normalizeTodayDataP117_(data || optimistic);
+      const mergedDueToStaleBase = !!(data && (data.mergedDueToStaleBase || (data.saveMeta && data.saveMeta.mergedDueToStaleBase)));
       if (stillTypingAfterRequest && isTodayTodoEditingV111_()) {
         todayPendingServerDataP120_ = data;
         renderTodaySummaryV111_(collectTodayTodos_());
-        if (!options.silent) toast('입력 중이라 화면 갱신은 보류하고 저장만 완료했습니다.');
+        if (!options.silent) toast(mergedDueToStaleBase ? '다른 저장분과 병합했습니다. 입력 중이라 화면 갱신은 보류했습니다.' : '입력 중이라 화면 갱신은 보류하고 저장만 완료했습니다.');
         return;
       }
       data = saveTodayCacheV57_(data);
       todayCurrentData = data;
       if (!isTodayTodoEditingV111_()) renderTodayDataV57_(data);
       else renderTodaySummaryV111_((data && data.tasks) || tasks);
-      if (!options.silent) toast('오늘 할 일이 저장되었습니다.');
+      if (!options.silent) toast(mergedDueToStaleBase ? '오늘 할 일이 저장되었습니다. 다른 저장분은 보존해 병합했습니다.' : '오늘 할 일이 저장되었습니다.');
       if (saveSeq === todaySaveSeqP120_) todayPendingServerDataP120_ = null;
     })
     .withFailureHandler(function(err) {
+      if (saveSeq !== todaySaveSeqP120_) return;
       if (isTodayTodoEditingV111_()) {
         console.warn('할 일 저장 실패', err);
         toast('할 일 저장 실패. 입력 내용은 화면에 유지됩니다.');
@@ -827,7 +835,15 @@ function saveTodayTodos(options) {
       if (prev) { saveTodayCacheV57_(prev); todayCurrentData = prev; renderTodayDataV57_(prev, { forceRender: true }); }
       alert('할 일 저장 실패: ' + getErrorMessage_(err));
     })
-    .savePortalTodosForDate({ date: todaySelectedDate, tasks: tasks, todos: tasks, hiddenTags: todayHiddenTagsP123_ });
+    .savePortalTodosForDate({
+      date: todaySelectedDate,
+      tasks: tasks,
+      todos: tasks,
+      hiddenTags: todayHiddenTagsP123_,
+      baseDateVersion: baseDateVersion,
+      baseTaskIds: baseTaskIds,
+      clientSaveSeq: saveSeq
+    });
 }
 
 function isTodayTodoEditingV111_() {
@@ -884,7 +900,8 @@ function collectTodayTaskFromRowP120_(row) {
     company: row.getAttribute('data-company') || '',
     rowNo: row.getAttribute('data-row-no') || '',
     timeText: row.getAttribute('data-time-text') || '',
-    priority: row.getAttribute('data-priority') || ''
+    priority: row.getAttribute('data-priority') || '',
+    updatedAt: row.getAttribute('data-updated-at') || ''
   };
 }
 

@@ -496,10 +496,40 @@ function searchPortalSupportCustomers(keyword) {
 
 function savePortalSupportRequest(payload) {
   assertPortalCanWriteSupport_();
+  const result = runPortalSupportWriteLockedP210_('support-request-save', function() {
+    return savePortalSupportRequestCoreP210_(payload || {});
+  });
+
+  // 활동로그는 핵심 저장 Lock 밖에서 처리합니다. 로그 실패가 접수/저장 성공을 막으면 안 됩니다.
+  try {
+    appendPortalActivityLog_({
+      actionType: '영업지원요청',
+      screen: '영업지원 요청',
+      customerNo: result && result.audit ? result.audit.customerNo : '',
+      company: result && result.audit ? result.audit.customerName : '',
+      summary: result && result.audit ? result.audit.summary : '영업지원 요청 저장',
+      detail: result && result.audit ? result.audit.detail : {}
+    });
+  } catch (err) {}
+
+  if (result) delete result.audit;
+  return result;
+}
+
+function runPortalSupportWriteLockedP210_(label, callback) {
+  if (typeof withPortalScriptLockP201_ === 'function') {
+    return withPortalScriptLockP201_(label || 'support-request-save', callback, { attempts: 5, waitMs: 900, sleepBaseMs: 220 });
+  }
+  return callback();
+}
+
+function savePortalSupportRequestCoreP210_(payload) {
   payload = payload || {};
   const permForSupport = getPortalCurrentPermission_();
   const sheet = ensurePortalSupportSheet_();
   const headerMap = getPortalSupportHeaderMap_(sheet);
+  ensurePortalSupportHeadersForWriteP210_(sheet, headerMap);
+
   const clientRequestId = String(payload.clientRequestId || payload.requestId || '').trim();
   if (clientRequestId) {
     const dupSupport = findPortalSupportByClientRequestIdP26_(sheet, headerMap, clientRequestId);
@@ -510,7 +540,13 @@ function savePortalSupportRequest(payload) {
         rowNo: dupSupport.rowNo,
         receiptNo: dupSupport.receiptNo || '',
         message: '이미 처리된 영업지원 요청입니다.',
-        item: dupSupport
+        item: dupSupport,
+        audit: {
+          customerNo: dupSupport.customerNo || '',
+          customerName: dupSupport.customerName || '',
+          summary: '중복 영업지원 요청 무시: ' + (dupSupport.requestText || ''),
+          detail: { receiptNo: dupSupport.receiptNo || '', rowNo: dupSupport.rowNo, duplicate: true }
+        }
       };
     }
   }
@@ -522,12 +558,19 @@ function savePortalSupportRequest(payload) {
   } else if (rowNo < PORTAL_CONFIG.SUPPORT_DATA_START_ROW) {
     throw new Error('영업지원 요청 행 번호가 올바르지 않습니다.');
   }
+  ensurePortalSupportRowExistsP210_(sheet, rowNo);
 
-  const existingItemForPermission = !isNew ? buildPortalSupportRowObject_(
-    sheet.getRange(rowNo, 1, 1, Math.max(sheet.getLastColumn(), PORTAL_CONFIG.SUPPORT_HEADERS.length)).getDisplayValues()[0],
-    rowNo,
-    headerMap
-  ) : null;
+  const writeLastCol = getPortalSupportWriteLastColP210_(sheet, headerMap);
+  let existingRowValues = [];
+  if (!isNew) {
+    existingRowValues = sheet.getRange(rowNo, 1, 1, writeLastCol).getDisplayValues()[0] || [];
+  } else {
+    existingRowValues = new Array(writeLastCol).fill('');
+  }
+
+  const existingItemForPermission = !isNew
+    ? buildPortalSupportRowObject_(existingRowValues, rowNo, headerMap)
+    : null;
 
   const requestType = String(payload.requestType || '').trim();
   const requester = String(payload.requester || '').trim() || getPortalCurrentUserName_();
@@ -593,10 +636,7 @@ function savePortalSupportRequest(payload) {
     '클라이언트요청ID': clientRequestId
   };
 
-  PORTAL_CONFIG.SUPPORT_HEADERS.forEach(function(header) {
-    const col = headerMap[header] || ensurePortalSupportColumn_(sheet, headerMap, header);
-    sheet.getRange(rowNo, col).setValue(rowObj[header] == null ? '' : rowObj[header]);
-  });
+  const writtenRowValues = writePortalSupportRowAtomicP210_(sheet, rowNo, headerMap, rowObj, existingRowValues, writeLastCol);
 
   let masterApply = { applied: false };
   if (isNew && customerNo) {
@@ -610,16 +650,8 @@ function savePortalSupportRequest(payload) {
 
   SpreadsheetApp.flush();
   bumpPortalSupportCacheBustV64_();
-  try {
-    appendPortalActivityLog_({
-      actionType: '영업지원요청',
-      screen: '영업지원 요청',
-      customerNo: customerNo,
-      company: customerName,
-      summary: (isNew ? '요청 접수: ' : '요청 저장: ') + requestText,
-      detail: { receiptNo: receiptNo, requestType: requestType, status: status, rowNo: rowNo }
-    });
-  } catch (err) {}
+
+  const item = buildPortalSupportRowObject_(writtenRowValues, rowNo, headerMap);
   return {
     ok: true,
     rowNo: rowNo,
@@ -627,10 +659,78 @@ function savePortalSupportRequest(payload) {
     masterApplied: !!(masterApply && masterApply.applied),
     masterApply: masterApply,
     message: isNew ? '영업지원 요청이 접수되었습니다.' : '영업지원 요청이 저장되었습니다.',
-    item: getPortalSupportRequestDetail(rowNo).item
+    item: item,
+    audit: {
+      customerNo: customerNo,
+      customerName: customerName,
+      summary: (isNew ? '요청 접수: ' : '요청 저장: ') + requestText,
+      detail: { receiptNo: receiptNo, requestType: requestType, status: status, rowNo: rowNo }
+    }
   };
 }
 
+function ensurePortalSupportHeadersForWriteP210_(sheet, headerMap) {
+  (PORTAL_CONFIG.SUPPORT_HEADERS || []).forEach(function(header) {
+    if (!headerMap[header]) ensurePortalSupportColumn_(sheet, headerMap, header);
+  });
+}
+
+function ensurePortalSupportRowExistsP210_(sheet, rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  const maxRows = sheet.getMaxRows();
+  if (rowNo > maxRows) {
+    sheet.insertRowsAfter(maxRows, rowNo - maxRows);
+  }
+}
+
+function getPortalSupportWriteLastColP210_(sheet, headerMap) {
+  const maxHeaderCol = (PORTAL_CONFIG.SUPPORT_HEADERS || []).reduce(function(maxCol, header) {
+    return Math.max(maxCol, Number(headerMap[header]) || 0);
+  }, 0);
+  return Math.max(maxHeaderCol, sheet.getLastColumn(), PORTAL_CONFIG.SUPPORT_HEADERS.length, 1);
+}
+
+function writePortalSupportRowAtomicP210_(sheet, rowNo, headerMap, rowObj, existingRowValues, writeLastCol) {
+  writeLastCol = Number(writeLastCol) || getPortalSupportWriteLastColP210_(sheet, headerMap);
+  const nextRowValues = (existingRowValues || []).slice(0, writeLastCol);
+  while (nextRowValues.length < writeLastCol) nextRowValues.push('');
+
+  const writeCols = [];
+  (PORTAL_CONFIG.SUPPORT_HEADERS || []).forEach(function(header) {
+    const col = Number(headerMap[header]) || 0;
+    if (!col) return;
+    nextRowValues[col - 1] = rowObj[header] == null ? '' : rowObj[header];
+    writeCols.push(col);
+  });
+
+  const groups = groupConsecutivePortalSupportColsP210_(writeCols);
+  groups.forEach(function(group) {
+    const width = group.end - group.start + 1;
+    const slice = nextRowValues.slice(group.start - 1, group.end);
+    sheet.getRange(rowNo, group.start, 1, width).setValues([slice]);
+  });
+
+  return nextRowValues;
+}
+
+function groupConsecutivePortalSupportColsP210_(cols) {
+  cols = (cols || []).map(function(c) { return Number(c) || 0; }).filter(Boolean).sort(function(a, b) { return a - b; });
+  const unique = [];
+  cols.forEach(function(c) {
+    if (unique.indexOf(c) < 0) unique.push(c);
+  });
+  const groups = [];
+  unique.forEach(function(c) {
+    const last = groups[groups.length - 1];
+    if (!last || c > last.end + 1) {
+      groups.push({ start: c, end: c });
+    } else {
+      last.end = c;
+    }
+  });
+  return groups;
+}
 
 function findPortalSupportByClientRequestIdP26_(sheet, headerMap, clientRequestId) {
   clientRequestId = String(clientRequestId || '').trim();

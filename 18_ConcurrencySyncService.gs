@@ -133,21 +133,26 @@ function onMasterSheetEditSyncP201(e) {
     const targetRows = filterMeaningfulMasterRowsForMetaP204_(sheet, candidateRows, getHeaderMap_(sheet));
     if (!targetRows.length) return false;
 
+    const metaByRow = writePortalMasterMetaBatchP240_(sheet, targetRows, {
+      updatedAtCol: updatedAtCol,
+      versionCol: versionCol,
+      editorCol: editorCol,
+      nowText: nowText,
+      versionBase: versionBase,
+      editor: editor
+    });
+
     const changedColumnNames = getPortalEditedMasterColumnNamesP209_(sheet, getHeaderMap_(sheet), colStart, colEnd);
     const customerNoCol = findFirstExistingHeaderCol_(getHeaderMap_(sheet), ['고객번호']);
-    const queueItems = targetRows.map(function(r, idx) {
-      const version = versionBase + '-' + r + '-' + idx;
-      sheet.getRange(r, updatedAtCol).setValue(nowText);
-      sheet.getRange(r, versionCol).setValue(version);
-      sheet.getRange(r, editorCol).setValue(editor);
-      let customerNo = '';
-      try { if (customerNoCol) customerNo = String(sheet.getRange(r, customerNoCol).getDisplayValue() || '').trim(); } catch (err) {}
+    const customerNoByRow = readPortalMasterColumnValuesByRowsP240_(sheet, targetRows, customerNoCol);
+    const queueItems = targetRows.map(function(r) {
       return {
         rowNo: r,
-        customerNo: customerNo,
+        customerNo: customerNoByRow[r] || '',
         changedColumns: changedColumnNames.join(', '),
         editor: editor,
-        status: 'PENDING'
+        status: 'PENDING',
+        masterVersion: metaByRow[r] && metaByRow[r].version ? metaByRow[r].version : ''
       };
     });
     SpreadsheetApp.flush();
@@ -179,6 +184,101 @@ function onMasterSheetEditSyncP201(e) {
   }, { attempts: 3, waitMs: 500, sleepBaseMs: 150 });
 }
 
+
+
+/**
+ * STEP9/P240: 마스터시트 onEdit 메타 컬럼을 행별 setValue 반복 대신 batch setValues로 기록합니다.
+ * - 수정일시/최종수정자는 같은 값이지만, 수정버전은 row별 고유값을 유지합니다.
+ * - targetRows가 필터링으로 끊겨 있을 수 있으므로 연속 행 그룹 단위로 나누어 씁니다.
+ * - 메타 컬럼이 서로 떨어져 있어도 중간 업무 컬럼을 덮어쓰지 않도록 컬럼별 batch write를 사용합니다.
+ */
+function writePortalMasterMetaBatchP240_(sheet, targetRows, options) {
+  options = options || {};
+  targetRows = normalizePortalRowNumbersP240_(targetRows);
+  if (!sheet || !targetRows.length) return {};
+
+  const updatedAtCol = Number(options.updatedAtCol) || 0;
+  const versionCol = Number(options.versionCol) || 0;
+  const editorCol = Number(options.editorCol) || 0;
+  const nowText = String(options.nowText || '');
+  const versionBase = String(options.versionBase || getPortalVersionTextP201_(new Date()));
+  const editor = String(options.editor || 'sheet-edit');
+
+  const metaByRow = {};
+  targetRows.forEach(function(rowNo, idx) {
+    metaByRow[rowNo] = {
+      updatedAt: nowText,
+      version: versionBase + '-' + rowNo + '-' + idx,
+      editor: editor
+    };
+  });
+
+  const groups = groupContiguousRowsP240_(targetRows);
+  groups.forEach(function(group) {
+    const rows = [];
+    for (let r = group.start; r <= group.end; r++) rows.push(r);
+    if (updatedAtCol) {
+      sheet.getRange(group.start, updatedAtCol, rows.length, 1)
+        .setValues(rows.map(function(r) { return [metaByRow[r].updatedAt]; }));
+    }
+    if (versionCol) {
+      sheet.getRange(group.start, versionCol, rows.length, 1)
+        .setValues(rows.map(function(r) { return [metaByRow[r].version]; }));
+    }
+    if (editorCol) {
+      sheet.getRange(group.start, editorCol, rows.length, 1)
+        .setValues(rows.map(function(r) { return [metaByRow[r].editor]; }));
+    }
+  });
+  return metaByRow;
+}
+
+function normalizePortalRowNumbersP240_(rowNumbers) {
+  const seen = {};
+  return (rowNumbers || [])
+    .map(function(v) { return Number(v) || 0; })
+    .filter(function(v) { return v >= PORTAL_CONFIG.DATA_START_ROW; })
+    .filter(function(v) {
+      if (seen[v]) return false;
+      seen[v] = true;
+      return true;
+    })
+    .sort(function(a, b) { return a - b; });
+}
+
+function groupContiguousRowsP240_(rowNumbers) {
+  rowNumbers = normalizePortalRowNumbersP240_(rowNumbers);
+  if (!rowNumbers.length) return [];
+  const groups = [];
+  let start = rowNumbers[0];
+  let prev = rowNumbers[0];
+  for (let i = 1; i < rowNumbers.length; i++) {
+    const row = rowNumbers[i];
+    if (row === prev + 1) {
+      prev = row;
+      continue;
+    }
+    groups.push({ start: start, end: prev, count: prev - start + 1 });
+    start = row;
+    prev = row;
+  }
+  groups.push({ start: start, end: prev, count: prev - start + 1 });
+  return groups;
+}
+
+function readPortalMasterColumnValuesByRowsP240_(sheet, targetRows, colNo) {
+  targetRows = normalizePortalRowNumbersP240_(targetRows);
+  colNo = Number(colNo) || 0;
+  const out = {};
+  if (!sheet || !targetRows.length || !colNo) return out;
+  groupContiguousRowsP240_(targetRows).forEach(function(group) {
+    const values = sheet.getRange(group.start, colNo, group.count, 1).getDisplayValues();
+    for (let i = 0; i < values.length; i++) {
+      out[group.start + i] = String(values[i][0] || '').trim();
+    }
+  });
+  return out;
+}
 
 function filterMeaningfulMasterRowsForMetaP204_(sheet, rowNumbers, headerMap) {
   rowNumbers = (rowNumbers || []).map(function(v) { return Number(v) || 0; })

@@ -1,0 +1,25 @@
+STEP9 회귀 방지 보고서
+
+기준선 고정: STEP8 산출본
+수정 범위: 18_ConcurrencySyncService.gs 1개 파일
+임의 변경 없음: 자료발송/오늘할일/영업지원/고객상세 UI 파일 미수정
+
+주요 기존 기능 보존 확인:
+- 자료발송 함수 유지: preparePortalMailFilesForReviewFromUi, sendPortalMailFromUi
+- 고객 저장 함수 유지: saveCustomerDetailFast, saveCustomerMemoFast
+- 영업지원 저장 함수 유지: savePortalSupportRequest
+- 오늘할일 저장 함수 유지: savePortalTodosForDate
+- 고객 batch 상세조회 함수 유지: getCustomerDetailsBatch
+- 마스터 onEdit 트리거 함수 유지: onMasterSheetEditSyncP201
+
+변경 요약:
+- onEdit 메타 기록을 행별 setValue 반복에서 연속 행 그룹 setValues로 변경.
+- 변경큐/검색인덱스/dirty 처리 흐름은 유지.
+
+정적 검사:
+- syntax_checks_count=39
+- syntax_failures=0
+- changed_file_duplicate_functions=0
+- per_file_duplicate_functions=2
+
+상세 결과는 STEP9_STATIC_CHECK.json 및 STEP9_CHANGED_DIFF.patch 참조.

@@ -1,0 +1,47 @@
+영업전산포탈 STEP4 - 고객 상세 저장 큐 추가 보고서
+
+기준 산출본
+- STEP3: 영업전산포탈_STEP3_오늘할일저장충돌방지.zip
+
+수정 목적
+- 같은 고객에 대한 저장 요청이 동시에 서버로 나가면서 발생할 수 있는 버전 충돌/UX 꼬임을 줄임.
+- 고객 상세 모달 저장, 고객목록 즉시수정(status/phone/memo), 펼침 메모 저장을 고객번호(rowNo fallback) 단위로 순차 실행.
+
+수정 파일
+1) Client_State.html
+- customerSaveQueueMapP220 추가
+- customerSaveQueueSeqP220 추가
+
+2) Component_CustomerSearch.html
+- getCustomerSaveQueueKeyP220_ 추가
+- getCustomerSaveQueueSizeP220_ 추가
+- enqueueCustomerSaveP220_ 추가
+- runCustomerSaveRequestP220_ 추가
+- makeCustomerMemoSavePayloadP220_ 추가
+- 목록 즉시수정 commitCustomerInlineEdit_ 저장 경로를 저장 큐 기반으로 변경
+- 펼침 메모 saveExpandedCustomerMemo 저장 경로를 저장 큐 기반으로 변경
+
+3) Component_CustomerDetail.html
+- 상세 모달 saveDetailFields 저장 경로를 저장 큐 기반으로 변경
+
+핵심 변경사항
+- 기존: saveCustomerDetailFast/saveCustomerMemoFast가 클릭/blur/모달저장 이벤트마다 바로 google.script.run으로 병렬 호출될 수 있었음.
+- 변경: 같은 고객 키(CNO:고객번호 또는 ROW:행번호)의 이전 저장 Promise가 끝난 뒤 다음 저장을 실행함.
+- payload의 baseMasterVersion은 큐 등록 시점이 아니라 실제 실행 시점에 다시 생성함.
+- 앞 저장 성공 후 applyCustomerMasterMetaFromSaveP202_가 masterVersion을 갱신하고, 다음 저장이 그 버전을 사용하게 됨.
+
+보존한 기존 동작
+- 낙관적 UI 반영 유지
+- pending save map 유지
+- stale save error 처리 유지
+- 저장 성공 후 검색결과/상세 캐시 패치 유지
+- 실패 시 rollback/최신 상세 재조회 흐름 유지
+
+남은 한계
+- 같은 고객 같은 필드를 두 탭에서 거의 동시에 수정하는 경우, 서버의 masterVersion 충돌 감지에 의존함.
+- 이번 단계는 클라이언트 단일 브라우저/탭 묶음에서의 병렬 저장 충돌 체감을 줄이는 작업이며, 서버 간 완전 병합 로직은 아님.
+
+검증
+- Client_State.html / Component_CustomerSearch.html / Component_CustomerDetail.html script 문법 검사 통과
+- 주요 수정 파일 top-level function 중복 0건 확인
+- 직접 saveCustomerDetailFast/saveCustomerMemoFast 호출은 runCustomerSaveRequestP220_ helper로 집중됨

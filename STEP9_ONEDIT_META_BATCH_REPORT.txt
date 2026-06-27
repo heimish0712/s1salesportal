@@ -1,0 +1,54 @@
+STEP9 onEdit 메타 batch 처리 개선 보고서
+
+기준선: 영업전산포탈_STEP8_서버상세조회권한필터성능개선.zip
+수정 파일: 18_ConcurrencySyncService.gs
+파일 추가/삭제: 없음
+
+1. 수정 목적
+- 마스터시트 직접 수정/onEdit 감지 시 targetRows마다 수정일시/수정버전/최종수정자를 개별 setValue로 쓰던 병목을 줄임.
+- 다중행 붙여넣기/수정 시 SpreadsheetApp 호출 횟수를 줄여 속도와 안정성을 개선.
+- 기존 onEdit 업무 흐름, 변경큐, 검색인덱스 갱신 정책은 유지.
+
+2. 기존 구조
+- targetRows.map 내부에서 각 행마다 아래 3회 호출:
+  sheet.getRange(r, updatedAtCol).setValue(nowText)
+  sheet.getRange(r, versionCol).setValue(version)
+  sheet.getRange(r, editorCol).setValue(editor)
+- 100행 수정 시 메타 기록만 최대 300회 setValue 호출 가능.
+- 고객번호도 행별 getRange(...).getDisplayValue()로 읽음.
+
+3. 수정 구조
+- writePortalMasterMetaBatchP240_ 추가.
+- targetRows를 연속 행 그룹으로 묶고, 메타 컬럼별 setValues로 기록.
+- 수정일시/최종수정자는 동일 값 유지.
+- 수정버전은 기존처럼 row별 고유값(versionBase-rowNo-index) 유지.
+- 메타 컬럼이 떨어져 있어도 중간 업무 컬럼을 덮어쓰지 않도록 컬럼별 batch write 사용.
+- readPortalMasterColumnValuesByRowsP240_ 추가로 고객번호도 연속 행 그룹 기준 batch read.
+
+4. 보존한 기존 동작
+- 마스터시트명 체크 유지.
+- 데이터 시작행 이전 무시 유지.
+- 메타 컬럼만 편집한 경우 return 유지.
+- 빈 행에는 메타를 찍지 않는 filterMeaningfulMasterRowsForMetaP204_ 유지.
+- 변경큐 append 유지.
+- 즉시 검색인덱스 갱신 최대 25행 유지.
+- 25행 초과 시 CUSTOMER_SEARCH_INDEX_DIRTY 표시 유지.
+- markPortalMasterDataChangedP201_ 호출 유지.
+- withPortalScriptLockP201_ Lock 유지.
+
+5. 예상 효과
+- 붙여넣기/다중행 수정 시 메타 기록 Spreadsheet 호출 횟수 감소.
+- 예: targetRows가 100행 연속인 경우, 메타 기록은 300회 setValue가 아니라 3회 setValues로 축소.
+- 고객번호 읽기도 100회 getRange 대신 1회 batch getDisplayValues로 축소.
+
+6. 회귀 방지 확인
+- 변경 파일: ['18_ConcurrencySyncService.gs']
+- 추가 파일: []
+- 삭제 파일: []
+- 문법검사 실패 수: 0
+- 변경 파일 내 중복 함수 수: 0
+- 전체 파일 내 동일 파일 중복 함수 수: 2
+
+7. 한계
+- 실제 Apps Script 배포 환경에서 onEdit 트리거 실행 테스트를 수행한 것은 아님.
+- 변경큐 처리 자체의 setValue 병목은 이번 단계 범위가 아니므로 유지됨.

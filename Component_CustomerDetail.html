@@ -485,57 +485,62 @@ function saveDetailFields() {
   toggleDetailEdit(false);
   toast('수정사항을 화면과 리스트에 먼저 반영했습니다. 뒤에서 마스터시트에 저장 중입니다.');
 
-  google.script.run.withSuccessHandler(function(res){
-    try { applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res); } catch(e) {}
-    if (res && (res.masterVersion || res.masterUpdatedAt || res.masterEditor) && currentDetail && Number(currentDetail.rowNo) === rowNo) {
-      if (res.masterVersion) currentDetail.__masterVersion = currentDetail.masterVersion = res.masterVersion;
-      if (res.masterUpdatedAt) currentDetail.__masterUpdatedAt = currentDetail.masterUpdatedAt = res.masterUpdatedAt;
-      if (res.masterEditor) currentDetail.__masterEditor = currentDetail.masterEditor = res.masterEditor;
-    }
-    // 저장 성공 후에도 잠시 pending을 유지하여 저장 전에 출발한 상세보강/프리패치 응답이 최신값을 되돌리지 못하게 합니다.
-    if (res && res.detail && res.refreshedFromMaster) {
-      applyServerDetailAfterSaveP112_(res.detail, rowNo);
-    } else if (currentDetail && Number(currentDetail.rowNo) === rowNo) {
-      currentDetail.__pendingSave = false;
-      // 서버 저장 성공 후에도 검색결과 행/상세 캐시를 한 번 더 확정 패치합니다.
-      setCustomerDetailCache_(currentDetail, {
-        force: true,
-        skipPendingMerge: true,
-        source: 'saveResult',
-        allowIndexPatch: true,
-        patchValues: values
+  enqueueCustomerSaveP220_(rowNo, targetCustomerNo, function() {
+    return runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, targetCustomerNo, values))
+      .then(function(res){
+        try { applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res); } catch(e) {}
+        if (res && (res.masterVersion || res.masterUpdatedAt || res.masterEditor) && currentDetail && Number(currentDetail.rowNo) === rowNo) {
+          if (res.masterVersion) currentDetail.__masterVersion = currentDetail.masterVersion = res.masterVersion;
+          if (res.masterUpdatedAt) currentDetail.__masterUpdatedAt = currentDetail.masterUpdatedAt = res.masterUpdatedAt;
+          if (res.masterEditor) currentDetail.__masterEditor = currentDetail.masterEditor = res.masterEditor;
+        }
+        // 저장 성공 후에도 잠시 pending을 유지하여 저장 전에 출발한 상세보강/프리패치 응답이 최신값을 되돌리지 못하게 합니다.
+        if (res && res.detail && res.refreshedFromMaster) {
+          applyServerDetailAfterSaveP112_(res.detail, rowNo);
+        } else if (currentDetail && Number(currentDetail.rowNo) === rowNo) {
+          currentDetail.__pendingSave = false;
+          // 서버 저장 성공 후에도 검색결과 행/상세 캐시를 한 번 더 확정 패치합니다.
+          setCustomerDetailCache_(currentDetail, {
+            force: true,
+            skipPendingMerge: true,
+            source: 'saveResult',
+            allowIndexPatch: true,
+            patchValues: values
+          });
+          repaintCustomerResultsIfVisible_();
+        }
+        setTimeout(function(){ clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq); }, 20000);
+        toast((res && res.message) || '마스터시트 저장 완료');
+        setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
+        return res;
+      }, function(err){
+        clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq);
+        if (typeof isCustomerStaleSaveErrorP202_ === 'function' && isCustomerStaleSaveErrorP202_(err)) {
+          if (prevDetail) {
+            setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
+            if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
+            repaintCustomerResultsIfVisible_();
+          }
+          showModalError('다른 사용자가 이 고객 정보를 먼저 수정했습니다. 최신 내용을 다시 불러옵니다.');
+          try {
+            fetchCustomerDetailFromServer_(rowNo, function(detail){
+              if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
+              if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+            }, function(){}, { customerNo: targetCustomerNo });
+          } catch(e) {}
+          alert('다른 사용자가 먼저 수정했습니다. 최신 내용을 확인한 뒤 다시 저장해 주세요.');
+          throw err;
+        }
+        if (prevDetail) {
+          setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
+          if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
+          repaintCustomerResultsIfVisible_();
+        }
+        showModalError(err);
+        alert('상세정보 저장 실패: ' + getErrorMessage_(err));
+        throw err;
       });
-      repaintCustomerResultsIfVisible_();
-    }
-    setTimeout(function(){ clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq); }, 20000);
-    toast((res && res.message) || '마스터시트 저장 완료');
-    setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
-  }).withFailureHandler(function(err){
-    clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq);
-    if (typeof isCustomerStaleSaveErrorP202_ === 'function' && isCustomerStaleSaveErrorP202_(err)) {
-      if (prevDetail) {
-        setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
-        if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
-        repaintCustomerResultsIfVisible_();
-      }
-      showModalError('다른 사용자가 이 고객 정보를 먼저 수정했습니다. 최신 내용을 다시 불러옵니다.');
-      try {
-        fetchCustomerDetailFromServer_(rowNo, function(detail){
-          if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
-          if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-        }, function(){}, { customerNo: targetCustomerNo });
-      } catch(e) {}
-      alert('다른 사용자가 먼저 수정했습니다. 최신 내용을 확인한 뒤 다시 저장해 주세요.');
-      return;
-    }
-    if (prevDetail) {
-      setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
-      if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
-      repaintCustomerResultsIfVisible_();
-    }
-    showModalError(err);
-    alert('상세정보 저장 실패: ' + getErrorMessage_(err));
-  }).saveCustomerDetailFast({ rowNo: rowNo, customerNo: targetCustomerNo, values: values, baseMasterVersion: (currentDetail && (currentDetail.__masterVersion || currentDetail.masterVersion)) || '' });
+  }, { source: 'detailModal' });
 }
 
 function gatherValuesForCalc(targetFinalPrice) {

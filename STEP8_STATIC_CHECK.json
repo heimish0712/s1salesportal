@@ -1,0 +1,34 @@
+{
+  "baseline_zip": "영업전산포탈_STEP7_브라우저캐시정리.zip",
+  "changed_files": [
+    "05_CustomerService.gs",
+    "15_PermissionService.gs"
+  ],
+  "added_files": [],
+  "removed_files": [],
+  "syntax_errors": [],
+  "changed_file_duplicate_functions": [],
+  "major_function_existence": {
+    "searchCustomersPaged": true,
+    "getCustomerSearchIndexData": true,
+    "filterCustomerIndexRowsByPermissionAndScopeP04_": true,
+    "getCustomerDetailsBatch": true,
+    "getCustomerDetailsBatchFast": true,
+    "filterPortalCustomerRowsByPermission_": true,
+    "assertPortalCanAccessCustomerTarget_": true,
+    "saveCustomerDetailFast": true,
+    "saveCustomerMemoFast": true,
+    "preparePortalMailFilesForReviewFromUi": true,
+    "sendPortalMailFromUi": true,
+    "savePortalSupportRequest": true,
+    "savePortalTodosForDate": true
+  },
+  "targeted_step8_checks": {
+    "batch_detail_no_assert_target_call_inside_body": true,
+    "batch_detail_uses_single_permission_object": true,
+    "batch_detail_permission_filter_uses_row_object": true,
+    "search_passes_permission_to_index_data": true,
+    "search_marks_index_rows_already_permission_filtered": true
+  },
+  "ok": true
+}

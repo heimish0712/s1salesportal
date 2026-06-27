@@ -1,0 +1,47 @@
+STEP3 - 오늘할일 저장 충돌 방지 반영 보고
+
+기준 산출본: 영업전산포탈_STEP2_영업지원저장안정화.zip
+수정 파일:
+- 08_TodayService.gs
+- Component_Today.html
+
+1. 문제 요약
+기존 savePortalTodosForDate(payload)는 선택 날짜의 기존 활성 할일을 전부 삭제 처리한 뒤, 클라이언트가 보낸 목록을 새 행으로 append하는 구조였습니다.
+이 구조는 단일 사용자/단일 탭에서는 동작하지만, 다중 탭 또는 다중 사용자가 같은 날짜를 저장하면 나중에 저장한 목록이 이전/다른 사용자 저장분을 삭제 처리할 수 있습니다.
+
+2. 서버 수정 내용
+- savePortalTodosForDate(payload)를 Lock wrapper 구조로 분리했습니다.
+  - runPortalTodayWriteLockedP130_()
+  - savePortalTodosForDateCoreP130_()
+- withPortalScriptLockP201_가 있으면 동일 Lock 유틸을 사용하고, 없으면 LockService fallback을 사용합니다.
+- 날짜 전체 삭제 후 append 구조를 제거했습니다.
+- 할일ID 기준 upsert 방식으로 변경했습니다.
+  - 기존 할일ID가 있으면 같은 행을 setValues로 갱신합니다.
+  - 신규 할일ID는 appendRows에 모아 한 번에 append합니다.
+  - 실제로 클라이언트 기준에서 삭제된 할일ID만 삭제여부=Y 처리합니다.
+- 삭제 처리 기준을 baseTaskIds 기반으로 변경했습니다.
+  - 클라이언트가 로딩 당시 알고 있던 할일만 삭제 대상이 됩니다.
+  - 저장 도중 다른 사용자/탭이 새로 추가한 할일은 현재 클라이언트 목록에 없더라도 삭제하지 않습니다.
+- dateVersion을 추가했습니다.
+  - getPortalTodayData() 응답에 dateVersion, activeTaskIds, storedTaskIds를 포함합니다.
+  - 저장 시 baseDateVersion과 현재 version이 다르면 mergedDueToStaleBase=true로 응답합니다.
+  - 이 경우에도 무조건 실패시키지 않고, baseTaskIds 기준으로 다른 저장분을 보존해 병합합니다.
+- 중복 활성 할일ID가 이미 DB에 있으면, 첫 번째 활성 row만 유지하고 나머지는 삭제 처리합니다.
+- 활동로그 저장은 Lock 밖에서 실행되도록 분리했습니다.
+
+3. 클라이언트 수정 내용
+- Component_Today.html 저장 요청에 baseDateVersion, baseTaskIds, clientSaveSeq를 포함했습니다.
+- 할일 row에 data-updated-at를 보존하고 collectTodayTodos_()에서 updatedAt을 포함하도록 수정했습니다.
+- saveSeq가 최신 요청이 아닌 경우, 늦게 도착한 서버 응답이 최신 화면/캐시를 덮어쓰지 않도록 무시합니다.
+- 서버가 mergedDueToStaleBase=true를 반환하면 사용자에게 다른 저장분을 보존해 병합했다는 메시지를 표시할 수 있게 했습니다.
+
+4. 남은 한계
+- 같은 할일ID의 같은 필드를 두 사용자가 동시에 수정한 경우, 현재는 완전한 필드 단위 충돌 해결까지는 하지 않습니다.
+- 다만 기존처럼 날짜 전체를 갈아엎지는 않으므로, 다른 사용자가 새로 추가한 할일이 사라지는 문제는 크게 줄었습니다.
+- 추후 완전한 충돌 방지를 하려면 할일ID별 rowVersion 또는 updatedAt 기반 per-task conflict check를 추가하는 것이 좋습니다.
+
+5. 정적 검증
+- 08_TodayService.gs node syntax check 통과
+- Component_Today.html script block node syntax check 통과
+- 08_TodayService.gs top-level function 중복 0건
+- Component_Today.html top-level function 중복 0건

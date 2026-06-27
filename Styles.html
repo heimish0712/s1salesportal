@@ -1829,10 +1829,133 @@ button .portal-guide-help,
 
 
 
-/* P1-6: 견적/자료 발송 - 발송자료 빠른 선택 말풍선 */
+/* P1-6 + P2-11: 견적/자료 발송 - 빠른 선택 카드 / 다중 작업탭 */
+.send-workspace-tabs-wrap {
+  margin-bottom: 16px;
+}
+
+.send-workspace-tabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid #cfd7e2;
+  border-bottom: 0;
+  background: #fff;
+  padding: 0 12px 0 0;
+  min-height: 42px;
+}
+
+.send-workspace-tabs-list {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex-wrap: wrap;
+}
+
+.send-workspace-tab {
+  min-width: 128px;
+  max-width: 220px;
+  height: 34px;
+  border: 1px solid #bfc8d4;
+  border-bottom: 0;
+  background: #ffffff;
+  color: #374151;
+  padding: 0 12px;
+  border-radius: 0;
+  margin: 7px 0 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: none;
+}
+
+.send-workspace-tab.active {
+  background: #f8fbff;
+  color: #111827;
+  border-color: #9fb3cc;
+}
+
+.send-workspace-tab.add-tab {
+  min-width: 44px;
+  max-width: 44px;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 800;
+  padding: 0;
+}
+
+.send-workspace-tab.add-tab:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.send-workspace-tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.send-workspace-tab-close {
+  font-size: 15px;
+  font-weight: 700;
+  color: #6b7280;
+  line-height: 1;
+}
+
+.send-tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  flex: 0 0 8px;
+}
+
+.send-tab-dot.idle { background: transparent; }
+.send-tab-dot.running { background: #f4b000; }
+.send-tab-dot.done { background: #2f80ed; }
+.send-tab-dot.fail { background: #e5484d; }
+
+.send-workspace-tabs-hint {
+  font-size: 12px;
+  color: #667085;
+  font-weight: 700;
+  white-space: nowrap;
+  padding-left: 8px;
+}
+
+.send-tab-cleanup-btn {
+  margin-left: 8px;
+  height: 24px;
+  min-width: 0;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #cfd7e2;
+  background: #f8fafc;
+  color: #344054;
+  font-size: 11px;
+  font-weight: 900;
+  vertical-align: middle;
+}
+
+.send-tab-cleanup-btn:hover:not(:disabled) {
+  background: #eef4ff;
+  color: #1d4ed8;
+}
+
+.send-workspace-body {
+  border: 1px solid #cfd7e2;
+  background: #fff;
+  padding: 16px;
+}
+
 .send-file-preset-popover {
   position: relative;
-  margin: 2px 0 18px 48px;
+  margin: 2px 0 18px 0;
   padding: 14px 18px 16px 18px;
   min-height: 86px;
   border-radius: 18px;
@@ -1844,14 +1967,7 @@ button .portal-guide-help,
 }
 
 .send-file-preset-popover::before {
-  content: "";
-  position: absolute;
-  left: -24px;
-  top: 0;
-  width: 0;
-  height: 0;
-  border-top: 20px solid #a9cfef;
-  border-left: 24px solid transparent;
+  content: none;
 }
 
 .send-file-preset-label {
@@ -1860,8 +1976,8 @@ button .portal-guide-help,
   font-size: 17px;
   font-weight: 700;
   letter-spacing: -0.03em;
-  align-self: flex-start;
-  padding-top: 2px;
+  align-self: center;
+  padding-top: 0;
   white-space: nowrap;
 }
 
@@ -1892,9 +2008,20 @@ button .portal-guide-help,
   transform: translateY(-1px);
 }
 
+@media (max-width: 1280px) {
+  .send-workspace-tabs-row {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0 10px 10px;
+  }
+  .send-workspace-tabs-hint {
+    white-space: normal;
+    padding-left: 10px;
+  }
+}
+
 @media (max-width: 1100px) {
   .send-file-preset-popover {
-    margin-left: 26px;
     flex-direction: column;
     align-items: stretch;
     gap: 10px;

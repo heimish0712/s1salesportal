@@ -1,0 +1,43 @@
+영업전산포탈 STEP8 - 서버 batch 상세조회 / 권한필터 성능 개선 보고서
+
+기준선
+- 기준 파일: 영업전산포탈_STEP7_브라우저캐시정리.zip
+- 수정 원칙: 기존 기능 보존, 대상 영역 최소 수정, 권한 정책 변경 없음
+
+수정 파일
+- 05_CustomerService.gs
+- 15_PermissionService.gs
+
+핵심 변경 1) getCustomerDetailsBatch(rowNos) 성능 개선
+- 기존: 권한 확인 단계에서 rowNo별로 마스터 행을 별도 재조회할 수 있었음
+- 문제: batch 상세조회인데 권한 검사 단계에서 이미 N회 시트 접근이 발생
+- 수정: 시트/헤더/권한을 1회 준비하고, 실제 상세조회용으로 읽은 rowValues에서 곧바로 고객 객체를 만든 뒤 같은 객체로 권한 필터 처리
+- 보존: 권한 없는 고객은 기존처럼 결과에서 제외
+- 보존: includeLogs=false, includeRaw=false, lite=true 유지
+- 보존: 요청 rowNo 중복 제거, 최대 batch size 제한, 요청 순서 유지
+
+핵심 변경 2) 검색 인덱스 권한필터 중복 축소
+- 기존: searchCustomersPaged()에서 getCustomerSearchIndexData()가 이미 권한 필터한 rows를 다시 filterCustomerIndexRowsByPermissionAndScopeP04_()에서 권한 필터할 수 있었음
+- 수정: getCustomerSearchIndexData(permForScope)로 같은 permission 객체를 넘기고, 뒤쪽 scope 필터에는 alreadyPermissionFiltered=true를 전달
+- 보존: SALES 기본 OWN 조회 정책 유지
+- 보존: 관리자/서무의 ALL/OWN scope 선택 구조 유지
+- 보존: 정렬/검색어/페이지네이션 로직 유지
+
+핵심 변경 3) filterPortalCustomerRowsByPermission_(rows, perm) 선택 인자 추가
+- 기존 호출과 호환되도록 perm 인자는 optional
+- 기존 호출부는 그대로 동작
+- 이미 계산된 permission 객체가 있는 곳에서는 재조회 없이 재사용 가능
+
+회귀 방지 확인
+- 수정 파일은 2개뿐임: 05_CustomerService.gs, 15_PermissionService.gs
+- 파일 추가/삭제 없음
+- 모든 .gs 문법 검사 통과
+- 모든 .html script 문법 검사 통과
+- 수정 파일 내 top-level function 중복 0건
+- 주요 기존 함수 존재 확인 완료
+- 자료발송/오늘할일/영업지원/고객저장큐 관련 파일은 수정하지 않음
+
+남은 한계
+- 행 번호 간격이 350행을 초과하는 sparse batch는 여전히 필요한 행만 개별 getRange()로 읽음
+- 다만 이 경우에도 권한 검사를 위해 같은 행을 다시 읽는 중복 접근은 제거됨
+- 더 큰 최적화는 검색 인덱스의 detail-lite 필드를 더 넓혀서 마스터 상세 프리패치를 줄이는 방식이지만, 이번 단계에서는 기존 기능 보존을 위해 미적용

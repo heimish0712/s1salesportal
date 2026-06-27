@@ -42,6 +42,14 @@ const PORTAL_PERMISSION_SEED_ROWS = [
   ['seoha3383@gmail.com', '김서하', '영업팀', '대리', '영업담당자', 'SALES', '김서하', 'OWN', 'Y', 'N', 'N', 'Y', 'Y', 'N', 'Y', '영업팀: 기본 본인 고객만 조회', 'N', 'N']
 ];
 
+// STEP6 P230: 권한_DB 반복 조회를 줄이기 위한 짧은 서버 캐시입니다.
+// 권한 정책은 그대로 두고, 같은 사용자 이메일의 계산 완료 권한 객체만 5분 이내 재사용합니다.
+const PORTAL_PERMISSION_CACHE_PREFIX_P230 = 'PORTAL_PERMISSION_P230_';
+const PORTAL_PERMISSION_CACHE_BUST_PROP_P230 = 'PORTAL_PERMISSION_CACHE_BUST_P230';
+const PORTAL_PERMISSION_CACHE_TTL_SEC_P230 = 300;
+const PORTAL_PERMISSION_GUEST_CACHE_TTL_SEC_P230 = 60;
+const PORTAL_PERMISSION_CACHE_BUSTER_HANDLER_P230 = 'onPortalPermissionSheetEditP230';
+
 function setupPortalPermissionSheet() {
   const sheet = ensurePortalPermissionSheet_();
   const lastRow = sheet.getLastRow();
@@ -58,6 +66,7 @@ function setupPortalPermissionSheet() {
   }
   sheet.setFrozenRows(1);
   sheet.autoResizeColumns(1, PORTAL_PERMISSION_HEADERS.length);
+  bumpPortalPermissionCacheBustP230_('setup');
   return { ok: true, sheetName: sheet.getName(), rows: Math.max(0, sheet.getLastRow() - 1), headers: PORTAL_PERMISSION_HEADERS };
 }
 
@@ -69,6 +78,7 @@ function resetPortalPermissionSheetForPatchS() {
   sheet.setFrozenRows(1);
   sheet.getRange(1, 1, 1, PORTAL_PERMISSION_HEADERS.length).setFontWeight('bold').setBackground('#f2f4f7');
   sheet.autoResizeColumns(1, PORTAL_PERMISSION_HEADERS.length);
+  bumpPortalPermissionCacheBustP230_('reset');
   return { ok: true, reset: true, sheetName: sheet.getName(), rows: PORTAL_PERMISSION_SEED_ROWS.length };
 }
 
@@ -162,6 +172,20 @@ function ensurePortalPermissionSheet_() {
 function getPortalCurrentPermission_() {
   const email = getPortalSessionEmail_();
   const emailKey = String(email || '').trim().toLowerCase();
+
+  // active user email을 못 읽으면 권한_DB를 열 필요 없이 즉시 차단합니다.
+  // Execute as owner 환경에서 effective user를 권한 판정에 섞지 않는 기존 정책을 유지합니다.
+  if (!emailKey) return buildGuestPortalPermission_(email);
+
+  const cached = readPortalPermissionCacheP230_(emailKey);
+  if (cached) return cached;
+
+  const perm = getPortalCurrentPermissionFromSheetP230_(email, emailKey);
+  writePortalPermissionCacheP230_(emailKey, perm);
+  return perm;
+}
+
+function getPortalCurrentPermissionFromSheetP230_(email, emailKey) {
   const sheet = ensurePortalPermissionSheet_();
   if (sheet.getLastRow() < 2) setupPortalPermissionSheet();
 
@@ -175,6 +199,111 @@ function getPortalCurrentPermission_() {
   }
 
   return buildGuestPortalPermission_(email);
+}
+
+function readPortalPermissionCacheP230_(emailKey) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const raw = cache.get(makePortalPermissionCacheKeyP230_(emailKey));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.permission) return null;
+    return parsed.permission;
+  } catch (err) {
+    return null;
+  }
+}
+
+function writePortalPermissionCacheP230_(emailKey, perm) {
+  try {
+    if (!emailKey || !perm) return;
+    const ttl = perm && perm.active ? PORTAL_PERMISSION_CACHE_TTL_SEC_P230 : PORTAL_PERMISSION_GUEST_CACHE_TTL_SEC_P230;
+    const payload = JSON.stringify({
+      cachedAt: new Date().toISOString(),
+      cacheBust: getPortalPermissionCacheBustP230_(),
+      permission: perm
+    });
+    if (payload.length < 90000) CacheService.getScriptCache().put(makePortalPermissionCacheKeyP230_(emailKey), payload, ttl);
+  } catch (err) {}
+}
+
+function makePortalPermissionCacheKeyP230_(emailKey) {
+  const safeEmail = String(emailKey || '').trim().toLowerCase().replace(/[^a-z0-9@._+-]/g, '_');
+  const bust = getPortalPermissionCacheBustP230_();
+  return (PORTAL_PERMISSION_CACHE_PREFIX_P230 + bust + '_' + safeEmail).slice(0, 240);
+}
+
+function getPortalPermissionCacheBustP230_() {
+  try {
+    return String(PropertiesService.getScriptProperties().getProperty(PORTAL_PERMISSION_CACHE_BUST_PROP_P230) || '0');
+  } catch (err) {
+    return '0';
+  }
+}
+
+function bumpPortalPermissionCacheBustP230_(reason) {
+  try {
+    const value = String(Date.now()) + '_' + String(Math.floor(Math.random() * 1000000));
+    PropertiesService.getScriptProperties().setProperty(PORTAL_PERMISSION_CACHE_BUST_PROP_P230, value);
+    return { ok: true, cacheBust: value, reason: reason || '' };
+  } catch (err) {
+    return { ok: false, message: err && err.message ? err.message : String(err) };
+  }
+}
+
+function clearPortalPermissionCache() {
+  const result = bumpPortalPermissionCacheBustP230_('manual');
+  return {
+    ok: !!result.ok,
+    cacheBust: result.cacheBust || getPortalPermissionCacheBustP230_(),
+    ttlSeconds: PORTAL_PERMISSION_CACHE_TTL_SEC_P230,
+    note: '권한 캐시는 prefix 일괄 삭제 대신 cacheBust 값을 변경해 이전 캐시를 즉시 무효화합니다.'
+  };
+}
+
+function installPortalPermissionCacheBusterTriggerP230() {
+  const ss = getWebAppDbSpreadsheet_();
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function(t) {
+    if (t && t.getHandlerFunction && t.getHandlerFunction() === PORTAL_PERMISSION_CACHE_BUSTER_HANDLER_P230) {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+  ScriptApp.newTrigger(PORTAL_PERMISSION_CACHE_BUSTER_HANDLER_P230)
+    .forSpreadsheet(ss)
+    .onEdit()
+    .create();
+  return {
+    ok: true,
+    message: '권한_DB 수정 감지 캐시 무효화 트리거를 설치했습니다.',
+    spreadsheetId: ss.getId(),
+    handler: PORTAL_PERMISSION_CACHE_BUSTER_HANDLER_P230
+  };
+}
+
+function onPortalPermissionSheetEditP230(e) {
+  if (!e || !e.range) return;
+  const sheet = e.range.getSheet();
+  if (!sheet || sheet.getName() !== PORTAL_PERMISSION_SHEET_NAME) return;
+  bumpPortalPermissionCacheBustP230_('permission-sheet-onedit');
+}
+
+function getPortalPermissionCacheStatus() {
+  const email = getPortalSessionEmail_();
+  const emailKey = String(email || '').trim().toLowerCase();
+  const key = emailKey ? makePortalPermissionCacheKeyP230_(emailKey) : '';
+  let hit = false;
+  try { hit = !!(key && CacheService.getScriptCache().get(key)); } catch (err) {}
+  return {
+    ok: true,
+    email: email,
+    emailKey: emailKey,
+    cacheKey: key,
+    cacheHit: hit,
+    cacheBust: getPortalPermissionCacheBustP230_(),
+    ttlSeconds: PORTAL_PERMISSION_CACHE_TTL_SEC_P230,
+    guestTtlSeconds: PORTAL_PERMISSION_GUEST_CACHE_TTL_SEC_P230
+  };
 }
 
 function buildPortalPermissionFromRow_(row, rowNo, sessionEmail) {
@@ -443,9 +572,9 @@ function isPortalCustomerRowAllowedForPermission_(row, perm) {
   });
 }
 
-function filterPortalCustomerRowsByPermission_(rows) {
+function filterPortalCustomerRowsByPermission_(rows, perm) {
   rows = Array.isArray(rows) ? rows : [];
-  const perm = getPortalCurrentPermission_();
+  perm = perm || getPortalCurrentPermission_();
   if (perm.canViewAllCustomers || perm.isAdmin) return rows;
   return rows.filter(function(row) { return isPortalCustomerRowAllowedForPermission_(row, perm); });
 }

@@ -1,0 +1,32 @@
+영업전산포탈 STEP5 - 검색 인덱스/캐시 무효화 정리
+
+수정 파일
+- Client_State.html
+- Component_CustomerSearch.html
+
+핵심 반영
+1. initializeCustomerSearchIndex({force:true})가 실제 강제 갱신처럼 동작하도록 수정
+   - force 호출 시 page cache/sessionStorage/localStorage index를 무효화
+   - 이미 검색인덱스 로딩 중이면 force refresh를 queue로 예약
+   - 일반 로딩 응답이 늦게 와도 force 요청이 있으면 기존 응답으로 렌더링하지 않고 강제 갱신을 재실행
+
+2. 검색 페이지 캐시 삭제 범위 수정
+   - 기존 invalidateCustomerSearchCaches_는 v31/v26 prefix만 삭제하여 현재 v67 페이지 캐시가 남을 수 있었음
+   - 이제 portalCustomerPage: prefix 전체를 삭제
+
+3. 외부 마스터 수정 감지 후 stale 상세 캐시까지 정리
+   - 사용자가 입력 중이면 기존처럼 refresh banner만 표시
+   - 사용자가 갱신 적용하거나 입력 중이 아니면 검색 인덱스, 페이지 캐시, 상세 localStorage cache를 함께 무효화
+
+4. 검색 응답 순서 보호 추가
+   - customerSearchRequestSeqP230 추가
+   - 검색어/페이지/권한범위/필터/정렬 snapshot과 현재 상태가 다르면 늦게 도착한 응답을 폐기
+   - 빠르게 검색어를 바꾸거나 필터 검색 대기 중 이전 요청이 늦게 도착해도 최신 화면을 덮지 못함
+
+5. dirty index 감지 강화
+   - CUSTOMER_SEARCH_INDEX_DIRTY / dirtyAt 변경도 버전 watcher가 감지
+   - 인덱스 patch 실패 등으로 dirty 상태가 되었는데 version만 안 바뀌는 경우도 갱신 플로우 진입 가능
+
+정적 검증
+- 모든 .gs 및 <script> 포함 .html node --check 통과
+- top-level function 중복 0건
