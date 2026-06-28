@@ -120,12 +120,40 @@ function renderTodayAssigneeFilterP350_(data) {
 
 function changeTodayAssigneeFilterP350_(value) {
   if (!confirmDiscardTodayDraftP350_('저장하지 않은 오늘 할 일이 있습니다. 저장하지 않고 담당자 조회 조건을 바꿀까요?')) return;
-  todayAssigneeFilterP350_ = String(value || 'ALL');
+  const next = String(value || 'ALL');
+  todayAssigneeFilterP350_ = next;
   todayHasLocalDraftP120_ = false;
   todayDeletedTasksP360_ = [];
-  todayPreloadMemoryP360_ = {};
-  if (typeof todayCacheByDateV57 !== 'undefined') todayCacheByDateV57 = {};
-  loadTodayPage({ force: true });
+
+  // STEP36: 서무/admin은 기본 ALL 데이터를 이미 프리로드합니다.
+  // 담당자별 전환은 가능하면 ALL 캐시에서 즉시 필터링해 로딩을 없앱니다.
+  try {
+    const dateStr = String(todaySelectedDate || formatDateInput_(new Date()));
+    const allKey = dateStr + '::' + encodeURIComponent('ALL');
+    const allCachedObj = todayPreloadMemoryP360_[allKey];
+    const allData = allCachedObj && allCachedObj.data ? allCachedObj.data : todayCacheByDateV57[allKey];
+    if (allData && allData.canViewAllTodos) {
+      let nextData = Object.assign({}, allData);
+      nextData.authorFilter = next;
+      if (next !== 'ALL') {
+        const want = String(next || '').replace(/\s+/g, '').toLowerCase();
+        nextData.tasks = (allData.tasks || []).filter(function(t) {
+          return String((t && t.author) || '').replace(/\s+/g, '').toLowerCase() === want;
+        });
+        nextData.todos = nextData.tasks;
+      }
+      const nextKey = getTodayCacheKeyP360_(dateStr);
+      todayPreloadMemoryP360_[nextKey] = { data: nextData, cachedAt: Date.now() };
+      todayCacheByDateV57[nextKey] = nextData;
+      todayLastLoadAtByDateV57[nextKey] = Date.now();
+      renderTodayDataV57_(nextData, { fromCache: true, assigneeSwitch: true });
+      // 뒤에서만 실제 서버값을 맞춥니다. 화면 로딩은 하지 않습니다.
+      setTimeout(function(){ try { refreshTodayPageInBackgroundP360_(dateStr, nextKey); } catch (err) {} }, 600);
+      return;
+    }
+  } catch (err) {}
+
+  loadTodayPage({ force: false });
 }
 
 function confirmDiscardTodayDraftP350_(message) {
@@ -153,6 +181,10 @@ window.addEventListener('beforeunload', function(e) {
 
 function preloadTodayPageV57_(options) {
   options = options || {};
+  if (typeof portalPermissionLoadedV63 !== 'undefined' && !portalPermissionLoadedV63) {
+    setTimeout(function() { try { preloadTodayPageV57_(options); } catch (err) {} }, 900);
+    return;
+  }
   const dateStr = String(options.date || todaySelectedDate || formatDateInput_(new Date()));
   const key = getTodayCacheKeyP360_(dateStr);
   if (todayLoadingByDateV57[key]) return;
@@ -182,15 +214,27 @@ function loadTodayPage(options) {
   setTodaySelectedLabelP360_(dateStr);
 
   const key = getTodayCacheKeyP360_(dateStr);
-  // 오늘 할 일은 저장/삭제 신뢰성이 우선입니다.
-  // 메뉴 진입/담당자 변경/날짜 변경 시 브라우저 캐시로 먼저 그리지 않고 서버 현재값을 바로 조회합니다.
   if (options.force) {
     delete todayPreloadMemoryP360_[key];
     delete todayCacheByDateV57[key];
   }
 
+  const cachedObj = todayPreloadMemoryP360_[key];
+  const cachedData = cachedObj && cachedObj.data ? cachedObj.data : todayCacheByDateV57[key];
+  const cachedAt = Number(cachedObj && cachedObj.cachedAt || todayLastLoadAtByDateV57[key] || 0);
+  const age = cachedAt ? Date.now() - cachedAt : Infinity;
+
+  // STEP36: 메뉴 재진입/담당자 전환 시 매번 로딩 화면으로 갈아엎지 않습니다.
+  // 캐시가 있으면 즉시 표시하고, 오래된 경우에만 뒤에서 조용히 새로고침합니다.
+  if (!options.force && cachedData && !todayHasLocalDraftP120_) {
+    renderTodayDataV57_(cachedData, { fromCache: true });
+    if (age < TODAY_BACKGROUND_REFRESH_MS_V57 || todayLoadingByDateV57[key]) return;
+    refreshTodayPageInBackgroundP360_(dateStr, key);
+    return;
+  }
+
   const area = document.getElementById('todayTodoArea');
-  if (area) area.innerHTML = '<div class="loading">할 일을 불러오는 중입니다...</div>';
+  if (area && !cachedData) area.innerHTML = '<div class="loading">할 일을 불러오는 중입니다...</div>';
   const seq = ++todayLoadSeqP360_;
   todayLoadingByDateV57[key] = true;
   google.script.run
@@ -207,6 +251,31 @@ function loadTodayPage(options) {
       if (seq !== todayLoadSeqP360_) return;
       todayLoadingByDateV57[key] = false;
       if (area) area.innerHTML = '<div class="loading" style="color:#b42318;">오늘 할 일을 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+    })
+    .getPortalTodayData(dateStr, { assigneeFilter: getTodayAssigneeFilterP350_() });
+}
+
+function refreshTodayPageInBackgroundP360_(dateStr, key) {
+  dateStr = String(dateStr || todaySelectedDate || formatDateInput_(new Date()));
+  key = key || getTodayCacheKeyP360_(dateStr);
+  if (todayLoadingByDateV57[key]) return;
+  todayLoadingByDateV57[key] = true;
+  const seq = ++todayLoadSeqP360_;
+  google.script.run
+    .withSuccessHandler(function(data) {
+      if (seq !== todayLoadSeqP360_) return;
+      todayLoadingByDateV57[key] = false;
+      data = normalizeTodayDataP117_(data || { selectedDate: dateStr, tasks: [] });
+      todayPreloadMemoryP360_[key] = { data: data, cachedAt: Date.now() };
+      todayCacheByDateV57[key] = data;
+      todayLastLoadAtByDateV57[key] = Date.now();
+      if (isTodaySectionActiveV57_() && !todayHasLocalDraftP120_ && String(todaySelectedDate) === String(data.selectedDate || dateStr)) {
+        renderTodayDataV57_(data, { backgroundRefresh: true });
+      }
+    })
+    .withFailureHandler(function(err) {
+      todayLoadingByDateV57[key] = false;
+      console.warn('오늘 할 일 백그라운드 새로고침 실패', err);
     })
     .getPortalTodayData(dateStr, { assigneeFilter: getTodayAssigneeFilterP350_() });
 }
@@ -575,6 +644,11 @@ function saveTodayTodos(options) {
       todayCacheByDateV57[key] = data;
       todayLastLoadAtByDateV57[key] = Date.now();
       renderTodayDataV57_(data, { forceRender: true });
+      // STEP36: 저장 응답은 빠른 화면 반영용입니다. 실제 원장/컨택예정 합성값은
+      // 화면을 막지 않고 뒤에서 한 번 더 맞춥니다.
+      setTimeout(function() {
+        try { if (!todayHasLocalDraftP120_) refreshTodayPageInBackgroundP360_(data.selectedDate || todaySelectedDate); } catch (err) {}
+      }, 1200);
       if (!options.silent) toast('오늘 할 일이 저장되었습니다.');
     })
     .withFailureHandler(function(err) {

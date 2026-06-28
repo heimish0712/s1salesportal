@@ -354,10 +354,57 @@ function savePortalTodosForDate(payload) {
     });
   } catch (err) {}
 
-  const data = getPortalTodayData(writeMeta.selectedDate, { assigneeFilter: writeMeta.authorFilter || 'ALL', skipCarryover: true });
+  // STEP36: 저장 직후 다시 컨택이력/원장 전체를 조회하면 체감 저장 시간이 길어집니다.
+  // 방금 저장한 payload를 기준으로 화면에 필요한 응답을 즉시 구성하고, 다음 메뉴 진입/백그라운드 갱신에서 서버 현재값을 맞춥니다.
+  const data = buildPortalTodaySavedResponseFastP360_(payload, writeMeta);
   data.saved = true;
   data.saveMeta = writeMeta;
   return data;
+}
+
+
+
+function buildPortalTodaySavedResponseFastP360_(payload, writeMeta) {
+  payload = payload || {};
+  writeMeta = writeMeta || {};
+  const selectedDate = normalizePortalTodoDate_(writeMeta.selectedDate || payload.date || new Date());
+  const access = getPortalTodayAccessContextP360_(payload || {});
+  const raw = Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload.todos) ? payload.todos : []);
+  const deletedIds = {};
+  (Array.isArray(payload.deletedTasks) ? payload.deletedTasks : []).forEach(function(t) {
+    const id = String((t && t.id) || '').trim();
+    if (id) deletedIds[id] = true;
+  });
+  const seen = {};
+  const tasks = [];
+  raw.forEach(function(item, idx) {
+    let t = normalizePortalTodayTaskP360_(item || {}, selectedDate);
+    if (!t.content || deletedIds[t.id] || seen[t.id]) return;
+    if (!access.canViewAll) t.author = access.currentUserLabel || t.author || getCurrentUserLabel_();
+    else if (!String(t.author || '').trim()) t.author = (access.authorFilter && access.authorFilter !== 'ALL') ? access.authorFilter : (access.currentUserLabel || getCurrentUserLabel_());
+    t.order = idx + 1;
+    t.updatedAt = formatDateTimeText_(new Date());
+    seen[t.id] = true;
+    tasks.push(t);
+  });
+  return {
+    ok: true,
+    selectedDate: selectedDate,
+    dateVersion: 'saved-' + new Date().getTime(),
+    activeTaskIds: tasks.map(function(t) { return t.id; }),
+    tasks: tasks,
+    todos: tasks,
+    nextActions: [],
+    tagOptions: getPortalTodayTagOptionsFastP370_(tasks),
+    hiddenTags: getPortalTodayHiddenTags_(),
+    actionOptions: typeof PORTAL_NEXT_ACTION_OPTIONS !== 'undefined' ? PORTAL_NEXT_ACTION_OPTIONS : [],
+    canViewAllTodos: !!access.canViewAll,
+    authorFilter: access.authorFilter || 'ALL',
+    currentUserLabel: access.currentUserLabel || '',
+    authorOptions: access.canViewAll ? getPortalTodayAssignableAuthorOptionsP380_() : [],
+    loadedAt: formatDateTimeText_(new Date()),
+    fastSavedResponse: true
+  };
 }
 
 function runPortalTodayWriteLockedP360_(label, callback) {

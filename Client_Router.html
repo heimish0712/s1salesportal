@@ -10,20 +10,26 @@ window.onload = function() {
   }, 250);
   // PATCH L: 사용자가 메뉴를 누르기 전에 가벼운 업무 화면 데이터를 백그라운드로 준비합니다.
   // HOME 최초 표시를 막지 않도록 시간차를 두고 시작합니다.
+  // STEP36: HOME은 즉시 띄우고, 실제 업무 화면 데이터는 뒤에서 순차 예열합니다.
+  // 사용자가 메뉴를 눌렀을 때 다시 로딩 화면을 보지 않게 하기 위한 캐시 워밍입니다.
   setTimeout(function() {
     try { loadCustomerFavoriteMap_({ silent: true }); } catch (err) { console.warn('고객 즐겨찾기 프리로드 실패', err); }
-  }, 520);
+  }, 450);
   setTimeout(function() {
     try { preloadSupportPageV57_({ silent: true }); } catch (err) { console.warn('영업지원 요청 프리로드 실패', err); }
-  }, 700);
-  // STEP30: 오늘 할 일은 서무/admin 전체 조회 시 무거울 수 있어 HOME에서 자동 프리로드하지 않습니다.
-  // 실제 오늘 할 일 메뉴 진입 시 필요한 담당자 범위만 조회합니다.
+  }, 650);
+  setTimeout(function() {
+    try { if (typeof preloadTodayPageV57_ === 'function') preloadTodayPageV57_({ silent: true, reason: 'home-prewarm' }); } catch (err) { console.warn('오늘 할 일 프리로드 실패', err); }
+  }, 900);
+  setTimeout(function() {
+    try { if (typeof prewarmCustomerSearchDefaultP360_ === 'function') prewarmCustomerSearchDefaultP360_({ silent: true }); } catch (err) { console.warn('고객검색 기본 데이터 예열 실패', err); }
+  }, 1250);
+  setTimeout(function() {
+    try { if (typeof preloadContractCompletePageP360_ === 'function') preloadContractCompletePageP360_({ silent: true }); } catch (err) { console.warn('계약종합관리 프리로드 실패', err); }
+  }, 2300);
   setTimeout(function() {
     try { startPortalDataVersionWatcherP201_(); } catch (err) { console.warn('데이터 버전 감시 시작 실패', err); }
-  }, 1600);
-  // STEP25/P330: HOME을 막지 않고, 사용자가 중점고객관리 메뉴를 누르기 전
-  // 기본 1페이지/통계 데이터를 백그라운드로 한 번 데워둡니다.
-  // 실제 화면 렌더링은 하지 않으며 서버 CacheService + 브라우저 메모리 캐시만 준비합니다.
+  }, 2600);
   setTimeout(function() {
     try {
       if (typeof preloadFocusCustomerDefaultP330_ === 'function') {
@@ -32,7 +38,7 @@ window.onload = function() {
     } catch (err) {
       console.warn('중점고객관리 프리로드 실패', err);
     }
-  }, 5200);
+  }, 3600);
   // v31 FIX 유지: 고객 상세 검색 메뉴 진입 시 searchCustomerPage(0)가 실행됩니다.
   // v46: notice 전체 목록은 공지사항 메뉴 진입 시에만 조회합니다.
 };

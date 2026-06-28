@@ -553,4 +553,26 @@ function syncContractCompleteDriveDocsV270() {
     .syncContractCompleteDocsFromDriveP270({});
 }
 
+
+
+function preloadContractCompletePageP360_(options) {
+  options = options || {};
+  if (contractCompleteLoadingV69 || contractCompleteRowsV69.length) return;
+  contractCompleteLoadingV69 = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      contractCompleteLoadingV69 = false;
+      contractCompleteMetaV69 = res || null;
+      contractCompleteRowsV69 = normalizeContractCompleteRowsV81_((res && Array.isArray(res.rows)) ? res.rows : []);
+      if (contractCompleteMetaV69) contractCompleteMetaV69.total = contractCompleteRowsV69.length;
+      const section = document.getElementById('contractCompleteSection');
+      if (section && section.classList.contains('active')) renderContractCompleteListV69_();
+    })
+    .withFailureHandler(function(err) {
+      contractCompleteLoadingV69 = false;
+      if (!options.silent) console.warn('계약종합관리 프리로드 실패', err);
+    })
+    .listContractCompleteRowsV69({ force: false, preload: true });
+}
+
 </script>

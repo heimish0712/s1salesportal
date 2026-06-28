@@ -160,6 +160,8 @@ function filterCustomerIndexRowsByPermissionAndScopeP04_(rows, scopeMode, perm, 
   return rows.filter(function(row) { return isCustomerIndexRowOwnedByPermissionP04_(row, perm); });
 }
 
+const CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION_P360 = 'P360_MEMO5000_PREWARM';
+
 function getCustomerSearchIndexData(permForFilter) {
   const sheet = ensureCustomerSearchIndexSheet_();
   const props = PropertiesService.getScriptProperties();
@@ -171,10 +173,12 @@ function getCustomerSearchIndexData(permForFilter) {
   let rebuildInfo = null;
   const needsK2Rebuild = !isCustomerSearchIndexK2Ready_();
   const indexDirtyBefore = props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY') === 'Y';
+  const schemaChangedP360 = props.getProperty('CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION') !== CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION_P360;
 
   // v31 FIX 유지: 인덱스가 비어 있거나 구조가 맞지 않거나 dirty이면 첫 요청자가 짧게 rebuild합니다.
-  if (needsK2Rebuild || !rows.length || indexDirtyBefore) {
-    const reason = indexDirtyBefore ? 'DIRTY_MASTER_PRIORITY' : (needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX');
+  // STEP36: 메모 보관 길이/프리워밍 정책 변경 시 기존 350자 인덱스가 계속 쓰이지 않도록 스키마 버전도 봅니다.
+  if (needsK2Rebuild || !rows.length || indexDirtyBefore || schemaChangedP360) {
+    const reason = schemaChangedP360 ? 'P360_SCHEMA_MEMO_PREWARM' : (indexDirtyBefore ? 'DIRTY_MASTER_PRIORITY' : (needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX'));
     rebuildInfo = rebuildCustomerSearchIndex({ auto: true, maxWaitMs: 700, reason: reason, skipFormat: true });
     if (rebuildInfo && rebuildInfo.ok) {
       rows = getCustomerSearchIndexRows_();
@@ -490,7 +494,8 @@ function rebuildCustomerSearchIndex(options) {
       CUSTOMER_SEARCH_INDEX_BUILT_AT: builtAt,
       CUSTOMER_SEARCH_INDEX_DIRTY: 'N',
       CUSTOMER_SEARCH_INDEX_DIRTY_REASON: '',
-      CUSTOMER_SEARCH_INDEX_DIRTY_AT: ''
+      CUSTOMER_SEARCH_INDEX_DIRTY_AT: '',
+      CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION: CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION_P360
     }, true);
     SpreadsheetApp.flush();
     return { ok: true, rebuilt: rows.length, version: version, builtAt: builtAt, sheetName: PORTAL_CONFIG.CUSTOMER_INDEX_SHEET_NAME };
