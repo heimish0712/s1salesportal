@@ -1,55 +1,63 @@
 /***************************************
  * S1 Sales Portal - 08_TodayService.gs
- * 오늘 할 일 태그형 개편
- * - 수동/컨택 예정 액션을 하나의 할 일 목록으로 통합
- * - 사용자 정의 해시태그 다중 적용
- * - 작성시간/처리내용/완료예정시간/완료시간 관리
+ * 오늘 할 일 운영 안정화 버전
+ * - 원천: 오늘할일_DB
+ * - 추가/수정/삭제는 클라이언트에서 모은 현재 목록을 [저장] 시 한 번에 반영
+ * - 미완료 과거 할 일은 오늘 화면 진입 시 오늘 날짜로 자동 이월
+ * - 서무/admin은 전체/담당자별 조회, 일반 사용자는 본인 할 일만 조회
  ***************************************/
 
 function getPortalTodayData(dateText, options) {
   options = options || {};
   const selectedDate = normalizePortalTodoDate_(dateText || new Date());
-  const access = getPortalTodayAccessContextP350_(options);
-  try { carryOverPortalTodayOpenTasksP350_(selectedDate, access); } catch (err) { console.warn('오늘할일 이월 처리 실패', err); }
+  const access = getPortalTodayAccessContextP360_(options);
+
+  if (selectedDate === normalizePortalTodoDate_(new Date())) {
+    try { carryOverPortalTodayOpenTasksP360_(selectedDate, access); } catch (err) { console.warn('오늘할일 이월 처리 실패', err); }
+  }
+
   const storedTodos = getPortalTodosForDate_(selectedDate, access);
-  let nextActions = getContactNextActionsForDate_(selectedDate);
-  nextActions = filterPortalTodayItemsByAccessP350_(nextActions, access);
-  const tasks = buildPortalTodayUnifiedTasks_(storedTodos, nextActions, selectedDate);
-  const dateMeta = getPortalTodayDateMetaP130_(selectedDate, storedTodos);
+  const deletedSourceMap = getPortalTodayDeletedSourceMapP360_(selectedDate, access);
+  let nextActions = getContactNextActionsForDate_(selectedDate, access);
+  nextActions = filterPortalTodayItemsByAccessP360_(nextActions, access);
+
+  const tasks = buildPortalTodayUnifiedTasksP360_(storedTodos, nextActions, selectedDate, deletedSourceMap);
+  const dateMeta = getPortalTodayDateMetaP360_(selectedDate, tasks);
+
   return {
     ok: true,
     selectedDate: selectedDate,
     dateVersion: dateMeta.version,
-    activeTaskIds: tasks.map(function(t) { return String((t && t.id) || '').trim(); }).filter(Boolean),
-    storedTaskIds: dateMeta.activeTaskIds,
+    activeTaskIds: dateMeta.activeTaskIds,
     tasks: tasks,
     todos: tasks,
     nextActions: nextActions,
     tagOptions: getPortalTodayTagOptions_(),
     hiddenTags: getPortalTodayHiddenTags_(),
-    actionOptions: PORTAL_NEXT_ACTION_OPTIONS,
+    actionOptions: typeof PORTAL_NEXT_ACTION_OPTIONS !== 'undefined' ? PORTAL_NEXT_ACTION_OPTIONS : [],
     canViewAllTodos: !!access.canViewAll,
     authorFilter: access.authorFilter || 'ALL',
     currentUserLabel: access.currentUserLabel || '',
-    authorOptions: access.canViewAll ? getPortalTodayAuthorOptionsP350_(selectedDate) : []
+    authorOptions: access.canViewAll ? getPortalTodayAuthorOptionsP360_(selectedDate) : [],
+    loadedAt: formatDateTimeText_(new Date())
   };
 }
 
-function getPortalTodayAccessContextP350_(options) {
+function getPortalTodayAccessContextP360_(options) {
   options = options || {};
   const perm = getPortalCurrentPermission_ ? getPortalCurrentPermission_() : null;
-  const canViewAll = !!(perm && perm.active !== false && (perm.canUseAdminHome || perm.canReadAllSupport));
+  const canViewAll = !!(perm && perm.active !== false && (perm.canUseAdminHome || perm.canReadAllSupport || perm.canCompleteSupport));
   const currentUserLabel = String((perm && (perm.displayName || perm.name || perm.salesRepName)) || getCurrentUserLabel_() || '').trim();
-  const myNames = [];
+  const names = [];
   if (perm) {
-    myNames.push(perm.name, perm.displayName, perm.salesRepName, perm.email);
-    (perm.salesRepAliases || []).forEach(function(v) { myNames.push(v); });
+    names.push(perm.name, perm.displayName, perm.salesRepName, perm.email);
+    (perm.salesRepAliases || []).forEach(function(v) { names.push(v); });
   }
-  myNames.push(currentUserLabel);
-  const myKeys = myNames.map(portalTodayAuthorKeyP350_).filter(Boolean);
+  names.push(currentUserLabel);
+  const myKeys = names.map(portalTodayAuthorKeyP360_).filter(Boolean);
   let authorFilter = String(options.assigneeFilter || options.authorFilter || options.author || 'ALL').trim();
   if (!authorFilter) authorFilter = 'ALL';
-  const authorFilterKey = (canViewAll && authorFilter !== 'ALL') ? portalTodayAuthorKeyP350_(authorFilter) : '';
+  const authorFilterKey = (canViewAll && authorFilter !== 'ALL') ? portalTodayAuthorKeyP360_(authorFilter) : '';
   return {
     perm: perm,
     canViewAll: canViewAll,
@@ -60,35 +68,35 @@ function getPortalTodayAccessContextP350_(options) {
   };
 }
 
-function portalTodayAuthorKeyP350_(value) {
+function portalTodayAuthorKeyP360_(value) {
   if (typeof normalizePortalNameForPermission_ === 'function') return normalizePortalNameForPermission_(value);
   return String(value || '').replace(/\s+/g, '').toLowerCase();
 }
 
-function portalTodayAuthorMatchesAccessP350_(author, access) {
-  access = access || getPortalTodayAccessContextP350_({});
-  const key = portalTodayAuthorKeyP350_(author);
+function portalTodayAuthorMatchesAccessP360_(author, access) {
+  access = access || getPortalTodayAccessContextP360_({});
+  const key = portalTodayAuthorKeyP360_(author);
   if (access.canViewAll) {
     if (!access.authorFilterKey) return true;
-    return key && key === access.authorFilterKey;
+    return !!key && key === access.authorFilterKey;
   }
   if (!access.myKeys || !access.myKeys.length) return true;
   return !key || access.myKeys.indexOf(key) >= 0;
 }
 
-function filterPortalTodayItemsByAccessP350_(items, access) {
+function filterPortalTodayItemsByAccessP360_(items, access) {
   return (Array.isArray(items) ? items : []).filter(function(item) {
-    return portalTodayAuthorMatchesAccessP350_((item && item.author) || '', access);
+    return portalTodayAuthorMatchesAccessP360_((item && item.author) || '', access);
   });
 }
 
-function getPortalTodayAuthorOptionsP350_(selectedDate) {
+function getPortalTodayAuthorOptionsP360_(selectedDate) {
   const seen = {};
   const out = [];
   function add(name) {
     name = String(name || '').trim();
     if (!name) return;
-    const key = portalTodayAuthorKeyP350_(name);
+    const key = portalTodayAuthorKeyP360_(name);
     if (!key || seen[key]) return;
     seen[key] = true;
     out.push(name);
@@ -96,64 +104,55 @@ function getPortalTodayAuthorOptionsP350_(selectedDate) {
   try {
     const sheet = ensurePortalTodaySheet_();
     const lastRow = sheet.getLastRow();
+    const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
     if (lastRow >= 2) {
-      const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
-      const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
-      values.forEach(function(row) {
-        const item = portalTodayRowToItemP130_(row);
+      sheet.getRange(2, 1, lastRow - 1, headerLen).getValues().forEach(function(row) {
+        const item = portalTodayRowToItemP360_(row);
         if (item.date === selectedDate && String(item.deleted || '').toUpperCase() !== 'Y' && item.content) add(item.author);
       });
     }
   } catch (err) {}
-  try { getContactNextActionsForDate_(selectedDate).forEach(function(item) { add(item.author); }); } catch (err) {}
+  try { getContactNextActionsForDate_(selectedDate, { canViewAll: true }).forEach(function(item) { add(item.author); }); } catch (err) {}
   return out.sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
 }
 
-function carryOverPortalTodayOpenTasksP350_(selectedDate, access) {
+function carryOverPortalTodayOpenTasksP360_(selectedDate, access) {
   selectedDate = normalizePortalTodoDate_(selectedDate || new Date());
   const todayStr = normalizePortalTodoDate_(new Date());
-  if (String(selectedDate) < String(todayStr)) return { moved: 0 };
+  if (selectedDate !== todayStr) return { moved: 0, deleted: 0 };
+
   const sheet = ensurePortalTodaySheet_();
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { moved: 0 };
+  if (lastRow < 2) return { moved: 0, deleted: 0 };
+
   const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
   const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
-  const selectedActiveIds = {};
-  values.forEach(function(row) {
-    const item = portalTodayRowToItemP130_(row);
-    if (item.date === selectedDate && String(item.deleted || '').toUpperCase() !== 'Y' && item.content) selectedActiveIds[item.id] = true;
-  });
-  const moveRows = [];
-  const deleteRows = [];
+  const rowsToMove = [];
+
   values.forEach(function(row, idx) {
-    const item = portalTodayRowToItemP130_(row);
+    const item = portalTodayRowToItemP360_(row);
     if (!item.id || !item.content) return;
     if (String(item.deleted || '').toUpperCase() === 'Y') return;
     if (item.done) return;
-    if (!portalTodayAuthorMatchesAccessP350_(item.author, access)) return;
-    if (!(item.date && String(item.date) < String(todayStr))) return;
-    const rowNo = idx + 2;
-    if (selectedActiveIds[item.id]) deleteRows.push(rowNo);
-    else moveRows.push(rowNo);
+    if (!item.date || item.date >= todayStr) return;
+    if (!portalTodayAuthorMatchesAccessP360_(item.author, access)) return;
+    rowsToMove.push(idx + 2);
   });
-  if (!moveRows.length && !deleteRows.length) return { moved: 0, deleted: 0 };
+
+  if (!rowsToMove.length) return { moved: 0, deleted: 0 };
   const now = new Date();
-  if (moveRows.length) {
-    sheet.getRangeList(moveRows.map(function(r) { return 'B' + r; })).setValue(selectedDate);
-    sheet.getRangeList(moveRows.map(function(r) { return 'G' + r; })).setValue(now);
-  }
-  if (deleteRows.length) markPortalTodayRowsDeletedP130_(sheet, deleteRows);
+  sheet.getRangeList(rowsToMove.map(function(r) { return 'B' + r; })).setValue(todayStr);
+  sheet.getRangeList(rowsToMove.map(function(r) { return 'G' + r; })).setValue(now);
   SpreadsheetApp.flush();
-  return { moved: moveRows.length, deleted: deleteRows.length };
+  return { moved: rowsToMove.length, deleted: 0 };
 }
 
 function savePortalTodosForDate(payload) {
   payload = payload || {};
-  const writeMeta = runPortalTodayWriteLockedP130_('today-save', function() {
-    return savePortalTodosForDateCoreP130_(payload || {});
+  const writeMeta = runPortalTodayWriteLockedP360_('today-save', function() {
+    return savePortalTodosForDateCoreP360_(payload || {});
   });
 
-  // 활동로그는 핵심 저장 Lock 밖에서 처리합니다. 로그 실패가 오늘할일 저장 성공을 막으면 안 됩니다.
   try {
     appendPortalActivityLog_({
       actionType: '오늘할일',
@@ -163,14 +162,13 @@ function savePortalTodosForDate(payload) {
     });
   } catch (err) {}
 
-  const data = getPortalTodayData(writeMeta.selectedDate);
+  const data = getPortalTodayData(writeMeta.selectedDate, { assigneeFilter: writeMeta.authorFilter || 'ALL' });
   data.saved = true;
   data.saveMeta = writeMeta;
-  data.mergedDueToStaleBase = !!writeMeta.mergedDueToStaleBase;
   return data;
 }
 
-function runPortalTodayWriteLockedP130_(label, callback) {
+function runPortalTodayWriteLockedP360_(label, callback) {
   if (typeof withPortalScriptLockP201_ === 'function') {
     return withPortalScriptLockP201_(label || 'today-save', callback, { attempts: 5, waitMs: 900, sleepBaseMs: 220 });
   }
@@ -183,53 +181,60 @@ function runPortalTodayWriteLockedP130_(label, callback) {
   }
 }
 
-function savePortalTodosForDateCoreP130_(payload) {
+function savePortalTodosForDateCoreP360_(payload) {
   payload = payload || {};
   const selectedDate = normalizePortalTodoDate_(payload.date || new Date());
-  const access = getPortalTodayAccessContextP350_(payload || {});
-  const todos = Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload.todos) ? payload.todos : []);
-  const sheet = ensurePortalTodaySheet_();
-  const now = new Date();
-  const user = getCurrentUserLabel_();
-  const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
-  const existingRows = readPortalTodayRowsForDateP130_(sheet, selectedDate, headerLen, access);
-  const currentMeta = getPortalTodayDateMetaFromRowsP130_(selectedDate, existingRows);
-  const baseDateVersion = String(payload.baseDateVersion || '').trim();
-  const mergedDueToStaleBase = !!(baseDateVersion && currentMeta.version && baseDateVersion !== currentMeta.version);
-  const hasExplicitBaseIds = Array.isArray(payload.baseTaskIds);
-  const baseTaskIds = (hasExplicitBaseIds ? payload.baseTaskIds : currentMeta.activeTaskIds)
+  const access = getPortalTodayAccessContextP360_(payload || {});
+  const incomingRaw = Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload.todos) ? payload.todos : []);
+  const baseTasks = Array.isArray(payload.baseTasks) ? payload.baseTasks : [];
+  const baseTaskIds = (Array.isArray(payload.baseTaskIds) ? payload.baseTaskIds : baseTasks.map(function(t) { return t && t.id; }))
     .map(function(v) { return String(v || '').trim(); })
     .filter(Boolean);
   const baseIdSet = baseTaskIds.reduce(function(acc, id) { acc[id] = true; return acc; }, {});
 
-  const existingById = {};
-  const duplicateDeleteRowNos = [];
-  existingRows.forEach(function(rowInfo) {
-    if (!rowInfo.active || !rowInfo.id) return;
-    if (!existingById[rowInfo.id]) existingById[rowInfo.id] = rowInfo;
-    else duplicateDeleteRowNos.push(rowInfo.rowNo);
+  const sheet = ensurePortalTodaySheet_();
+  const now = new Date();
+  const user = getCurrentUserLabel_();
+  const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
+  const allRowsForDate = readPortalTodaySheetRowsForDateP360_(sheet, selectedDate, headerLen, access, { includeDeleted: true });
+
+  const existingActiveById = {};
+  const existingAnyById = {};
+  const duplicateDeleteRows = [];
+  allRowsForDate.forEach(function(rowInfo) {
+    if (!rowInfo.id) return;
+    if (!existingAnyById[rowInfo.id]) existingAnyById[rowInfo.id] = rowInfo;
+    if (!rowInfo.deleted && rowInfo.item.content) {
+      if (!existingActiveById[rowInfo.id]) existingActiveById[rowInfo.id] = rowInfo;
+      else duplicateDeleteRows.push(rowInfo.rowNo);
+    }
   });
 
   const incomingIds = {};
   const appendRows = [];
   let upsertedCount = 0;
-  todos.forEach(function(rawItem, idx) {
+
+  incomingRaw.forEach(function(rawItem, idx) {
     const item = Object.assign({}, rawItem || {});
-    if (!access.canViewAll) item.author = access.currentUserLabel || item.author || getCurrentUserLabel_();
-    else if (!String(item.author || '').trim() && access.authorFilter && access.authorFilter !== 'ALL') item.author = access.authorFilter;
-    const content = String(item.content || '').trim();
-    if (!content) return;
-    const id = String(item.id || '').trim() || Utilities.getUuid().slice(0, 8);
+    item.content = String(item.content || '').trim();
+    if (!item.content) return;
+    if (!access.canViewAll) {
+      item.author = access.currentUserLabel || item.author || user;
+    } else if (!String(item.author || '').trim()) {
+      item.author = (access.authorFilter && access.authorFilter !== 'ALL') ? access.authorFilter : (access.currentUserLabel || user);
+    }
+    const id = String(item.id || '').trim() || Utilities.getUuid().slice(0, 12);
     incomingIds[id] = true;
-    const prevRowInfo = existingById[id] || null;
+    const prevRowInfo = existingAnyById[id] || null;
     const prev = prevRowInfo ? prevRowInfo.item : {};
-    const rowValues = buildPortalTodayRowValuesP130_(item, {
+    const rowValues = buildPortalTodayRowValuesP360_(item, {
       id: id,
       selectedDate: selectedDate,
       order: idx + 1,
       prev: prev,
       now: now,
-      user: user
+      user: user,
+      deleted: ''
     });
     if (prevRowInfo && prevRowInfo.rowNo) {
       sheet.getRange(prevRowInfo.rowNo, 1, 1, headerLen).setValues([rowValues]);
@@ -239,39 +244,61 @@ function savePortalTodosForDateCoreP130_(payload) {
     upsertedCount++;
   });
 
-  const deleteRowNos = duplicateDeleteRowNos.slice();
-  existingRows.forEach(function(rowInfo) {
-    if (!rowInfo.active || !rowInfo.id) return;
+  const deleteRowNos = duplicateDeleteRows.slice();
+  allRowsForDate.forEach(function(rowInfo) {
+    if (rowInfo.deleted || !rowInfo.active || !rowInfo.id) return;
     if (baseIdSet[rowInfo.id] && !incomingIds[rowInfo.id]) deleteRowNos.push(rowInfo.rowNo);
   });
-  markPortalTodayRowsDeletedP130_(sheet, deleteRowNos);
 
-  if (appendRows.length) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, appendRows.length, headerLen).setValues(appendRows);
+  const tombstoneRows = [];
+  const baseTaskById = {};
+  baseTasks.forEach(function(raw) {
+    const t = normalizePortalTodayTaskP360_(raw || {}, selectedDate);
+    if (t.id) baseTaskById[t.id] = t;
+  });
+  baseTaskIds.forEach(function(id) {
+    if (incomingIds[id]) return;
+    if (existingAnyById[id]) return;
+    const t = baseTaskById[id];
+    if (!t || String(t.sourceType || '') !== 'CONTACT_NEXT') return;
+    tombstoneRows.push(buildPortalTodayRowValuesP360_(t, {
+      id: id,
+      selectedDate: selectedDate,
+      order: 9999,
+      prev: {},
+      now: now,
+      user: user,
+      deleted: 'Y'
+    }));
+  });
+
+  markPortalTodayRowsDeletedP360_(sheet, deleteRowNos);
+
+  const rowsToAppend = appendRows.concat(tombstoneRows);
+  if (rowsToAppend.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAppend.length, headerLen).setValues(rowsToAppend);
   }
 
   SpreadsheetApp.flush();
   return {
     ok: true,
     selectedDate: selectedDate,
-    baseDateVersion: baseDateVersion,
-    previousDateVersion: currentMeta.version,
-    mergedDueToStaleBase: mergedDueToStaleBase,
-    explicitBaseIds: hasExplicitBaseIds,
+    authorFilter: access.authorFilter || 'ALL',
     baseTaskCount: baseTaskIds.length,
     upsertedCount: upsertedCount,
     appendedCount: appendRows.length,
+    tombstoneCount: tombstoneRows.length,
     updatedCount: upsertedCount - appendRows.length,
-    deletedCount: deleteRowNos.length
+    deletedCount: deleteRowNos.length + tombstoneRows.length
   };
 }
 
-function buildPortalTodayRowValuesP130_(item, context) {
+function buildPortalTodayRowValuesP360_(item, context) {
   item = item || {};
   context = context || {};
   const now = context.now || new Date();
   const prev = context.prev || {};
-  const sourceType = String(item.sourceType || '').trim() || 'MANUAL';
+  const sourceType = String(item.sourceType || prev.sourceType || '').trim() || 'MANUAL';
   const done = !!item.done;
   const createdAt = parsePortalTodayDateTime_(item.createdAt) || parsePortalTodayDateTime_(prev.createdAt) || now;
   const completedAt = done
@@ -279,51 +306,59 @@ function buildPortalTodayRowValuesP130_(item, context) {
     : null;
   const dueAt = done ? '' : String(item.dueAt || item.timeText || '').trim();
   return [
-    String(context.id || item.id || '').trim() || Utilities.getUuid().slice(0, 8),
+    String(context.id || item.id || '').trim() || Utilities.getUuid().slice(0, 12),
     context.selectedDate,
     Number(context.order) || 0,
-    String(item.content || '').trim(),
+    String(item.content || prev.content || '').trim(),
     done ? 'Y' : '',
-    String(item.author || '').trim() || String(prev.author || '').trim() || context.user || getCurrentUserLabel_(),
+    String(item.author || prev.author || '').trim() || context.user || getCurrentUserLabel_(),
     now,
-    '',
-    String(item.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '다음액션' : '할일'),
+    String(context.deleted || '').toUpperCase() === 'Y' ? 'Y' : '',
+    String(item.category || prev.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '다음액션' : '할일'),
     sourceType,
-    String(item.sourceId || '').trim(),
-    String(item.customerNo || '').trim(),
-    String(item.company || '').trim(),
-    String(item.rowNo || '').trim(),
-    String(item.timeText || item.nextActionAt || '').trim(),
-    String(item.priority || '').trim(),
+    String(item.sourceId || prev.sourceId || '').trim(),
+    String(item.customerNo || prev.customerNo || '').trim(),
+    String(item.company || prev.company || '').trim(),
+    String(item.rowNo || prev.rowNo || '').trim(),
+    String(item.timeText || item.nextActionAt || prev.timeText || '').trim(),
+    String(item.priority || prev.priority || '').trim(),
     createdAt,
-    normalizePortalTodayTags_(item.tags).join(', '),
+    normalizePortalTodayTags_(item.tags || prev.tags || '').join(', '),
     String(item.detail || '').trim(),
     dueAt,
     completedAt || ''
   ];
 }
 
-function readPortalTodayRowsForDateP130_(sheet, selectedDate, headerLen, access) {
+function readPortalTodaySheetRowsForDateP360_(sheet, selectedDate, headerLen, access, options) {
+  options = options || {};
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
-  return values.map(function(row, i) {
-      const item = portalTodayRowToItemP130_(row);
-      const deleted = String(row[7] || '').toUpperCase() === 'Y';
-      return {
-        rowNo: i + 2,
-        values: row,
-        id: item.id,
-        date: item.date,
-        deleted: deleted,
-        active: item.date === selectedDate && !deleted && !!item.content && portalTodayAuthorMatchesAccessP350_(item.author, access),
-        item: item
-      };
-    })
-    .filter(function(rowInfo) { return rowInfo.date === selectedDate; });
+  return values.map(function(row, idx) {
+    const item = portalTodayRowToItemP360_(row);
+    const deleted = String(item.deleted || '').toUpperCase() === 'Y';
+    const matchesDate = item.date === selectedDate;
+    const matchesAccess = portalTodayAuthorMatchesAccessP360_(item.author, access);
+    return {
+      rowNo: idx + 2,
+      values: row,
+      id: item.id,
+      date: item.date,
+      deleted: deleted,
+      active: matchesDate && !deleted && !!item.content && matchesAccess,
+      access: matchesAccess,
+      item: item
+    };
+  }).filter(function(rowInfo) {
+    if (rowInfo.date !== selectedDate) return false;
+    if (!rowInfo.access) return false;
+    if (options.includeDeleted) return true;
+    return !rowInfo.deleted && !!rowInfo.item.content;
+  });
 }
 
-function portalTodayRowToItemP130_(row) {
+function portalTodayRowToItemP360_(row) {
   row = row || [];
   return {
     id: String(row[0] || '').trim(),
@@ -350,7 +385,9 @@ function portalTodayRowToItemP130_(row) {
   };
 }
 
-function markPortalTodayRowsDeletedP130_(sheet, rowNos) {
+function portalTodayRowToItemP130_(row) { return portalTodayRowToItemP360_(row); }
+
+function markPortalTodayRowsDeletedP360_(sheet, rowNos) {
   const unique = {};
   const a1s = [];
   (Array.isArray(rowNos) ? rowNos : []).forEach(function(rowNo) {
@@ -362,36 +399,38 @@ function markPortalTodayRowsDeletedP130_(sheet, rowNos) {
   if (a1s.length) sheet.getRangeList(a1s).setValue('Y');
 }
 
-function getPortalTodayDateMetaP130_(selectedDate, storedTodos) {
-  const rows = (Array.isArray(storedTodos) ? storedTodos : getPortalTodosForDate_(selectedDate))
-    .map(function(item) { return { active: true, id: String((item && item.id) || '').trim(), item: item || {} }; });
-  return getPortalTodayDateMetaFromRowsP130_(selectedDate, rows);
-}
+function markPortalTodayRowsDeletedP130_(sheet, rowNos) { return markPortalTodayRowsDeletedP360_(sheet, rowNos); }
 
-function getPortalTodayDateMetaFromRowsP130_(selectedDate, rows) {
-  const active = (Array.isArray(rows) ? rows : [])
-    .filter(function(rowInfo) { return rowInfo && rowInfo.active && rowInfo.id; })
-    .map(function(rowInfo) {
-      const item = rowInfo.item || {};
+function getPortalTodayDateMetaP360_(selectedDate, tasks) {
+  const active = (Array.isArray(tasks) ? tasks : [])
+    .map(function(item) {
+      item = item || {};
       return {
-        id: String(rowInfo.id || item.id || '').trim(),
+        id: String(item.id || '').trim(),
         updatedAt: String(item.updatedAt || '').trim(),
         done: item.done ? 'Y' : '',
-        content: String(item.content || '').trim()
+        content: String(item.content || '').trim(),
+        author: String(item.author || '').trim()
       };
     })
-    .filter(function(item) { return item.id; })
+    .filter(function(item) { return item.id && item.content; })
     .sort(function(a, b) { return a.id.localeCompare(b.id); });
   const source = selectedDate + '|' + active.map(function(item) {
-    return [item.id, item.updatedAt, item.done, item.content].join(':');
+    return [item.id, item.updatedAt, item.done, item.content, item.author].join(':');
   }).join('|');
   return {
-    version: digestPortalTodayVersionP130_(source),
+    version: digestPortalTodayVersionP360_(source),
     activeTaskIds: active.map(function(item) { return item.id; })
   };
 }
 
-function digestPortalTodayVersionP130_(source) {
+function getPortalTodayDateMetaP130_(selectedDate, storedTodos) { return getPortalTodayDateMetaP360_(selectedDate, storedTodos); }
+function getPortalTodayDateMetaFromRowsP130_(selectedDate, rows) {
+  const tasks = (Array.isArray(rows) ? rows : []).filter(function(r) { return r && r.active; }).map(function(r) { return r.item || {}; });
+  return getPortalTodayDateMetaP360_(selectedDate, tasks);
+}
+
+function digestPortalTodayVersionP360_(source) {
   source = String(source || '');
   try {
     const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, source, Utilities.Charset.UTF_8);
@@ -403,34 +442,49 @@ function digestPortalTodayVersionP130_(source) {
     return String(source.length) + '_' + Utilities.base64EncodeWebSafe(source).slice(0, 24);
   }
 }
+function digestPortalTodayVersionP130_(source) { return digestPortalTodayVersionP360_(source); }
 
-function buildPortalTodayUnifiedTasks_(storedTodos, nextActions, selectedDate) {
+function getPortalTodayDeletedSourceMapP360_(selectedDate, access) {
+  const map = {};
+  try {
+    const sheet = ensurePortalTodaySheet_();
+    const rows = readPortalTodaySheetRowsForDateP360_(sheet, selectedDate, PORTAL_CONFIG.TODAY_HEADERS.length, access, { includeDeleted: true });
+    rows.forEach(function(rowInfo) {
+      const item = rowInfo.item || {};
+      if (String(item.deleted || '').toUpperCase() !== 'Y') return;
+      if (item.id) map['ID|' + item.id] = true;
+      if (item.sourceType && item.sourceId) map[String(item.sourceType) + '|' + String(item.sourceId)] = true;
+    });
+  } catch (err) {}
+  return map;
+}
+
+function buildPortalTodayUnifiedTasksP360_(storedTodos, nextActions, selectedDate, deletedSourceMap) {
   storedTodos = Array.isArray(storedTodos) ? storedTodos : [];
   nextActions = Array.isArray(nextActions) ? nextActions : [];
+  deletedSourceMap = deletedSourceMap || {};
   const result = [];
   const sourceTodoMap = {};
 
   storedTodos.forEach(function(todo) {
-    const sourceType = String(todo.sourceType || '').trim();
-    const sourceId = String(todo.sourceId || '').trim();
-    if (sourceType && sourceType !== 'MANUAL' && sourceId) {
-      sourceTodoMap[sourceType + '|' + sourceId] = todo;
-    }
-    result.push(normalizePortalTodayTask_(todo, selectedDate));
+    const normalized = normalizePortalTodayTaskP360_(todo, selectedDate);
+    const sourceType = String(normalized.sourceType || '').trim();
+    const sourceId = String(normalized.sourceId || '').trim();
+    if (sourceType && sourceType !== 'MANUAL' && sourceId) sourceTodoMap[sourceType + '|' + sourceId] = normalized;
+    result.push(normalized);
   });
 
   nextActions.forEach(function(action) {
     const sourceId = String(action.sourceId || action.historyId || '').trim() || [action.customerNo, action.rowNo, action.nextActionAt, action.nextAction].join('|');
     const sourceKey = 'CONTACT_NEXT|' + sourceId;
+    const taskId = 'contact_' + Utilities.base64EncodeWebSafe(sourceId).slice(0, 18);
     if (sourceTodoMap[sourceKey]) return;
-    result.push(normalizePortalTodayTask_({
-      id: 'contact_' + Utilities.base64EncodeWebSafe(sourceId).slice(0, 16),
+    if (deletedSourceMap[sourceKey] || deletedSourceMap['ID|' + taskId]) return;
+    result.push(normalizePortalTodayTaskP360_({
+      id: taskId,
       date: selectedDate,
-      order: 9000 + result.length,
-      content: buildPortalTodayContactTaskText_(action),
       done: false,
-      author: action.author || '',
-      category: '컨택예정',
+      category: '다음액션',
       sourceType: 'CONTACT_NEXT',
       sourceId: sourceId,
       customerNo: action.customerNo || '',
@@ -438,40 +492,33 @@ function buildPortalTodayUnifiedTasks_(storedTodos, nextActions, selectedDate) {
       rowNo: action.rowNo || '',
       timeText: action.nextActionAt || '',
       dueAt: action.nextActionAt || '',
-      priority: '오늘',
-      tags: normalizePortalNextActionTags_(action.nextActionTags || action.nextAction || ''),
-      nextAction: action.nextAction || '',
-      rawContent: action.content || ''
+      content: buildPortalTodayContactTaskTextP360_(action),
+      author: action.author || '',
+      tags: normalizePortalNextActionTagsP360_(action.nextAction || action.nextActionTags || '')
     }, selectedDate));
   });
 
-  result.sort(function(a, b) {
-    const ad = a.done ? 1 : 0;
-    const bd = b.done ? 1 : 0;
-    if (ad !== bd) return ad - bd;
-    const at = String(a.dueAt || a.timeText || '99:99');
-    const bt = String(b.dueAt || b.timeText || '99:99');
-    if (at !== bt) return at.localeCompare(bt);
+  return result.sort(function(a, b) {
+    if (!!a.done !== !!b.done) return a.done ? 1 : -1;
+    const ad = String(a.dueAt || a.timeText || '');
+    const bd = String(b.dueAt || b.timeText || '');
+    if (ad || bd) return ad.localeCompare(bd);
     return (Number(a.order) || 0) - (Number(b.order) || 0);
   });
-
-  return result;
 }
+function buildPortalTodayUnifiedTasks_(storedTodos, nextActions, selectedDate) { return buildPortalTodayUnifiedTasksP360_(storedTodos, nextActions, selectedDate, {}); }
 
-function normalizePortalTodayTask_(task, selectedDate) {
+function normalizePortalTodayTaskP360_(task, selectedDate) {
   task = task || {};
   const sourceType = String(task.sourceType || '').trim() || 'MANUAL';
-  const createdAt = task.createdAt || task.updatedAt || new Date();
-  const tags = normalizePortalTodayTags_(task.tags);
   return {
-    id: String(task.id || '').trim() || Utilities.getUuid().slice(0, 8),
+    id: String(task.id || '').trim() || Utilities.getUuid().slice(0, 12),
     date: normalizePortalTodoDate_(task.date || selectedDate || new Date()),
     order: Number(task.order) || 0,
-    content: String(task.content || '').trim(),
     done: !!task.done,
+    content: String(task.content || '').trim(),
+    detail: String(task.detail || '').trim(),
     author: String(task.author || '').trim(),
-    updatedAt: formatDateTimeText_(task.updatedAt || ''),
-    deleted: String(task.deleted || '').trim(),
     category: String(task.category || '').trim() || (sourceType === 'CONTACT_NEXT' ? '다음액션' : '할일'),
     sourceType: sourceType,
     sourceId: String(task.sourceId || '').trim(),
@@ -480,20 +527,21 @@ function normalizePortalTodayTask_(task, selectedDate) {
     rowNo: String(task.rowNo || '').trim(),
     timeText: String(task.timeText || task.nextActionAt || '').trim(),
     priority: String(task.priority || '').trim(),
-    tags: tags,
-    detail: String(task.detail || '').trim(),
-    dueAt: formatPortalTodayInputDateTime_(task.dueAt || ''),
+    updatedAt: String(task.updatedAt || '').trim(),
+    createdAt: formatPortalTodayInputDateTime_(task.createdAt || task.updatedAt || new Date()),
+    dueAt: formatPortalTodayInputDateTime_(task.dueAt || task.timeText || ''),
     completedAt: formatPortalTodayInputDateTime_(task.completedAt || ''),
-    createdAt: formatPortalTodayInputDateTime_(createdAt),
+    tags: normalizePortalTodayTags_(task.tags),
     nextAction: String(task.nextAction || '').trim(),
     rawContent: String(task.rawContent || '').trim()
   };
 }
+function normalizePortalTodayTask_(task, selectedDate) { return normalizePortalTodayTaskP360_(task, selectedDate); }
 
-function normalizePortalNextActionTags_(value) {
+function normalizePortalNextActionTagsP360_(value) {
   const tags = normalizePortalTodayTags_(value);
-  const text = String(value || '').trim();
   function add(tag) { if (tag && tags.indexOf(tag) < 0) tags.push(tag); }
+  const text = String(value || '');
   add('컨택');
   if (/전화|통화|콜|연락/.test(text)) add('전화');
   if (/메일|자료|발송|양식/.test(text)) add('메일');
@@ -502,8 +550,9 @@ function normalizePortalNextActionTags_(value) {
   if (/재확인|확인|보류/.test(text)) add('재확인');
   return tags;
 }
+function normalizePortalNextActionTags_(value) { return normalizePortalNextActionTagsP360_(value); }
 
-function buildPortalTodayContactTaskText_(action) {
+function buildPortalTodayContactTaskTextP360_(action) {
   action = action || {};
   const parts = [];
   if (action.company) parts.push('[' + action.company + ']');
@@ -512,6 +561,7 @@ function buildPortalTodayContactTaskText_(action) {
   if (action.content) parts.push('- ' + action.content);
   return parts.join(' ').trim() || '컨택 예정 확인';
 }
+function buildPortalTodayContactTaskText_(action) { return buildPortalTodayContactTaskTextP360_(action); }
 
 function ensurePortalTodaySheet_() {
   const ss = getWebAppDbSpreadsheet_();
@@ -528,48 +578,13 @@ function ensurePortalTodaySheet_() {
 }
 
 function getPortalTodosForDate_(selectedDate, access) {
+  access = access || getPortalTodayAccessContextP360_({});
   const sheet = ensurePortalTodaySheet_();
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-
-  const lastCol = Math.max(sheet.getLastColumn(), PORTAL_CONFIG.TODAY_HEADERS.length);
-  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
-  const map = {};
-  headers.forEach(function(h, i) { if (h) map[h] = i; });
-  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-
-  return values
-    .map(function(row) {
-      const item = {
-        id: String(row[map['할일ID']] || '').trim(),
-        date: normalizePortalTodoDate_(row[map['일자']]),
-        order: Number(row[map['순번']]) || 0,
-        content: String(row[map['내용']] || '').trim(),
-        done: String(row[map['완료여부']] || '').toUpperCase() === 'Y',
-        author: String(row[map['작성자']] || '').trim(),
-        updatedAt: formatDateTimeText_(row[map['수정일시']]),
-        deleted: String(row[map['삭제여부']] || '').trim(),
-        category: String(row[map['분류']] || '').trim(),
-        sourceType: String(row[map['출처유형']] || '').trim() || 'MANUAL',
-        sourceId: String(row[map['출처ID']] || '').trim(),
-        customerNo: String(row[map['고객번호']] || '').trim(),
-        company: String(row[map['회사명']] || '').trim(),
-        rowNo: String(row[map['마스터행']] || '').trim(),
-        timeText: String(row[map['시간']] || '').trim(),
-        priority: String(row[map['우선순위']] || '').trim(),
-        createdAt: formatPortalTodayInputDateTime_(row[map['작성일시']] || row[map['수정일시']] || ''),
-        tags: normalizePortalTodayTags_(row[map['태그']]),
-        detail: String(row[map['처리내용']] || '').trim(),
-        dueAt: formatPortalTodayInputDateTime_(row[map['완료예정시간']] || ''),
-        completedAt: formatPortalTodayInputDateTime_(row[map['완료시간']] || '')
-      };
-      if (!item.category) item.category = item.sourceType === 'CONTACT_NEXT' ? '다음액션' : '할일';
-      return item;
-    })
-    .filter(function(item) {
-      return item.date === selectedDate && item.deleted.toUpperCase() !== 'Y' && item.content && portalTodayAuthorMatchesAccessP350_(item.author, access);
-    })
-    .sort(function(a, b) { return (a.order || 0) - (b.order || 0); });
+  const rows = readPortalTodaySheetRowsForDateP360_(sheet, selectedDate, PORTAL_CONFIG.TODAY_HEADERS.length, access, { includeDeleted: false });
+  return rows
+    .map(function(rowInfo) { return rowInfo.item; })
+    .filter(function(item) { return item && item.content; })
+    .sort(function(a, b) { return (Number(a.order) || 0) - (Number(b.order) || 0); });
 }
 
 const PORTAL_TODAY_HIDDEN_TAGS_PREF_KEY_P123 = 'todayHiddenTags';
@@ -599,7 +614,7 @@ function savePortalTodayHiddenTags(tags) {
 }
 
 function getPortalTodayTagOptions_() {
-  const defaults = Array.isArray(PORTAL_CONFIG.TODAY_DEFAULT_TAGS) ? PORTAL_CONFIG.TODAY_DEFAULT_TAGS : [];
+  const defaults = Array.isArray(PORTAL_CONFIG.TODAY_DEFAULT_TAGS) ? PORTAL_CONFIG.TODAY_DEFAULT_TAGS : ['전화','메일','견적','컨택','계약','서류','영업지원','재확인','긴급','내부처리'];
   const hidden = getPortalTodayHiddenTags_().reduce(function(acc, tag) { acc[tag] = true; return acc; }, {});
   const seen = {};
   const tags = [];
@@ -614,13 +629,8 @@ function getPortalTodayTagOptions_() {
     const sheet = ensurePortalTodaySheet_();
     const lastRow = sheet.getLastRow();
     if (lastRow >= 2) {
-      const lastCol = Math.max(sheet.getLastColumn(), PORTAL_CONFIG.TODAY_HEADERS.length);
-      const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
-      const idx = headers.indexOf('태그');
-      if (idx >= 0) {
-        const vals = sheet.getRange(2, idx + 1, lastRow - 1, 1).getDisplayValues();
-        vals.forEach(function(r) { normalizePortalTodayTags_(r[0]).forEach(add); });
-      }
+      const vals = sheet.getRange(2, 18, lastRow - 1, 1).getDisplayValues();
+      vals.forEach(function(r) { normalizePortalTodayTags_(r[0]).forEach(add); });
     }
   } catch (err) {}
   return tags.slice(0, 30);
@@ -657,7 +667,7 @@ function formatPortalTodayInputDateTime_(value) {
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
-function getContactNextActionsForDate_(selectedDate) {
+function getContactNextActionsForDate_(selectedDate, access) {
   const ss = getWebAppDbSpreadsheet_();
   const sheet = ss.getSheetByName(PORTAL_CONFIG.CONTACT_HISTORY_SHEET_NAME);
   if (!sheet || sheet.getLastRow() < 2) return [];
@@ -668,17 +678,7 @@ function getContactNextActionsForDate_(selectedDate) {
   headers.forEach(function(h, i) { if (h) map[h] = i; });
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getDisplayValues();
 
-  const perm = getPortalCurrentPermission_ ? getPortalCurrentPermission_() : null;
-  const canViewAll = !!(perm && (perm.canUseAdminHome || perm.canViewAllActivityLogs || perm.canReadAllSupport));
-  const myNames = [];
-  if (perm) {
-    myNames.push(perm.name, perm.salesRepName);
-    (perm.salesRepAliases || []).forEach(function(v) { myNames.push(v); });
-  }
-  const myNameKeys = myNames
-    .map(function(v) { return normalizePortalNameForPermission_ ? normalizePortalNameForPermission_(v) : String(v || '').replace(/\s+/g, ''); })
-    .filter(Boolean);
-
+  access = access || getPortalTodayAccessContextP360_({});
   return values.map(function(row, idx) {
       const nextAt = cellByHeader_(row, map, '다음액션일시') || cellByHeader_(row, map, '다음연락일');
       const nextDate = normalizePortalTodoDate_(nextAt);
@@ -701,10 +701,7 @@ function getContactNextActionsForDate_(selectedDate) {
       };
     })
     .filter(function(item) {
-      if (!(item.nextDate === selectedDate && (item.nextAction || item.nextActionAt))) return false;
-      if (canViewAll) return true;
-      const authorKey = normalizePortalNameForPermission_ ? normalizePortalNameForPermission_(item.author) : String(item.author || '').replace(/\s+/g, '');
-      return !myNameKeys.length || myNameKeys.indexOf(authorKey) >= 0;
+      return item.nextDate === selectedDate && (item.nextAction || item.nextActionAt) && portalTodayAuthorMatchesAccessP360_(item.author, access);
     })
     .sort(function(a, b) { return String(a.nextActionAt || '').localeCompare(String(b.nextActionAt || '')); });
 }
@@ -715,16 +712,16 @@ function normalizePortalTodoDate_(value) {
   }
   const text = String(value || '').trim();
   if (!text) return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
-
   const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (iso) return iso[1] + '-' + String(iso[2]).padStart(2, '0') + '-' + String(iso[3]).padStart(2, '0');
-
   const dot = text.match(/(\d{4})[.\/\s-]+(\d{1,2})[.\/\s-]+(\d{1,2})/);
   if (dot) return dot[1] + '-' + String(dot[2]).padStart(2, '0') + '-' + String(dot[3]).padStart(2, '0');
-
   const short = text.match(/(\d{2})[.\/\s-]+(\d{1,2})[.\/\s-]+(\d{1,2})/);
   if (short) return '20' + short[1] + '-' + String(short[2]).padStart(2, '0') + '-' + String(short[3]).padStart(2, '0');
-
   const d = new Date(text);
   return isNaN(d.getTime()) ? Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd') : Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
+
+// Backward-compatible aliases retained for older internal calls.
+function buildPortalTodayRowValuesP130_(item, context) { return buildPortalTodayRowValuesP360_(item, context); }
+function readPortalTodayRowsForDateP130_(sheet, selectedDate, headerLen, access) { return readPortalTodaySheetRowsForDateP360_(sheet, selectedDate, headerLen, access, { includeDeleted: false }); }

@@ -866,7 +866,7 @@ function applyPortalPermissionToUi_() {
   if (badge) {
     const role = p && p.level ? p.level : 'GUEST';
     badge.textContent = (p && p.displayName ? p.displayName : '권한 확인 중') + ' · ' + role;
-    badge.title = (p && p.email ? p.email : '') + (p && p.note ? '\n' + p.note : '');
+    try { badge.removeAttribute('title'); } catch (err) {}
     badge.classList.toggle('is-sales', role === 'SALES');
     badge.classList.toggle('is-admin', role === 'ADMIN');
     badge.classList.toggle('is-guest', role === 'GUEST' || p.active === false);

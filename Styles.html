@@ -4790,49 +4790,4 @@ button[disabled], .portal-btn-pending {
 @media (max-width: 900px) {
   .focus-help-grid-p340 { grid-template-columns: 1fr; }
 }
-
 </style>
-
-/* STEP27: 오늘 할 일 명시 저장/담당자 조회 보강 */
-.today-assignee-filter-area-p350 {
-  display: flex;
-  align-items: center;
-  min-width: 150px;
-}
-.today-assignee-filter-label-p350 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 800;
-  color: #475467;
-  white-space: nowrap;
-}
-.today-assignee-filter-label-p350 select {
-  height: 34px;
-  min-width: 128px;
-  border: 1px solid #d0d5dd;
-  border-radius: 10px;
-  padding: 0 10px;
-  background: #fff;
-  font-weight: 800;
-  color: #344054;
-}
-.today-author-wrap-p350 input {
-  background: #f8fafc !important;
-  color: #475467 !important;
-  font-weight: 800;
-}
-.today-task-line-p123 {
-  grid-template-columns: minmax(120px,.45fr) minmax(220px,1.15fr) minmax(170px,.8fr) minmax(150px,.7fr) !important;
-}
-.today-empty-state b { display:block; margin-bottom:4px; }
-.today-empty-state span { color:#667085; font-size:13px; }
-@media (max-width: 1300px) {
-  .today-task-line-p123 { grid-template-columns: 1fr 1fr !important; }
-}
-@media (max-width: 920px) {
-  .today-card-headline { flex-direction: column; }
-  .today-head-actions { flex-wrap: wrap; }
-  .today-task-line-p123 { grid-template-columns: 1fr !important; }
-}
