@@ -221,13 +221,6 @@ function switchPage(page, skipSearch) {
     return;
   }
 
-  if (page === 'concurrencyTest') {
-    document.getElementById('concurrencyTestSection').classList.add('active');
-    pageTitle.textContent = '동시성 테스트';
-    pageSubtitle.textContent = '저장 Lock, 동시 요청, 테스트 데이터 정리를 관리자 전용으로 검증합니다.';
-    loadConcurrencyTestPageP240(false);
-    return;
-  }
 
   if (page === 'today') {
     document.getElementById('todaySection').classList.add('active');

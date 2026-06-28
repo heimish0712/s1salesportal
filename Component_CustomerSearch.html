@@ -163,9 +163,11 @@ function isCustomerSearchRequestCurrentP230_(seq, snapshot) {
 }
 
 function canServeCustomerSearchFastP300_(keyword, page) {
+  // STEP23/P320: 검색 화면의 1차 목적은 빠르게 영업관리대장을 보는 것입니다.
+  // dirty/마스터 변경 플래그가 있더라도 이미 브라우저에 인덱스가 있으면 즉시 표시하고,
+  // 최신화는 백그라운드/관리자 강제갱신으로 처리합니다. 여기서 false를 반환하면 화면이
+  // 매번 loading으로 비어 튀는 문제가 생깁니다.
   try {
-    if (typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) return false;
-    if (customerSearchIndexState && customerSearchIndexState.dirty) return false;
     if (customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length) return true;
   } catch (err) {}
   try {
@@ -194,12 +196,17 @@ function searchCustomerPage(page) {
   if (!canServeFast) {
     resultArea.innerHTML = '<div class="loading">고객 데이터를 불러오는 중입니다...<br><span class="cache-note">영업관리대장/검색인덱스 최신 상태를 확인합니다.</span></div>';
   }
-  const mustUseMasterPriorityP310ForSearch = !!(typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) || !!(customerSearchIndexState && customerSearchIndexState.dirty);
-  if (!mustUseMasterPriorityP310ForSearch) {
-    initializeCustomerSearchIndex({ silent: true, useLocalFirst: true, skipNetworkIfReady: true, renderAfterLoad: false });
-  }
+  const shouldRefreshIndexInBackgroundP320 = !!(typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) || !!(customerSearchIndexState && customerSearchIndexState.dirty);
+  // 평상시 검색은 브라우저 인덱스 우선. 최신화가 필요한 경우에도 화면을 막지 않고 백그라운드로만 갱신합니다.
+  initializeCustomerSearchIndex({
+    silent: true,
+    useLocalFirst: true,
+    skipNetworkIfReady: !shouldRefreshIndexInBackgroundP320,
+    renderAfterLoad: false,
+    backgroundRefresh: shouldRefreshIndexInBackgroundP320
+  });
 
-  if (hasActiveCustomerFilterConditions_() && !mustUseMasterPriorityP310ForSearch && !(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows))) {
+  if (hasActiveCustomerFilterConditions_() && !(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows))) {
     waitCustomerFilterIndexThenSearch_(keywordValue, pageNo, requestSeq, requestSnapshot);
     return;
   }
@@ -3028,24 +3035,25 @@ function patchCustomerSearchIndexAndPagesK1_(target, patchValues, options) {
 
 function fetchCustomerPage_(keyword, page, onSuccess, onError, options) {
   options = options || {};
-  const mustUseMasterPriorityP310 = !!(typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) || !!(customerSearchIndexState && customerSearchIndexState.dirty);
-  if (!options.forceNetwork && !mustUseMasterPriorityP310) {
+  // STEP23/P320: 마스터 우선 원칙은 '검색인덱스를 재생성/무효화할 수 있다'는 의미이지,
+  // 사용자가 검색할 때마다 브라우저 인덱스/페이지 캐시를 버리고 서버를 기다리라는 뜻이 아닙니다.
+  // 이미 가진 인덱스로 즉시 목록을 그리고, 서버 최신화는 별도 watcher/강제갱신에서 처리합니다.
+  if (!options.forceNetwork) {
     const fromIndex = buildCustomerPageFromIndex_(keyword, page);
     if (fromIndex) {
       setCustomerPageCache_(keyword, page, fromIndex);
       onSuccess(fromIndex, true);
       return;
     }
+    const cached = getCustomerPageFromCache_(keyword, page);
+    if (cached) {
+      onSuccess(cached, true);
+      return;
+    }
     if (hasActiveCustomerFilterConditions_()) {
       onSuccess({ rows: [], total: 0, page: Math.max(0, Number(page) || 0), pageSize: CUSTOMER_PAGE_SIZE, start: 0, end: 0, hasPrev: false, hasNext: false, keyword: keyword, source: 'filterNoIndex' }, true);
       return;
     }
-  }
-
-  const cached = mustUseMasterPriorityP310 ? null : getCustomerPageFromCache_(keyword, page);
-  if (cached && !options.forceNetwork) {
-    onSuccess(cached, true);
-    return;
   }
 
   google.script.run

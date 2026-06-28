@@ -175,7 +175,7 @@ function getCustomerSearchIndexData(permForFilter) {
   // v31 FIX 유지: 인덱스가 비어 있거나 구조가 맞지 않거나 dirty이면 첫 요청자가 짧게 rebuild합니다.
   if (needsK2Rebuild || !rows.length || indexDirtyBefore) {
     const reason = indexDirtyBefore ? 'DIRTY_MASTER_PRIORITY' : (needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX');
-    rebuildInfo = rebuildCustomerSearchIndex({ auto: true, maxWaitMs: 2500, reason: reason });
+    rebuildInfo = rebuildCustomerSearchIndex({ auto: true, maxWaitMs: 700, reason: reason, skipFormat: true });
     if (rebuildInfo && rebuildInfo.ok) {
       rows = getCustomerSearchIndexRows_();
     }
@@ -476,7 +476,9 @@ function rebuildCustomerSearchIndex(options) {
     if (rows.length) indexSheet.getRange(2, 1, rows.length, getCustomerSearchIndexHeadersK2_().length).setValues(rows);
     indexSheet.setFrozenRows(1);
     indexSheet.getRange(1, 1, 1, getCustomerSearchIndexHeadersK2_().length).setFontWeight('bold').setBackground('#f2f4f7');
-    try { indexSheet.autoResizeColumns(1, getCustomerSearchIndexHeadersK2_().length); } catch (err) {}
+    // STEP23/P320: autoResizeColumns는 대량 인덱스 재생성에서 체감 지연이 커서 생략합니다.
+    // 검색 성능/데이터 정합성과 무관한 서식 작업입니다.
+    if (!options.skipFormat) { try { indexSheet.autoResizeColumns(1, getCustomerSearchIndexHeadersK2_().length); } catch (err) {} }
 
     const version = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMddHHmmss');
     const builtAt = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');

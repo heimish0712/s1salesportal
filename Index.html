@@ -24,7 +24,6 @@
       <div class="sidebar-company">시큐리티홀딩스</div>
       <div class="sidebar-bottom-links">
         <button type="button" class="sidebar-bottom-link system-health-nav-p208" onclick="switchPage('systemHealth')">시스템 점검</button>
-        <button type="button" class="sidebar-bottom-link concurrency-test-nav-p240" onclick="switchPage('concurrencyTest')">동시성 테스트</button>
         <button type="button" class="sidebar-bottom-link" onclick="switchPage('settings')">설정</button>
       </div>
     </aside>
@@ -197,9 +196,6 @@
         <div id="systemHealthAreaP208"><div class="loading">시스템 점검 정보를 불러오는 중입니다.</div></div>
       </section>
 
-      <section class="panel page-section concurrency-test-section-p240" id="concurrencyTestSection">
-        <div id="concurrencyTestAreaP240"><div class="loading">동시성 테스트 패널을 준비하는 중입니다.</div></div>
-      </section>
 
       <section class="panel page-section" id="placeholderSection"><div class="placeholder-panel"><div class="placeholder-title" id="placeholderTitle">준비 중</div><div class="placeholder-desc" id="placeholderDesc">이 메뉴는 다음 단계에서 붙일 예정입니다.</div></div></section>
     </main>
@@ -394,7 +390,6 @@
   <?!= include('Component_Today'); ?>
   <?!= include('Component_ActivityLog'); ?>
   <?!= include('Component_SystemHealth'); ?>
-  <?!= include('Component_ConcurrencyTest'); ?>
   <?!= include('Component_Modals'); ?>
 </body>
 </html>
