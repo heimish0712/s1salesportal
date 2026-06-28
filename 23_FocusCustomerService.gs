@@ -8,8 +8,8 @@
 
 const PORTAL_FOCUS_CACHE_PREFIX_P290 = 'PORTAL_FOCUS_CUSTOMERS_P290_';
 const PORTAL_FOCUS_CACHE_TTL_SEC_P290 = 180;
-const PORTAL_FOCUS_DEFAULT_PAGE_SIZE_P290 = 50;
-const PORTAL_FOCUS_MAX_RETURN_ROWS_P290 = 120;
+const PORTAL_FOCUS_DEFAULT_PAGE_SIZE_P290 = 20;
+const PORTAL_FOCUS_MAX_RETURN_ROWS_P290 = 100;
 
 function getFocusCustomerDashboardP290(options) {
   options = options || {};
@@ -18,8 +18,8 @@ function getFocusCustomerDashboardP290(options) {
 
   const keyword = normalizeFocusTextP290_(options.keyword || '');
   const rankFilter = String(options.rank || options.grade || 'ALL').trim() || 'ALL';
-  const salesRepFilter = normalizeFocusTextP290_(options.salesRep || 'ALL');
-  const statusFilter = normalizeFocusTextP290_(options.status || 'ALL');
+  const salesRepFilter = normalizeFocusFilterSentinelP291_(options.salesRep || 'ALL');
+  const statusFilter = normalizeFocusFilterSentinelP291_(options.status || 'ALL');
   const priorityOnly = !!options.priorityOnly;
   const includeExcluded = !!options.includeExcluded;
   const page = Math.max(0, Number(options.page) || 0);
@@ -355,6 +355,13 @@ function buildFocusCombinedTextP290_(row) {
 function hasAnyFocusKeywordP290_(text, keywords) {
   text = normalizeFocusTextP290_(text);
   return (keywords || []).some(function(k) { return text.indexOf(normalizeFocusTextP290_(k)) >= 0; });
+}
+
+function normalizeFocusFilterSentinelP291_(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return 'ALL';
+  if (raw === 'ALL' || raw.toUpperCase() === 'ALL') return 'ALL';
+  return normalizeFocusTextP290_(raw);
 }
 
 function normalizeFocusTextP290_(value) {

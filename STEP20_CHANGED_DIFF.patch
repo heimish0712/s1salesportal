@@ -1,0 +1,84 @@
+--- /mnt/data/step19_work/23_FocusCustomerService.gs	2026-06-28 06:33:02.407205961 +0000
++++ /mnt/data/step20_work/23_FocusCustomerService.gs	2026-06-28 06:44:08.397649320 +0000
+@@ -8,8 +8,8 @@
+ 
+ const PORTAL_FOCUS_CACHE_PREFIX_P290 = 'PORTAL_FOCUS_CUSTOMERS_P290_';
+ const PORTAL_FOCUS_CACHE_TTL_SEC_P290 = 180;
+-const PORTAL_FOCUS_DEFAULT_PAGE_SIZE_P290 = 50;
+-const PORTAL_FOCUS_MAX_RETURN_ROWS_P290 = 120;
++const PORTAL_FOCUS_DEFAULT_PAGE_SIZE_P290 = 20;
++const PORTAL_FOCUS_MAX_RETURN_ROWS_P290 = 100;
+ 
+ function getFocusCustomerDashboardP290(options) {
+   options = options || {};
+@@ -18,8 +18,8 @@
+ 
+   const keyword = normalizeFocusTextP290_(options.keyword || '');
+   const rankFilter = String(options.rank || options.grade || 'ALL').trim() || 'ALL';
+-  const salesRepFilter = normalizeFocusTextP290_(options.salesRep || 'ALL');
+-  const statusFilter = normalizeFocusTextP290_(options.status || 'ALL');
++  const salesRepFilter = normalizeFocusFilterSentinelP291_(options.salesRep || 'ALL');
++  const statusFilter = normalizeFocusFilterSentinelP291_(options.status || 'ALL');
+   const priorityOnly = !!options.priorityOnly;
+   const includeExcluded = !!options.includeExcluded;
+   const page = Math.max(0, Number(options.page) || 0);
+@@ -357,6 +357,13 @@
+   return (keywords || []).some(function(k) { return text.indexOf(normalizeFocusTextP290_(k)) >= 0; });
+ }
+ 
++function normalizeFocusFilterSentinelP291_(value) {
++  const raw = String(value == null ? '' : value).trim();
++  if (!raw) return 'ALL';
++  if (raw === 'ALL' || raw.toUpperCase() === 'ALL') return 'ALL';
++  return normalizeFocusTextP290_(raw);
++}
++
+ function normalizeFocusTextP290_(value) {
+   return String(value == null ? '' : value).replace(/[\s\n\r\t]+/g, '').trim().toLowerCase();
+ }
+--- /mnt/data/step19_work/Component_FocusCustomer.html	2026-06-28 06:41:12.873283729 +0000
++++ /mnt/data/step20_work/Component_FocusCustomer.html	2026-06-28 06:44:25.120796725 +0000
+@@ -1,7 +1,7 @@
+ <script>
+ let focusCustomerStateP290_ = {
+   page: 0,
+-  pageSize: 50,
++  pageSize: 20,
+   keyword: '',
+   rank: 'ALL',
+   salesRep: 'ALL',
+@@ -134,6 +134,7 @@
+   if (!el) return;
+   const s = data.stats || {};
+   const fs = data.filterStats || {};
++  const resultTotal = (fs && typeof fs.total === 'number') ? fs.total : (Number(data.total || 0));
+   el.innerHTML = '<div class="focus-stat-grid-p290">' +
+     renderFocusMetricP290_('A급', s.a || 0, 'a') +
+     renderFocusMetricP290_('B급', s.b || 0, 'b') +
+@@ -142,7 +143,7 @@
+     renderFocusMetricP290_('제외', s.excluded || 0, 'excluded') +
+     renderFocusMetricP290_('오늘 우선', s.today || 0, 'today') +
+     renderFocusMetricP290_('견적 후 무응답', s.quoteNoResponse || 0, 'quote') +
+-    renderFocusMetricP290_('조회 결과', fs.total || data.total || 0, 'result') +
++    renderFocusMetricP290_('조회 결과', resultTotal, 'result') +
+     '</div>' +
+     '<div class="focus-meta-p290">기준: ' + esc(data.source || '검색인덱스_DB') + ' · 인덱스 ' + esc(data.indexBuiltAt || '-') + (data.fromCache ? ' · 캐시' : '') + '</div>';
+ }
+@@ -174,7 +175,7 @@
+   if (!el) return;
+   const rows = data.rows || [];
+   if (!rows.length) {
+-    el.innerHTML = '<div class="loading">조건에 맞는 중점고객이 없습니다.</div>';
++    el.innerHTML = '<div class="loading">조건에 맞는 중점고객이 없습니다. 검색조건을 초기화하거나 제외 포함 여부를 확인하세요.</div>';
+     return;
+   }
+   const pager = renderFocusPagerP290_(data);
+@@ -205,7 +206,7 @@
+ function renderFocusPagerP290_(data) {
+   const total = Number(data.total || 0);
+   const page = Number(data.page || 0);
+-  const pageSize = Number(data.pageSize || 50);
++  const pageSize = Number(data.pageSize || 20);
+   const start = total ? Number(data.start || 0) + 1 : 0;
+   const end = Number(data.end || 0);
+   const pageText = start + '-' + end + ' / ' + total;
