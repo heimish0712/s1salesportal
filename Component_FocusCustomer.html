@@ -15,6 +15,71 @@ let focusCustomerStateP290_ = {
   cache: {}
 };
 
+
+// STEP25/P330: HOME 진입 후 일정 시간 뒤 중점고객관리 기본 데이터를 조용히 프리로드합니다.
+// - 화면을 렌더링하지 않습니다.
+// - 기본 조건 1페이지를 서버 CacheService와 브라우저 메모리 캐시에만 저장합니다.
+// - 중점고객관리 화면이 이미 열려 있으면 기존 화면 로딩 흐름을 방해하지 않습니다.
+function preloadFocusCustomerDefaultP330_(options) {
+  options = options || {};
+  try {
+    if (typeof focusCustomerStateP290_ === 'undefined' || !focusCustomerStateP290_) return;
+    if (focusCustomerStateP290_.preloadLoading) return;
+    if (focusCustomerStateP290_.preloadDone && !options.force) return;
+
+    const perm = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
+    // 권한 로딩 전이면 한 번만 살짝 늦춰서 재시도합니다. 실패해도 HOME 사용성은 막지 않습니다.
+    if ((!perm || perm.active === false || !perm.email) && !options._retried) {
+      setTimeout(function() {
+        try { preloadFocusCustomerDefaultP330_(Object.assign({}, options, { _retried: true })); } catch (err) {}
+      }, 1600);
+      return;
+    }
+    if (!perm || perm.active === false) return;
+
+    const payload = {
+      keyword: '',
+      rank: 'ALL',
+      salesRep: 'ALL',
+      status: 'ALL',
+      priorityOnly: false,
+      includeExcluded: false,
+      sortMode: 'priority',
+      page: 0,
+      pageSize: 20
+    };
+    const cacheKey = makeFocusCustomerClientCacheKeyP300_(payload);
+    if (!options.force && focusCustomerStateP290_.cache && focusCustomerStateP290_.cache[cacheKey]) {
+      focusCustomerStateP290_.preloadDone = true;
+      focusCustomerStateP290_.preloadAt = Date.now();
+      return;
+    }
+
+    focusCustomerStateP290_.preloadLoading = true;
+    google.script.run
+      .withSuccessHandler(function(res) {
+        focusCustomerStateP290_.preloadLoading = false;
+        focusCustomerStateP290_.preloadDone = true;
+        focusCustomerStateP290_.preloadAt = Date.now();
+        focusCustomerStateP290_.cache = focusCustomerStateP290_.cache || {};
+        focusCustomerStateP290_.cache[cacheKey] = res || {};
+        // 사용자가 이미 중점고객관리 화면에 들어와 있고 아직 데이터가 없다면 그때만 화면에 반영합니다.
+        const section = document.getElementById('focusCustomerSection');
+        if (section && section.classList.contains('active') && !focusCustomerStateP290_.data) {
+          focusCustomerStateP290_.data = res || {};
+          try { renderFocusCustomerDataP290_(res || {}); } catch (err) {}
+        }
+      })
+      .withFailureHandler(function() {
+        focusCustomerStateP290_.preloadLoading = false;
+      })
+      .getFocusCustomerDashboardP290(payload);
+  } catch (err) {
+    try { focusCustomerStateP290_.preloadLoading = false; } catch (e) {}
+    if (!options.silent) console.warn('중점고객관리 프리로드 실패', err);
+  }
+}
+
 function loadFocusCustomerPageP290(forceRefresh) {
   const area = document.getElementById('focusCustomerArea');
   if (!area) return;

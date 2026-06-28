@@ -22,6 +22,18 @@ window.onload = function() {
   setTimeout(function() {
     try { startPortalDataVersionWatcherP201_(); } catch (err) { console.warn('데이터 버전 감시 시작 실패', err); }
   }, 1600);
+  // STEP25/P330: HOME을 막지 않고, 사용자가 중점고객관리 메뉴를 누르기 전
+  // 기본 1페이지/통계 데이터를 백그라운드로 한 번 데워둡니다.
+  // 실제 화면 렌더링은 하지 않으며 서버 CacheService + 브라우저 메모리 캐시만 준비합니다.
+  setTimeout(function() {
+    try {
+      if (typeof preloadFocusCustomerDefaultP330_ === 'function') {
+        preloadFocusCustomerDefaultP330_({ silent: true, reason: 'home-idle-prewarm' });
+      }
+    } catch (err) {
+      console.warn('중점고객관리 프리로드 실패', err);
+    }
+  }, 5200);
   // v31 FIX 유지: 고객 상세 검색 메뉴 진입 시 searchCustomerPage(0)가 실행됩니다.
   // v46: notice 전체 목록은 공지사항 메뉴 진입 시에만 조회합니다.
 };

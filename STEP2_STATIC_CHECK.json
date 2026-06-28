@@ -1,8 +1,0 @@
-{
-  "function_count": 49,
-  "unique_function_count": 49,
-  "duplicate_functions": {},
-  "support_setvalue_loop_removed": true,
-  "lock_helper_present": true,
-  "setvalues_writer_present": true
-}
