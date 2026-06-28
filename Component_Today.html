@@ -78,7 +78,7 @@ function canTodayViewAllP350_() {
   if (todayCurrentData && todayCurrentData.canViewAllTodos) return true;
   if (typeof getPortalPermissionClient_ === 'function') {
     const p = getPortalPermissionClient_();
-    return !!(p && p.active !== false && (p.canUseAdminHome || p.canReadAllSupport || p.canCompleteSupport));
+    return !!(p && p.active !== false && p.canUseAdminHome);
   }
   return false;
 }
@@ -811,8 +811,9 @@ function openTodayCustomerLinkPopupP123_(row) {
   document.body.appendChild(overlay);
   const input = document.getElementById('todayCustomerLinkKeywordP123');
   if (input) {
-    const text = row.querySelector('.todayTodoText');
-    input.value = (text && text.value ? text.value : '').replace(/[\[\]]/g, ' ').trim().slice(0, 30);
+    // STEP37: 고객연동 팝업은 할 일 내용을 검색어로 자동 주입하지 않습니다.
+    // 사용자가 직접 고객번호 또는 고객사명을 입력해야 검색됩니다.
+    input.value = '';
     input.focus();
     input.addEventListener('keydown', function(e) { if (e.key === 'Enter') searchTodayCustomerLinkPopupP123_(); });
   }

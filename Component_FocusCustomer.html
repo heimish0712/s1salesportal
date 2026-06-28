@@ -13,7 +13,8 @@ let focusCustomerStateP290_ = {
   loading: false,
   data: null,
   requestSeq: 0,
-  cache: {}
+  cache: {},
+  expandedRowNo: 0
 };
 
 
@@ -353,19 +354,37 @@ function renderFocusRowsP290_(data) {
   if (!el) return;
   const rows = data.rows || [];
   if (!rows.length) {
+    focusCustomerStateP290_.expandedRowNo = 0;
     el.innerHTML = '<div class="loading">조건에 맞는 중점고객이 없습니다. 검색조건을 초기화하거나 제외 포함 여부를 확인하세요.</div>';
     return;
   }
+  const visibleRowNos = {};
+  rows.forEach(function(r) { const rn = Number(r && r.rowNo) || 0; if (rn) visibleRowNos[rn] = true; });
+  if (focusCustomerStateP290_.expandedRowNo && !visibleRowNos[focusCustomerStateP290_.expandedRowNo]) {
+    focusCustomerStateP290_.expandedRowNo = 0;
+  }
   const pager = renderFocusPagerP290_(data);
+  const bodyHtml = rows.map(renderFocusRowBlockP380_).join('');
   el.innerHTML = pager + '<div class="focus-table-wrap-p290"><table class="focus-table-p290"><thead><tr>' +
     '<th>등급/점수</th><th>고객</th><th>진행현황</th><th>연면적/등급</th><th>담당/연락처</th><th>추천 액션</th><th>산정 사유</th><th>작업</th>' +
-    '</tr></thead><tbody>' + rows.map(renderFocusRowP290_).join('') + '</tbody></table></div>' + pager;
+    '</tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' + pager;
 }
 
-function renderFocusRowP290_(row) {
+function renderFocusRowBlockP380_(row) {
+  const rowNo = Number(row && row.rowNo) || 0;
+  const isExpanded = rowNo && focusCustomerStateP290_.expandedRowNo === rowNo;
+  let html = renderFocusRowP290_(row, isExpanded);
+  if (isExpanded) {
+    html += '<tr class="focus-expand-row-p380 customer-expand-row" id="focusCustomerExpandRow_' + rowNo + '"><td colspan="8">' + renderFocusCustomerExpandedContentP380_(row) + '</td></tr>';
+  }
+  return html;
+}
+
+function renderFocusRowP290_(row, isExpanded) {
+  const rowNo = Number(row && row.rowNo) || 0;
   const reasons = (row.reasons || []).slice(0, 4).map(function(v) { return '<span>' + esc(v) + '</span>'; }).join('');
   const deductions = (row.deductions || []).slice(0, 2).map(function(v) { return '<em>' + esc(v) + '</em>'; }).join('');
-  return '<tr>' +
+  return '<tr class="focus-main-row-p380' + (isExpanded ? ' focus-expanded-p380' : '') + '" data-focus-row-no="' + rowNo + '" ondblclick="toggleFocusCustomerExpandP380_(' + rowNo + ')">' +
     '<td><div class="focus-rank-line-p290"><span class="focus-rank-badge-p290 rank-' + escAttr(row.finalRank || '보류') + '">' + esc(row.finalRank || '-') + '</span><b>' + esc(row.score || 0) + '</b></div>' + (row.priorityTarget ? '<div class="focus-priority-pill-p290">오늘 우선</div>' : '') + '</td>' +
     '<td><b>' + esc(row.company || '-') + '</b><div class="focus-sub-p290">고객번호 ' + esc(row.customerNo || '-') + ' · ' + esc(row.salesRep || '-') + '</div><div class="focus-memo-preview-p290">' + esc(row.memoPreview || '') + '</div></td>' +
     '<td><span class="status-chip">' + esc(row.status || '-') + '</span></td>' +
@@ -374,11 +393,100 @@ function renderFocusRowP290_(row) {
     '<td><b>' + esc(row.nextAction || '-') + '</b></td>' +
     '<td><div class="focus-reason-tags-p290">' + reasons + deductions + '</div></td>' +
     '<td><div class="focus-row-actions-p290">' +
-      '<button type="button" onclick="openFocusCustomerDetailP290_(' + Number(row.rowNo || 0) + ',\'' + escJs(row.customerNo || '') + '\')">상세</button>' +
-      '<button type="button" class="secondary" onclick="openFocusCustomerSendP290_(' + Number(row.rowNo || 0) + ')">자료발송</button>' +
-      '<button type="button" class="secondary" onclick="openFocusCustomerSupportP290_(\'' + encodeURIComponent(JSON.stringify(row)).replace(/'/g, '%27') + '\')">영업지원</button>' +
+      '<button type="button" onclick="event.stopPropagation(); openFocusCustomerDetailP290_(' + rowNo + ',\'' + escJs(row.customerNo || '') + '\')">상세</button>' +
+      '<button type="button" class="secondary" onclick="event.stopPropagation(); openFocusCustomerSendP290_(' + rowNo + ')">자료발송</button>' +
+      '<button type="button" class="secondary" onclick="event.stopPropagation(); openFocusCustomerSupportP290_(\'' + encodeURIComponent(JSON.stringify(row)).replace(/'/g, '%27') + '\')">영업지원</button>' +
+      '<button type="button" class="secondary focus-row-expand-btn-p380" onclick="event.stopPropagation(); toggleFocusCustomerExpandP380_(' + rowNo + ')">' + (isExpanded ? '접기' : '펼침') + '</button>' +
     '</div></td>' +
     '</tr>';
+}
+
+function renderFocusCustomerExpandedContentP380_(row) {
+  const rowNo = Number(row && row.rowNo) || 0;
+  if (!rowNo) return '<div class="customer-expand-loading">고객 행 정보를 확인할 수 없습니다.</div>';
+  const summary = buildFocusCustomerRowSummaryP380_(row);
+  if (typeof renderCustomerExpandedContent_ === 'function') {
+    return renderCustomerExpandedContent_(rowNo, summary);
+  }
+  return '<div class="customer-expand-loading">고객 상세 펼침 기능을 준비하지 못했습니다.</div>';
+}
+
+function buildFocusCustomerRowSummaryP380_(row) {
+  row = row || {};
+  return Object.assign({}, row, {
+    rowNo: Number(row.rowNo) || 0,
+    company: row.company || '',
+    customerNo: row.customerNo || '',
+    salesRep: row.salesRep || '',
+    status: row.status || '',
+    contact: row.contact || '',
+    phone: row.phone || '',
+    directPhone: row.directPhone || '',
+    email: row.email || '',
+    area: row.area || '',
+    grade: row.grade || '',
+    buildingType: row.buildingType || '',
+    memo: row.memo || row.memoPreview || '',
+    memoPreview: row.memoPreview || row.memo || '',
+    customerRank: row.finalRank || row.customerRank || '',
+    fullAddress: row.fullAddress || row.address || '',
+    address: row.address || row.fullAddress || ''
+  });
+}
+
+function clearCustomerSearchExpandedDomForFocusP380_(rowNo) {
+  try {
+    if (typeof customerExpandedRowNo !== 'undefined') customerExpandedRowNo = null;
+    document.querySelectorAll('.customer-expand-row').forEach(function(el) {
+      if (!el || String(el.id || '').indexOf('focusCustomerExpandRow_') === 0) return;
+      el.parentNode && el.parentNode.removeChild(el);
+    });
+    document.querySelectorAll('.customer-main-row.customer-expanded').forEach(function(el) { el.classList.remove('customer-expanded'); });
+  } catch (err) {}
+}
+
+function toggleFocusCustomerExpandP380_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  if (focusCustomerStateP290_.expandedRowNo === rowNo) {
+    focusCustomerStateP290_.expandedRowNo = 0;
+    renderFocusRowsP290_(focusCustomerStateP290_.data || {});
+    return;
+  }
+
+  clearCustomerSearchExpandedDomForFocusP380_(rowNo);
+  focusCustomerStateP290_.expandedRowNo = rowNo;
+  const row = findFocusCustomerRowByRowNoP380_(rowNo);
+  const summary = buildFocusCustomerRowSummaryP380_(row || { rowNo: rowNo });
+  const targetCustomerNo = (typeof normalizeCustomerNoForKey_ === 'function') ? normalizeCustomerNoForKey_(summary.customerNo || '') : String(summary.customerNo || '');
+  if (typeof getCustomerDetailCache_ === 'function' && typeof setCustomerDetailCache_ === 'function' && typeof buildCustomerDetailFromRowSummary_ === 'function') {
+    if (!getCustomerDetailCache_(rowNo, targetCustomerNo)) {
+      setCustomerDetailCache_(buildCustomerDetailFromRowSummary_(summary, rowNo), { source: 'focusIndex', skipStorage: true, allowIndexPatch: false });
+    }
+  }
+  renderFocusRowsP290_(focusCustomerStateP290_.data || {});
+
+  const cached = (typeof getCustomerDetailCache_ === 'function') ? getCustomerDetailCache_(rowNo, targetCustomerNo) : null;
+  const isFresh = (typeof isCustomerDetailFreshFromMasterP112_ === 'function') ? isCustomerDetailFreshFromMasterP112_(cached, 10 * 60 * 1000) : false;
+  if (cached && !cached.__summary && !cached.__lite && isFresh) return;
+
+  if (typeof fetchCustomerDetailFromServer_ === 'function') {
+    fetchCustomerDetailFromServer_(rowNo, function() {
+      if (focusCustomerStateP290_.expandedRowNo === rowNo) renderFocusRowsP290_(focusCustomerStateP290_.data || {});
+    }, function(err) {
+      const rowEl = document.getElementById('focusCustomerExpandRow_' + rowNo);
+      if (rowEl) rowEl.querySelector('td').innerHTML = '<div class="customer-expand-loading">상세정보를 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+    });
+  }
+}
+
+function findFocusCustomerRowByRowNoP380_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  const rows = (focusCustomerStateP290_.data && focusCustomerStateP290_.data.rows) || [];
+  for (let i = 0; i < rows.length; i++) {
+    if (Number(rows[i] && rows[i].rowNo) === rowNo) return rows[i];
+  }
+  return null;
 }
 
 function renderFocusPagerP290_(data) {
@@ -394,17 +502,20 @@ function renderFocusPagerP290_(data) {
 }
 
 function searchFocusCustomersP290() {
+  focusCustomerStateP290_.expandedRowNo = 0;
   focusCustomerStateP290_.page = 0;
   requestFocusCustomerDataP290_(false);
 }
 
 function refreshFocusCustomersP290() {
+  focusCustomerStateP290_.expandedRowNo = 0;
   focusCustomerStateP290_.page = 0;
   focusCustomerStateP290_.cache = {};
   google.script.run.withSuccessHandler(function(){ requestFocusCustomerDataP290_(true); }).withFailureHandler(function(){ requestFocusCustomerDataP290_(true); }).clearFocusCustomerCacheP290();
 }
 
 function goFocusCustomerPageP290_(page) {
+  focusCustomerStateP290_.expandedRowNo = 0;
   focusCustomerStateP290_.page = Math.max(0, Number(page) || 0);
   requestFocusCustomerDataP290_(false);
 }

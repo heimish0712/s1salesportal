@@ -253,7 +253,7 @@ function getContactNextActionsRawForDateP370_(selectedDate) {
 function getPortalTodayAccessContextP360_(options) {
   options = options || {};
   const perm = getPortalCurrentPermission_ ? getPortalCurrentPermission_() : null;
-  const canViewAll = !!(perm && perm.active !== false && (perm.canUseAdminHome || perm.canReadAllSupport || perm.canCompleteSupport));
+  const canViewAll = !!(perm && perm.active !== false && perm.canUseAdminHome);
   const currentUserLabel = String((perm && (perm.displayName || perm.name || perm.salesRepName)) || getCurrentUserLabel_() || '').trim();
   const names = [];
   if (perm) {
