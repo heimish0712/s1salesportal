@@ -502,6 +502,8 @@ function isPortalUserEditingCriticalInputP201_() {
 let portalDataVersionWatcherTimerP201 = null;
 let portalLastDataVersionP201 = { customerIndexVersion: '', masterVersion: '', customerIndexDirty: '', customerIndexDirtyAt: '' };
 let portalDataRefreshPendingP201 = false;
+const PORTAL_DATA_REFRESH_BANNER_DISABLED_P400 = true;
+let portalDataVersionSilentRefreshTimerP400 = null;
 
 function startPortalDataVersionWatcherP201_() {
   if (portalDataVersionWatcherTimerP201) return;
@@ -540,6 +542,9 @@ function checkPortalDataVersionP201_() {
 }
 
 function showPortalDataRefreshBannerP202_() {
+  // STEP40/P400: 이 배너가 저장/검색 중 너무 자주 떠서 업무 흐름을 끊었습니다.
+  // 마스터 변경 감지는 유지하되, 화면에는 조용히 백그라운드 최신화만 수행합니다.
+  if (PORTAL_DATA_REFRESH_BANNER_DISABLED_P400) return;
   const el = document.getElementById('portalDataRefreshBannerP202');
   if (el) el.style.display = 'flex';
 }
@@ -575,32 +580,49 @@ function applyPendingPortalDataRefreshP202_() {
   } catch (err) {}
 }
 
+function isPortalMasterChangeSilentP400_(meta) {
+  meta = meta || {};
+  const detail = String(meta.masterChangedDetail || meta.customerIndexDirtyReason || (meta.indexMeta && meta.indexMeta.dirtyReason) || '').toLowerCase();
+  if (!detail) return true;
+  return /webapp|customer-fast-save|customer-detail-save|customer-memo-save|고객빠른저장|고객상세저장|고객메모저장|webapp_customer/.test(detail);
+}
+
+function schedulePortalSilentDataRefreshP400_(reason) {
+  if (portalDataVersionSilentRefreshTimerP400) clearTimeout(portalDataVersionSilentRefreshTimerP400);
+  portalDataVersionSilentRefreshTimerP400 = setTimeout(function() {
+    portalDataVersionSilentRefreshTimerP400 = null;
+    try { customerSearchIndexStaleDueToMasterP310 = true; } catch (err) {}
+    try {
+      if (typeof refreshCustomerSearchIndexFromMasterSignalP330_ === 'function') {
+        refreshCustomerSearchIndexFromMasterSignalP330_(reason || 'silent-version-watch');
+      } else if (typeof initializeCustomerSearchIndex === 'function') {
+        initializeCustomerSearchIndex({ silent: true, useLocalFirst: true, skipNetworkIfReady: false, clearDetail: false, renderAfterLoad: false, backgroundRefresh: true, maxAgeMs: 0 });
+      }
+    } catch (err) {}
+  }, 900);
+}
+
 function handlePortalExternalDataChangedP201_(meta) {
   const customerVisible = !!(document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active'));
   const favoriteVisible = !!(document.getElementById('customerFavoritesSection') && document.getElementById('customerFavoritesSection').classList.contains('active'));
-  if (isPortalUserEditingCriticalInputP201_()) {
-    portalDataRefreshPendingP201 = true;
-    showPortalDataRefreshBannerP202_();
-    try { toast('마스터시트 변경이 감지되었습니다. 입력 중인 내용은 유지됩니다.'); } catch (err) {}
-    return;
-  }
+  const silentChange = isPortalMasterChangeSilentP400_(meta);
+
   portalDataRefreshPendingP201 = false;
   hidePortalDataRefreshBannerP202_();
-  try { customerSearchIndexStaleDueToMasterP310 = true; } catch (err) {}
-  try {
-    // STEP33: 기존 검색 결과를 먼저 비우지 않습니다. 서버 최신 인덱스가 도착하면 현재 페이지를 부드럽게 patch합니다.
-    if (typeof refreshCustomerSearchIndexFromMasterSignalP330_ === 'function') {
-      refreshCustomerSearchIndexFromMasterSignalP330_('version-watcher');
-    } else if (typeof initializeCustomerSearchIndex === 'function') {
-      initializeCustomerSearchIndex({ silent: true, useLocalFirst: true, skipNetworkIfReady: false, clearDetail: false, renderAfterLoad: false, backgroundRefresh: true, maxAgeMs: 0 });
-    }
-  } catch (err) {}
+
+  // STEP40/P400: 저장 직후 또는 직접 수정 감지 모두 배너로 업무를 끊지 않습니다.
+  // 현재 화면은 그대로 두고, 검색인덱스/즐겨찾기만 조용히 최신화합니다.
+  try { schedulePortalSilentDataRefreshP400_(silentChange ? 'silent-webapp-save' : 'silent-master-change'); } catch (err) {}
+
   if (favoriteVisible) {
     try { loadCustomerFavoriteMap_({ silent: true, force: true }); } catch (err) {}
     try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}
   }
-  if (customerVisible) {
-    try { setTimeout(function() { searchCustomerPage(customerSearchState && customerSearchState.page || 0); }, 700); } catch (err) {}
+
+  // 사용자가 방금 저장한 화면을 다시 검색으로 덮어쓰면 튀는 느낌이 생깁니다.
+  // 외부 직접수정일 때만, 사용자가 입력 중이 아니면 지연 patch합니다.
+  if (!silentChange && customerVisible && !isPortalUserEditingCriticalInputP201_()) {
+    try { setTimeout(function() { searchCustomerPage(customerSearchState && customerSearchState.page || 0); }, 1500); } catch (err) {}
   }
 }
 

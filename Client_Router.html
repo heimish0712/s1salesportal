@@ -141,6 +141,11 @@ function switchPage(page, skipSearch) {
   if (page === 'dashboard') page = 'home';
   if (typeof confirmLeaveTodayPageP350_ === 'function' && !confirmLeaveTodayPageP350_(page)) return;
   try { applyPortalPermissionToUi_(); } catch (err) {}
+  // STEP39/P390: 고객 상세검색에서 펼친 행은 메뉴 이동 후 복귀 시 닫힌 상태여야 합니다.
+  // 상세 캐시는 유지하되 펼침 UI 상태만 초기화합니다.
+  try {
+    if (typeof collapseCustomerSearchExpandP390_ === 'function') collapseCustomerSearchExpandP390_({ reason: 'route-change', nextPage: page });
+  } catch (err) {}
 
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.getAttribute('data-page') === page));
   ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {

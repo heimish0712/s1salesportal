@@ -1257,6 +1257,8 @@ function assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload) {
 }
 
 function bumpPortalCustomerMasterMetaP202_(sheet, rowNo, reason) {
+  // STEP40/P400: 메타 3칸은 저장 응답 체감속도에 직접 영향을 줍니다.
+  // 기존처럼 setValue 3회를 따로 호출하지 않고, 인접 컬럼이면 setValues 1회로 처리합니다.
   const headerMap = getHeaderMap_(sheet);
   const updatedAtCol = ensureMasterColumn_(sheet, headerMap, '수정일시');
   const versionCol = ensureMasterColumn_(sheet, getHeaderMap_(sheet), '수정버전');
@@ -1271,15 +1273,67 @@ function bumpPortalCustomerMasterMetaP202_(sheet, rowNo, reason) {
   let editor = '';
   try { editor = String(Session.getActiveUser().getEmail() || '').trim(); } catch (err) {}
   if (!editor) editor = 'webapp';
-  sheet.getRange(rowNo, updatedAtCol).setValue(nowText);
-  sheet.getRange(rowNo, versionCol).setValue(version);
-  sheet.getRange(rowNo, editorCol).setValue(editor);
+
+  writePortalCustomerMetaCellsP400_(sheet, rowNo, [
+    { col: updatedAtCol, value: nowText },
+    { col: versionCol, value: version },
+    { col: editorCol, value: editor }
+  ]);
+
   try {
     if (typeof markPortalMasterDataChangedP201_ === 'function') {
       markPortalMasterDataChangedP201_(String(reason || 'webapp-customer-save') + ' row=' + rowNo);
     }
   } catch (err) {}
   return { updatedAt: nowText, version: version, editor: editor };
+}
+
+function writePortalCustomerMetaCellsP400_(sheet, rowNo, cells) {
+  cells = (cells || []).filter(function(c) { return c && Number(c.col) > 0; })
+    .sort(function(a, b) { return Number(a.col) - Number(b.col); });
+  if (!sheet || !rowNo || !cells.length) return;
+
+  let blockStart = Number(cells[0].col);
+  let blockValues = [cells[0].value];
+  let prevCol = Number(cells[0].col);
+  const flushBlock = function() {
+    sheet.getRange(rowNo, blockStart, 1, blockValues.length).setValues([blockValues]);
+  };
+
+  for (let i = 1; i < cells.length; i++) {
+    const col = Number(cells[i].col);
+    if (col === prevCol + 1) {
+      blockValues.push(cells[i].value);
+      prevCol = col;
+    } else {
+      flushBlock();
+      blockStart = col;
+      blockValues = [cells[i].value];
+      prevCol = col;
+    }
+  }
+  flushBlock();
+}
+
+function queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, changedKeys, meta, reason) {
+  // STEP40/P400: 고객 저장 응답 전에 검색인덱스 행 갱신/로그 append까지 기다리지 않습니다.
+  // 현재 화면은 클라이언트 optimistic patch로 즉시 최신화하고,
+  // 검색인덱스는 dirty 표시만 해 백그라운드 최신화 대상으로 넘깁니다.
+  try {
+    if (typeof markCustomerSearchIndexDirty_ === 'function') {
+      return markCustomerSearchIndexDirty_(reason || 'WEBAPP_CUSTOMER_SAVE', 'row=' + rowNo + ', cno=' + (customerNo || '') + ', keys=' + (changedKeys || []).join(','));
+    }
+  } catch (err) {
+    Logger.log('검색인덱스 dirty 표시 실패: ' + (err && err.stack || err));
+  }
+  return { ok: true, deferred: true, rowNo: rowNo, customerNo: customerNo, meta: meta || null };
+}
+
+function shouldUseDeferredCustomerSavePostProcessP400_(changedKeys) {
+  changedKeys = changedKeys || [];
+  // 계약조건은 수식/계산 파생값이 있을 수 있으므로 기존처럼 마스터 재조회가 필요할 수 있습니다.
+  // 진행현황/전화/메모 등 일반 빠른 저장은 즉시응답 우선입니다.
+  return !shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys);
 }
 
 function addPortalCustomerMetaToDetailP202_(detail, obj, rowNo) {
@@ -1472,10 +1526,8 @@ function saveCustomerDetailCoreP202_(payload) {
   let indexUpdate = null;
   let masterMetaP202 = null;
   if (changed.length) {
-    masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, '고객상세저장');
-    SpreadsheetApp.flush();
-    try { indexUpdate = updateCustomerSearchIndexRow_(rowNo); } catch (err) { Logger.log('검색인덱스 행 갱신 실패: ' + (err && err.stack || err)); }
-    try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V27'); } catch (err) {}
+    masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-detail-save');
+    indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, changed, masterMetaP202, 'WEBAPP_CUSTOMER_DETAIL_SAVE');
     try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
   }
 
@@ -1492,7 +1544,6 @@ function saveCustomerDetailCoreP202_(payload) {
     } catch (err) {}
   }
 
-  SpreadsheetApp.flush();
   return {
     ok: true,
     rowNo: rowNo,
@@ -1595,41 +1646,24 @@ function saveCustomerDetailFastCoreP202_(payload) {
   let indexUpdate = null;
   let masterMetaP202 = null;
   const shouldRefreshMaster = shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys);
+  const deferPostProcessP400 = shouldUseDeferredCustomerSavePostProcessP400_(changedKeys);
   let refreshedDetail = null;
   if (changedTargets.length) {
-    masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, '고객빠른저장');
-    SpreadsheetApp.flush();
-    const indexPatchValuesP202 = Object.assign({}, appliedValues, {
-      __metaMasterVersion: masterMetaP202.version,
-      __metaUpdatedAt: masterMetaP202.updatedAt,
-      __metaEditor: masterMetaP202.editor
-    });
-    try {
-      indexUpdate = shouldRefreshMaster
-        ? updateCustomerSearchIndexRow_(rowNo)
-        : updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, indexPatchValuesP202);
-    } catch (err) {
-      Logger.log('검색인덱스 갱신 실패: ' + (err && err.stack || err));
-    }
-    if (shouldRefreshMaster) {
+    masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-fast-save');
+    if (deferPostProcessP400) {
+      indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, changedKeys, masterMetaP202, 'WEBAPP_CUSTOMER_FAST_SAVE');
+    } else {
+      // 계약조건처럼 파생 수식 확인이 필요한 저장만 기존 동기 재조회 경로를 유지합니다.
+      SpreadsheetApp.flush();
+      try { indexUpdate = updateCustomerSearchIndexRow_(rowNo); } catch (err) { Logger.log('검색인덱스 갱신 실패: ' + (err && err.stack || err)); }
       try { refreshedDetail = getCustomerDetail(rowNo); } catch (err) { Logger.log('계약조건 저장 후 상세 재조회 실패: ' + (err && err.stack || err)); }
     }
-    try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V27'); } catch (err) {}
     try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
   }
 
-  if (changedTargets.length) {
-    try {
-      appendPortalActivityLog_({
-        actionType: '고객정보수정',
-        screen: '고객 상세 검색',
-        rowNo: rowNo,
-        customerNo: customerNo,
-        summary: '빠른 수정: ' + changed.join(', '),
-        detail: { changedKeys: changedKeys, changedValues: changedValues }
-      });
-    } catch (err) {}
-  }
+  // STEP40/P400: 빠른 수정에서는 작업로그 append를 저장 응답 경로에서 제외합니다.
+  // 로그가 필요한 상세 저장은 saveCustomerDetail() 경로에서 처리하고,
+  // 빠른 저장은 사용자 체감속도와 마스터 반영을 우선합니다.
 
   return {
     ok: true,
@@ -1668,25 +1702,11 @@ function saveCustomerMemoFastCoreP202_(rowNoOrPayload, memo) {
   const memoCol = findMasterFieldCol_(headerMap, 'memo') || ensureMasterFieldColumn_(sheet, headerMap, 'memo');
   const nextMemo = String(payload.memo == null ? '' : payload.memo);
   sheet.getRange(targetRowNo, memoCol).setValue(nextMemo);
-  const masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, targetRowNo, '고객메모저장');
+  const masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, targetRowNo, 'webapp-customer-memo-save');
 
-  let indexUpdate = null;
-  try { indexUpdate = updateCustomerSearchIndexMemoFast_(targetRowNo, nextMemo, masterMetaP202); } catch (err) { Logger.log('검색인덱스 메모 경량 갱신 실패: ' + (err && err.stack || err)); }
-  try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V27'); } catch (err) {}
+  let indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(targetRowNo, customerNo, ['memo'], masterMetaP202, 'WEBAPP_CUSTOMER_MEMO_SAVE');
   try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
 
-  try {
-    appendPortalActivityLog_({
-      actionType: '메모수정',
-      screen: '고객 상세 검색',
-      rowNo: targetRowNo,
-      customerNo: customerNo,
-      summary: '마스터시트 메모 수정',
-      detail: { memoLength: nextMemo.length }
-    });
-  } catch (err) {}
-
-  SpreadsheetApp.flush();
   return {
     ok: true,
     rowNo: targetRowNo,

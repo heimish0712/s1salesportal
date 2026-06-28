@@ -116,9 +116,9 @@
     .send-preview-panel { border:1px solid #d0d5dd; border-radius:12px; background:#f7f8fa; padding:16px 18px; }
     .send-preview-grid { display:grid; grid-template-columns: 90px 1fr; gap:10px 18px; font-size:14px; line-height:1.55; align-items:start; }
     .send-preview-label { color:#667085; font-weight:800; white-space:nowrap; }
-    .send-preview-value { color:#202124; font-weight:700; word-break:break-all; }
-    .send-chip-row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-    .send-chip { display:inline-flex; align-items:center; min-height:26px; padding:4px 10px; border:1px solid #d8dee8; border-radius:999px; background:#ffffff; color:#202124; font-size:12px; font-weight:700; line-height:1.2; }
+    .send-preview-value { color:#202124; font-weight:700; word-break:normal; overflow-wrap:anywhere; min-width:0; }
+    .send-chip-row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; min-width:0; max-width:100%; }
+    .send-chip { display:inline-flex; align-items:center; min-height:26px; max-width:100%; padding:4px 10px; border:1px solid #d8dee8; border-radius:999px; background:#ffffff; color:#202124; font-size:12px; font-weight:700; line-height:1.25; white-space:normal; word-break:normal; overflow-wrap:anywhere; }
     .send-chip-muted { color:#667085; font-weight:700; }
     .send-preview-warn { margin-top:12px; border:1px solid #fed7aa; background:#fffaf5; color:#9a3412; border-radius:10px; padding:9px 11px; font-size:12px; line-height:1.55; }
     .send-warning { border:1px solid #fed7aa; background:#fffaf5; color:#9a3412; padding:10px 12px; border-radius:12px; font-size:13px; line-height:1.6; margin-top:10px; }
@@ -141,9 +141,29 @@
     .recipient-line { display:grid; grid-template-columns:70px 1fr 52px; gap:8px; align-items:start; margin-bottom:10px; }
     .recipient-line-label { color:#667085; font-weight:900; padding-top:4px; }
     .send-chip.editable { padding-right:7px; }
-    .chip-x { border:0; background:transparent; color:#667085; font-weight:900; cursor:pointer; margin-left:6px; padding:0 2px; font-size:13px; line-height:1; }
+    .chip-x { flex:0 0 auto; border:0; background:transparent; color:#667085; font-weight:900; cursor:pointer; margin-left:6px; padding:0 2px; font-size:13px; line-height:1; }
     .chip-x:hover { color:#b42318; }
-    .mini-add-btn { padding:5px 9px; min-width:0; font-size:12px; border-radius:9px; background:#e8f0fe; color:#174ea6; }
+    .mini-add-btn { padding:5px 9px; min-width:0; font-size:12px; border-radius:9px; background:#e8f0fe; color:#174ea6; white-space:nowrap; }
+
+    /* STEP41: 좁은 화면에서 수신/참조 이메일 칩이 한 글자씩 세로로 깨지는 문제 방지 */
+    @media (max-width: 760px) {
+      .send-preview-panel { padding:12px; }
+      .send-preview-grid { grid-template-columns:1fr; gap:6px; }
+      .send-preview-label { margin-top:8px; }
+      .send-preview-value { width:100%; min-width:0; overflow-wrap:anywhere; }
+      .recipient-line { display:grid; grid-template-columns:1fr auto; gap:6px; align-items:start; }
+      .recipient-line-label { grid-column:1 / -1; padding-top:0; }
+      .recipient-line .send-chip-row { width:100%; }
+      .recipient-line .mini-add-btn { align-self:start; }
+      .send-chip.editable { max-width:100%; min-width:0; }
+      .send-chip.editable .chip-x { margin-left:6px; }
+    }
+
+    @media (max-width: 420px) {
+      .recipient-line { grid-template-columns:1fr; }
+      .recipient-line .mini-add-btn { width:max-content; }
+      .send-chip { border-radius:14px; }
+    }
     .send-empty-box { min-height:88px; display:flex; align-items:center; justify-content:center; color:#667085; border:1px dashed #d0d5dd; border-radius:12px; background:#fbfcfe; }
 
 

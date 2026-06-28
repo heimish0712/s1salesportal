@@ -1318,6 +1318,23 @@ function isCustomerDetailFreshFromMasterP112_(detail, ttlMs) {
   return Date.now() - t <= (Number(ttlMs) || CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112);
 }
 
+
+// STEP39/P390: 고객 상세검색 펼침은 고객 상세검색 화면 안에서만 유지합니다.
+// 다른 메뉴로 이동했다가 돌아오면 이전 펼침 행은 닫힌 상태로 시작해야 합니다.
+function collapseCustomerSearchExpandP390_(options) {
+  options = options || {};
+  try {
+    if (typeof customerExpandedRowNo !== 'undefined') customerExpandedRowNo = null;
+    document.querySelectorAll('.customer-expand-row').forEach(function(el) {
+      if (!el || String(el.id || '').indexOf('focusCustomerExpandRow_') === 0) return;
+      if (el.parentNode) el.parentNode.removeChild(el);
+    });
+    document.querySelectorAll('.customer-main-row.customer-expanded').forEach(function(el) {
+      el.classList.remove('customer-expanded');
+    });
+  } catch (err) {}
+}
+
 function toggleCustomerExpand(rowNo) {
   rowNo = Number(rowNo) || 0;
   if (!rowNo) return;

@@ -66,6 +66,7 @@ function getPortalClientDataVersionP201() {
     now: getPortalNowTextP201_(new Date()),
     masterVersion: props.getProperty('PORTAL_MASTER_DATA_VERSION') || '',
     masterChangedAt: props.getProperty('PORTAL_MASTER_DATA_CHANGED_AT') || '',
+    masterChangedDetail: props.getProperty('PORTAL_MASTER_DATA_CHANGED_DETAIL') || '',
     customerIndexVersion: props.getProperty('CUSTOMER_SEARCH_INDEX_VERSION') || (indexMeta && indexMeta.version) || '',
     customerIndexBuiltAt: props.getProperty('CUSTOMER_SEARCH_INDEX_BUILT_AT') || (indexMeta && indexMeta.builtAt) || '',
     customerIndexDirty: props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY') || 'N',
