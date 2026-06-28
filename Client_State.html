@@ -877,6 +877,7 @@ function applyPortalPermissionToUi_() {
   document.body.classList.toggle('portal-can-admin-home', !!(p && p.canUseAdminHome));
   document.body.classList.toggle('portal-can-customer-all', !!(p && p.canViewAllCustomers));
   document.body.classList.toggle('portal-can-support-all', !!(p && p.canReadAllSupport));
+  document.body.classList.toggle('portal-can-support-write', !!(p && p.active !== false && p.canWriteSupport));
   document.body.classList.toggle('portal-can-activity-all', !!(p && p.canViewAllActivityLogs));
   document.body.classList.toggle('portal-can-activity-compare', !!(p && p.canCompareActivityLogs));
   document.body.classList.toggle('portal-can-system-health', !!(p && p.canUseAdminHome));

@@ -1275,9 +1275,8 @@
     .support-process-focus { outline: 3px solid #93c5fd !important; box-shadow:0 0 0 4px rgba(147,197,253,.25); }
     body.sidebar-collapsed .support-work-hint { display:none !important; }
 
-    /* v65 영업지원 요청: 영업자/서무 역할별 화면 분기 */
-    body.portal-support-processor #supportNewPanel,
-    body.portal-support-processor #supportInlineResetBtn { display:none !important; }
+    /* STEP31: 처리/완료 권한자도 신규 영업지원 요청 작성 가능.
+       완료처리 권한자라는 이유로 신규 요청 패널을 숨기지 않습니다. */
     body.portal-support-processor #supportSection .support-existing-title { padding-top:14px; }
     body:not(.portal-support-processor) .support-work-hint { display:none !important; }
     .support-row-actions .secondary { background:#f2f4f7; color:#111827; border-color:#e4e7ec; }

@@ -201,16 +201,33 @@ function renderSupportStatusFilter_(options) {
 }
 
 function isSupportProcessorModeV65_() {
-  const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
-  // PATCH P1-15: 영업지원 처리/완료 UI는 권한_DB의 `영업지원완료처리`에서 계산된 canCompleteSupport만 사용합니다.
-  // role/isAdmin fallback을 쓰면 권한_DB와 화면이 불일치할 수 있습니다.
+  return canCompletePortalSupportP310_();
+}
+
+function getSupportEffectivePermissionP310_() {
+  const globalPerm = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
+  const dataPerm = supportCurrentData && supportCurrentData.permission ? supportCurrentData.permission : null;
+  if (globalPerm && globalPerm.active !== false && globalPerm.email) return globalPerm;
+  if (dataPerm && dataPerm.active !== false) return dataPerm;
+  return globalPerm || dataPerm || null;
+}
+
+function canWritePortalSupportP310_() {
+  const p = getSupportEffectivePermissionP310_();
+  // 영업지원 요청 작성은 등록/활성 사용자 전원 가능.
+  // 서버 권한 캐시/초기 화면 권한값이 늦게 따라오는 경우를 막기 위해 support API 응답의 permission도 함께 봅니다.
+  return !!(p && p.active !== false && p.canWriteSupport !== false);
+}
+
+function canCompletePortalSupportP310_() {
+  const p = getSupportEffectivePermissionP310_();
   return !!(p && p.active !== false && p.canCompleteSupport);
 }
 
 function updateSupportRoleUiV65_() {
   const isProcessor = isSupportProcessorModeV65_();
-  const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
-  const canWrite = !!(p && p.active !== false && p.canWriteSupport);
+  const p = getSupportEffectivePermissionP310_();
+  const canWrite = canWritePortalSupportP310_();
   const newPanel = document.getElementById('supportNewPanel');
   const resetBtn = document.getElementById('supportInlineResetBtn');
   const sub = document.getElementById('supportPageSubtext');
@@ -287,7 +304,7 @@ function renderSupportBoard(rows) {
       '</tr>';
     }).join('') : '<tr><td colspan="10" class="customer-cell-center" style="color:#667085; padding:18px;">등록된 영업지원 요청이 없습니다.</td></tr>';
 
-  if (canPortal_('canWriteSupport')) renderSupportInlineEntryPanel_();
+  if (canWritePortalSupportP310_()) renderSupportInlineEntryPanel_();
   const meta = supportCurrentData && supportCurrentData.meta ? supportCurrentData.meta : null;
   const metaText = meta ? ('<div class="cache-note" style="padding:0 0 8px 0;">' +
     esc((meta.source === 'MASTER_SPREADSHEET_ID' ? '마스터시트 영업지원요청' : '영업지원요청') + ' · ' +
@@ -312,7 +329,7 @@ function renderSupportBoard(rows) {
 function renderSupportInlineEntryPanel_() {
   const area = document.getElementById('supportInlineArea');
   if (!area) return;
-  if (!canPortal_('canWriteSupport')) {
+  if (!canWritePortalSupportP310_()) {
     area.innerHTML = '<div class="support-inline-denied">영업지원 요청 작성 권한이 없습니다.</div>';
     updateSupportRoleUiV65_();
     return;
@@ -515,7 +532,7 @@ function collectSupportInlinePayload_() {
 }
 
 function saveSupportInlineRequest() {
-  if (!canPortal_('canWriteSupport')) return alert('영업지원 요청 작성 권한이 없습니다.');
+  if (!canWritePortalSupportP310_()) return alert('영업지원 요청 작성 권한이 없습니다.');
   const payload = collectSupportInlinePayload_();
   if (!payload.requestType) return toast('업무유형을 선택하세요.');
   if (!payload.requester) return toast('요청자를 선택하세요.');
@@ -738,7 +755,7 @@ function refreshSupportDetailInBackgroundV78_(rowNo, options) {
 
 function openSupportRequestModal(rowNo, options) {
   options = options || {};
-  if (!canPortal_('canWriteSupport')) return alert('영업지원 요청 작성 권한이 없습니다.');
+  if (!canWritePortalSupportP310_()) return alert('영업지원 요청 작성 권한이 없습니다.');
   supportCurrentRowNo = Number(rowNo) || 0;
   supportCurrentCustomer = null;
   supportModalDirtyV78 = false;
@@ -800,7 +817,7 @@ function fillSupportSelects_(types, statuses) {
   fillSupportRequesterSelect_('supportRequester', prevRequester || (supportCurrentData && supportCurrentData.currentUser) || '');
   if (statusSel) {
     statusSel.innerHTML = (statuses || []).map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
-    if (!canPortal_('canCompleteSupport')) {
+    if (!canCompletePortalSupportP310_()) {
       Array.from(statusSel.options || []).forEach(function(opt) { if (String(opt.value || opt.text || '').trim() === '완료') opt.disabled = true; });
     }
   }
@@ -909,8 +926,8 @@ function collectSupportPayload_() {
 }
 
 function saveSupportRequestFromModal() {
-  if (!canPortal_('canWriteSupport')) return alert('영업지원 요청 작성 권한이 없습니다.');
-  if (!canPortal_('canCompleteSupport') && String((document.getElementById('supportStatus') || {}).value || '').trim() === '완료') {
+  if (!canWritePortalSupportP310_()) return alert('영업지원 요청 작성 권한이 없습니다.');
+  if (!canCompletePortalSupportP310_() && String((document.getElementById('supportStatus') || {}).value || '').trim() === '완료') {
     return alert('영업지원 완료 처리 권한이 없습니다.');
   }
   const payload = collectSupportPayload_();
@@ -943,7 +960,7 @@ function saveSupportRequestFromModal() {
 }
 
 function setSupportCompletedNow() {
-  if (!canPortal_('canCompleteSupport')) return alert('영업지원 완료 처리 권한이 없습니다.');
+  if (!canCompletePortalSupportP310_()) return alert('영업지원 완료 처리 권한이 없습니다.');
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
   document.getElementById('supportCompletedAt').value = String(d.getFullYear()).slice(2) + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
