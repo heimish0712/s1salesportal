@@ -164,6 +164,8 @@ function isCustomerSearchRequestCurrentP230_(seq, snapshot) {
 
 function canServeCustomerSearchFastP300_(keyword, page) {
   try {
+    if (typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) return false;
+    if (customerSearchIndexState && customerSearchIndexState.dirty) return false;
     if (customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length) return true;
   } catch (err) {}
   try {
@@ -190,11 +192,14 @@ function searchCustomerPage(page) {
   updateCustomerFilterSummary_();
   const canServeFast = canServeCustomerSearchFastP300_(keywordValue, pageNo);
   if (!canServeFast) {
-    resultArea.innerHTML = '<div class="loading">고객 데이터를 불러오는 중입니다...<br><span class="cache-note">브라우저 캐시 또는 검색인덱스_DB를 확인합니다.</span></div>';
+    resultArea.innerHTML = '<div class="loading">고객 데이터를 불러오는 중입니다...<br><span class="cache-note">영업관리대장/검색인덱스 최신 상태를 확인합니다.</span></div>';
   }
-  initializeCustomerSearchIndex({ silent: true, useLocalFirst: true, skipNetworkIfReady: true, renderAfterLoad: false });
+  const mustUseMasterPriorityP310ForSearch = !!(typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) || !!(customerSearchIndexState && customerSearchIndexState.dirty);
+  if (!mustUseMasterPriorityP310ForSearch) {
+    initializeCustomerSearchIndex({ silent: true, useLocalFirst: true, skipNetworkIfReady: true, renderAfterLoad: false });
+  }
 
-  if (hasActiveCustomerFilterConditions_() && !(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows))) {
+  if (hasActiveCustomerFilterConditions_() && !mustUseMasterPriorityP310ForSearch && !(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows))) {
     waitCustomerFilterIndexThenSearch_(keywordValue, pageNo, requestSeq, requestSnapshot);
     return;
   }
@@ -2054,7 +2059,8 @@ function initializeCustomerSearchIndex(options) {
   const loadedAtP300 = Number(customerSearchIndexState && customerSearchIndexState.loadedAt || 0);
   const ageP300 = loadedAtP300 ? (Date.now() - loadedAtP300) : Number.MAX_SAFE_INTEGER;
   const maxAgeP300 = Number(options.maxAgeMs || CUSTOMER_INDEX_BACKGROUND_REFRESH_MS_P300);
-  if (!force && readyRowsP300 && (options.skipNetworkIfReady || ageP300 < maxAgeP300)) {
+  const staleDueToMasterP310 = !!(typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) || !!(customerSearchIndexState && customerSearchIndexState.dirty);
+  if (!force && !staleDueToMasterP310 && readyRowsP300 && (options.skipNetworkIfReady || ageP300 < maxAgeP300)) {
     return;
   }
 
@@ -2111,6 +2117,9 @@ function initializeCustomerSearchIndex(options) {
 
 function setCustomerSearchIndexData_(data, source) {
   data = data || {};
+  if (data && data.dirty !== true) {
+    try { customerSearchIndexStaleDueToMasterP310 = false; } catch (err) {}
+  }
   // PATCH K-1: 서버/로컬 검색인덱스가 stale이어도, 현재 탭에서 마스터 full detail 또는
   // 사용자 저장으로 확정된 authoritative patch를 덮어쓰지 못하게 병합합니다.
   let rows = applyAuthoritativeCustomerPatchesToRowsK1_(Array.isArray(data.rows) ? data.rows : []);
@@ -2120,6 +2129,11 @@ function setCustomerSearchIndexData_(data, source) {
     loading: false,
     version: data.version || String(Date.now()),
     builtAt: data.builtAt || '',
+    dirty: !!data.dirty,
+    dirtyReason: data.dirtyReason || '',
+    dirtyAt: data.dirtyAt || '',
+    masterVersion: data.masterVersion || '',
+    masterChangedAt: data.masterChangedAt || '',
     rows: rows,
     loadedAt: Date.now(),
     source: source || 'server'
@@ -2132,6 +2146,11 @@ function saveCustomerSearchIndexToLocalStorage_() {
   const payload = JSON.stringify({
     version: customerSearchIndexState.version,
     builtAt: customerSearchIndexState.builtAt,
+    dirty: !!customerSearchIndexState.dirty,
+    dirtyReason: customerSearchIndexState.dirtyReason || '',
+    dirtyAt: customerSearchIndexState.dirtyAt || '',
+    masterVersion: customerSearchIndexState.masterVersion || '',
+    masterChangedAt: customerSearchIndexState.masterChangedAt || '',
     loadedAt: customerSearchIndexState.loadedAt,
     permissionEmail: (getPortalPermission_() && getPortalPermission_().email) || '',
     cacheOwner: getPortalCustomerCacheOwnerP240_(),
@@ -2155,6 +2174,8 @@ function loadCustomerSearchIndexFromLocalStorage_() {
     if (!raw) return false;
     const data = JSON.parse(raw);
     if (!data || !Array.isArray(data.rows) || !data.rows.length || !data.loadedAt) return false;
+    if (data.dirty) return false;
+    if (typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) return false;
     if (Date.now() - Number(data.loadedAt) > CUSTOMER_INDEX_MAX_AGE_MS) return false;
     const currentPermEmail = (getPortalPermission_() && getPortalPermission_().email) || '';
     const currentOwner = getPortalCustomerCacheOwnerP240_();
@@ -2168,6 +2189,11 @@ function loadCustomerSearchIndexFromLocalStorage_() {
       loading: false,
       version: data.version || 'local',
       builtAt: data.builtAt || '',
+      dirty: !!data.dirty,
+      dirtyReason: data.dirtyReason || '',
+      dirtyAt: data.dirtyAt || '',
+      masterVersion: data.masterVersion || '',
+      masterChangedAt: data.masterChangedAt || '',
       rows: filterCustomerRowsByPermissionClient_(applyAuthoritativeCustomerPatchesToRowsK1_(data.rows)),
       loadedAt: Number(data.loadedAt),
       source: 'localStorage'
@@ -3002,7 +3028,8 @@ function patchCustomerSearchIndexAndPagesK1_(target, patchValues, options) {
 
 function fetchCustomerPage_(keyword, page, onSuccess, onError, options) {
   options = options || {};
-  if (!options.forceNetwork) {
+  const mustUseMasterPriorityP310 = !!(typeof customerSearchIndexStaleDueToMasterP310 !== 'undefined' && customerSearchIndexStaleDueToMasterP310) || !!(customerSearchIndexState && customerSearchIndexState.dirty);
+  if (!options.forceNetwork && !mustUseMasterPriorityP310) {
     const fromIndex = buildCustomerPageFromIndex_(keyword, page);
     if (fromIndex) {
       setCustomerPageCache_(keyword, page, fromIndex);
@@ -3015,7 +3042,7 @@ function fetchCustomerPage_(keyword, page, onSuccess, onError, options) {
     }
   }
 
-  const cached = getCustomerPageFromCache_(keyword, page);
+  const cached = mustUseMasterPriorityP310 ? null : getCustomerPageFromCache_(keyword, page);
   if (cached && !options.forceNetwork) {
     onSuccess(cached, true);
     return;

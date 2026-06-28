@@ -34,6 +34,90 @@ function toggleSidebar() {
   if (btn) btn.innerHTML = document.body.classList.contains('sidebar-collapsed') ? '&gt;&gt;' : '&lt;&lt;';
 }
 
+
+
+function renderPortalSettingsPageP310_() {
+  const title = document.getElementById('placeholderTitle');
+  const desc = document.getElementById('placeholderDesc');
+  if (title) title.textContent = '설정';
+  const isAdmin = (typeof isPortalAdmin_ === 'function') && isPortalAdmin_();
+  if (!desc) return;
+  let html = '';
+  html += '<div class="portal-settings-panel-p310">';
+  html += '<div class="portal-settings-card-p310">';
+  html += '<div class="portal-settings-card-title-p310">마스터시트 기준 강제갱신</div>';
+  html += '<div class="portal-settings-card-desc-p310">영업관리대장 마스터시트를 원천으로 검색인덱스_DB와 브라우저 캐시를 다시 맞춥니다. 마스터시트에서 직접 수정한 진행현황/담당자/계약조건이 웹앱에 늦게 반영될 때 사용합니다.</div>';
+  if (isAdmin) {
+    html += '<button type="button" class="portal-danger-primary-p310" id="forceMasterSearchIndexBtnP310" onclick="forceMasterSearchIndexRefreshP310_()">마스터시트 기준 강제갱신</button>';
+    html += '<div class="portal-settings-status-p310" id="forceMasterSearchIndexStatusP310">대기 중</div>';
+  } else {
+    html += '<div class="portal-settings-denied-p310">이 기능은 서무/admin 계정에서만 사용할 수 있습니다.</div>';
+  }
+  html += '</div>';
+  html += '</div>';
+  desc.innerHTML = html;
+}
+
+function forceMasterSearchIndexRefreshP310_() {
+  if (typeof isPortalAdmin_ === 'function' && !isPortalAdmin_()) {
+    alert('마스터시트 기준 강제갱신은 서무/admin 계정에서만 사용할 수 있습니다.');
+    return;
+  }
+  const btn = document.getElementById('forceMasterSearchIndexBtnP310');
+  const status = document.getElementById('forceMasterSearchIndexStatusP310');
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = '영업관리대장 마스터시트를 기준으로 검색인덱스를 다시 생성하는 중입니다...';
+  try { if (typeof invalidateCustomerSearchCaches_ === 'function') invalidateCustomerSearchCaches_({ clearIndex: true, clearDetail: true }); } catch (err) {}
+  try { customerSearchIndexStaleDueToMasterP310 = true; } catch (err) {}
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (btn) btn.disabled = false;
+      if (!res || !res.ok) {
+        const msg = (res && res.message) || '강제갱신에 실패했습니다.';
+        if (status) status.textContent = msg;
+        alert(msg);
+        return;
+      }
+      try { if (typeof invalidateCustomerSearchCaches_ === 'function') invalidateCustomerSearchCaches_({ clearIndex: true, clearDetail: true }); } catch (err) {}
+      try {
+        if (res.indexData && typeof setCustomerSearchIndexData_ === 'function') setCustomerSearchIndexData_(res.indexData, 'masterForce');
+        else if (typeof initializeCustomerSearchIndex === 'function') initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true, clearDetail: true, renderAfterLoad: true });
+      } catch (err) {}
+      try { customerSearchIndexStaleDueToMasterP310 = false; } catch (err) {}
+      try {
+        if (typeof portalLastDataVersionP201 !== 'undefined' && res.indexData) {
+          portalLastDataVersionP201.customerIndexVersion = res.indexData.version || portalLastDataVersionP201.customerIndexVersion;
+          portalLastDataVersionP201.masterVersion = res.indexData.masterVersion || portalLastDataVersionP201.masterVersion;
+          portalLastDataVersionP201.customerIndexDirty = res.indexData.dirty ? 'Y' : 'N';
+          portalLastDataVersionP201.customerIndexDirtyAt = res.indexData.dirtyAt || '';
+        }
+      } catch (err) {}
+      const message = '강제갱신 완료: ' + (res.rebuilt || 0) + '건 / 버전 ' + (res.version || '-') + ' / ' + Math.round((res.elapsedMs || 0) / 1000) + '초';
+      if (status) status.textContent = message;
+      try { toast(message); } catch (err) {}
+      try {
+        if (document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active')) {
+          searchCustomerPage(customerSearchState && customerSearchState.page || 0);
+        }
+      } catch (err) {}
+      try {
+        if (typeof clearFocusCustomerClientCacheP300_ === 'function') clearFocusCustomerClientCacheP300_();
+        if (document.getElementById('focusCustomerSection') && document.getElementById('focusCustomerSection').classList.contains('active') && typeof loadFocusCustomerPageP290 === 'function') {
+          loadFocusCustomerPageP290(true);
+        }
+      } catch (err) {}
+      alert((res.message || '강제갱신 완료') + '\n\n반영 건수: ' + (res.rebuilt || 0) + '건\n버전: ' + (res.version || '-'));
+    })
+    .withFailureHandler(function(err) {
+      if (btn) btn.disabled = false;
+      const msg = '강제갱신 실패: ' + (err && err.message ? err.message : String(err || ''));
+      if (status) status.textContent = msg;
+      alert(msg);
+    })
+    .forceCustomerSearchIndexFromMasterP310({ maxWaitMs: 12000 });
+}
+
 function switchPage(page, skipSearch) {
   try { applyPortalPermissionToUi_(); } catch (err) {}
   page = page || 'home';
@@ -153,10 +237,17 @@ function switchPage(page, skipSearch) {
     return;
   }
 
+  if (page === 'settings') {
+    document.getElementById('placeholderSection').classList.add('active');
+    pageTitle.textContent = '설정';
+    pageSubtitle.textContent = '상태값, 권한, 캐시, 검색인덱스 관련 운영 기능을 관리합니다.';
+    renderPortalSettingsPageP310_();
+    setTimeout(function(){ try { applyPortalPermissionToUi_(); } catch (err) {} }, 50);
+    return;
+  }
+
   document.getElementById('placeholderSection').classList.add('active');
-  const labels = {
-    settings:['설정','상태값, 담당자, 수행사, 권한 설정을 관리하는 화면입니다.']
-  };
+  const labels = {};
   const item = labels[page] || ['준비 중','이 메뉴는 다음 단계에서 구현할 예정입니다.'];
   pageTitle.textContent = item[0];
   pageSubtitle.textContent = item[1];

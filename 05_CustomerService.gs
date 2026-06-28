@@ -162,18 +162,20 @@ function filterCustomerIndexRowsByPermissionAndScopeP04_(rows, scopeMode, perm, 
 
 function getCustomerSearchIndexData(permForFilter) {
   const sheet = ensureCustomerSearchIndexSheet_();
+  const props = PropertiesService.getScriptProperties();
   let rows = getCustomerSearchIndexRows_();
 
-  // PATCH K-2: 기존 검색인덱스_DB가 detail-lite 확장 전 구조이면 자동으로 1회 재생성합니다.
-  // 단, 잠금 중이면 기존 rows를 반환하고 클라이언트가 다음 호출에서 다시 시도하게 합니다.
+  // STEP22/P310: 검색인덱스는 빠른 조회용 보조 캐시일 뿐이고, 원천은 항상 영업관리대장 마스터시트입니다.
+  // 마스터 직접수정/onEdit/변경큐 실패로 dirty 표시가 있으면, 다음 조회에서 먼저 마스터시트 기준 재생성을 시도합니다.
+  // 즉, dirty 상태의 오래된 검색인덱스를 웹앱 목록의 원천처럼 계속 노출하지 않습니다.
   let rebuildInfo = null;
   const needsK2Rebuild = !isCustomerSearchIndexK2Ready_();
+  const indexDirtyBefore = props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY') === 'Y';
 
-  // v31 FIX: 인덱스가 비어 있을 때 여러 웹앱 호출이 동시에 rebuild에 들어가며
-  // LockService waitLock 시간초과가 나는 문제를 막습니다.
-  // 첫 1명만 짧게 lock을 잡고 생성하고, 나머지는 빈 결과/생성중 상태를 반환합니다.
-  if (needsK2Rebuild || !rows.length) {
-    rebuildInfo = rebuildCustomerSearchIndex({ auto: true, maxWaitMs: 2500, reason: needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX' });
+  // v31 FIX 유지: 인덱스가 비어 있거나 구조가 맞지 않거나 dirty이면 첫 요청자가 짧게 rebuild합니다.
+  if (needsK2Rebuild || !rows.length || indexDirtyBefore) {
+    const reason = indexDirtyBefore ? 'DIRTY_MASTER_PRIORITY' : (needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX');
+    rebuildInfo = rebuildCustomerSearchIndex({ auto: true, maxWaitMs: 2500, reason: reason });
     if (rebuildInfo && rebuildInfo.ok) {
       rows = getCustomerSearchIndexRows_();
     }
@@ -183,16 +185,63 @@ function getCustomerSearchIndexData(permForFilter) {
   // 영업팀은 기본적으로 본인 영업담당자명과 매칭되는 고객만 내려줍니다.
   rows = filterPortalCustomerRowsByPermission_(rows, permForFilter);
 
-  const props = PropertiesService.getScriptProperties();
+  const dirtyAfter = props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY') === 'Y';
   return {
     ok: true,
     rebuilding: !!(rebuildInfo && rebuildInfo.locked),
     needsK2Rebuild: !!(needsK2Rebuild && !(rebuildInfo && rebuildInfo.ok)),
+    dirty: dirtyAfter,
+    dirtyReason: props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY_REASON') || '',
+    dirtyAt: props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY_AT') || '',
+    masterVersion: props.getProperty('PORTAL_MASTER_DATA_VERSION') || '',
+    masterChangedAt: props.getProperty('PORTAL_MASTER_DATA_CHANGED_AT') || '',
     message: rebuildInfo && rebuildInfo.locked ? rebuildInfo.message : '',
     version: props.getProperty('CUSTOMER_SEARCH_INDEX_VERSION') || getCustomerSearchIndexVersion_(),
     builtAt: props.getProperty('CUSTOMER_SEARCH_INDEX_BUILT_AT') || '',
     total: rows.length,
     rows: rows
+  };
+}
+
+
+/**
+ * STEP22/P310: 서무/admin 전용 마스터시트 기준 검색인덱스 강제갱신.
+ * - 웹앱의 빠른 검색인덱스/브라우저 캐시가 영업관리대장 최신값보다 우선 보이는 상황을 복구합니다.
+ * - 권한은 서버에서 다시 검증합니다.
+ */
+function forceCustomerSearchIndexFromMasterP310(options) {
+  options = options || {};
+  const perm = getPortalCurrentPermission_();
+  if (!perm || perm.active === false || !perm.canUseAdminHome) {
+    throw new Error('마스터시트 기준 강제갱신은 서무/admin 계정에서만 사용할 수 있습니다.');
+  }
+  const startedAt = new Date();
+  const result = rebuildCustomerSearchIndex({
+    auto: false,
+    maxWaitMs: Math.max(3000, Math.min(15000, Number(options.maxWaitMs) || 10000)),
+    reason: 'ADMIN_FORCE_MASTER_PRIORITY'
+  });
+  if (!result || !result.ok) {
+    return Object.assign({ ok: false }, result || {}, {
+      message: result && result.message ? result.message : '검색인덱스 강제갱신에 실패했습니다.'
+    });
+  }
+
+  try { markPortalMasterDataChangedP201_('admin-force-search-index-from-master'); } catch (err) {}
+  try { clearCustomerSearchIndexDirty_(); } catch (err) {}
+  try { if (typeof clearContractCompleteCacheV69_ === 'function') clearContractCompleteCacheV69_(); } catch (err) {}
+  try { if (typeof clearFocusCustomerCacheP290 === 'function') clearFocusCustomerCacheP290(); } catch (err) {}
+
+  const fresh = getCustomerSearchIndexData(perm);
+  const elapsedMs = new Date().getTime() - startedAt.getTime();
+  return {
+    ok: true,
+    message: '영업관리대장 마스터시트 기준으로 검색인덱스_DB를 강제갱신했습니다.',
+    rebuilt: result.rebuilt || 0,
+    version: result.version || (fresh && fresh.version) || '',
+    builtAt: result.builtAt || (fresh && fresh.builtAt) || '',
+    elapsedMs: elapsedMs,
+    indexData: fresh
   };
 }
 

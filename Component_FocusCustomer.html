@@ -45,6 +45,16 @@ function collectFocusCustomerFiltersP290_() {
   focusCustomerStateP290_.sortMode = sortMode ? sortMode.value || 'priority' : 'priority';
 }
 
+
+function clearFocusCustomerClientCacheP300_() {
+  try {
+    if (focusCustomerStateP290_) {
+      focusCustomerStateP290_.cache = {};
+      focusCustomerStateP290_.data = null;
+    }
+  } catch (err) {}
+}
+
 function makeFocusCustomerClientCacheKeyP300_(payload) {
   try { return JSON.stringify(payload || {}); } catch (err) { return String(Date.now()); }
 }

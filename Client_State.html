@@ -78,6 +78,8 @@ let customerSearchIndexState = { ready: false, loading: false, version: '', buil
 let customerSearchIndexLoadSeqP230 = 0;
 let customerSearchIndexForceQueuedP230 = false;
 let customerSearchRequestSeqP230 = 0;
+// STEP22/P310: 마스터시트 변경이 감지되면 브라우저 검색인덱스/페이지캐시를 원천처럼 쓰지 않습니다.
+let customerSearchIndexStaleDueToMasterP310 = false;
 let customerDetailPrefetchTimers = [];
 let customerDetailPrefetching = false;
 const CUSTOMER_INDEX_STORAGE_KEY = 'salesPortal.customerSearchIndex.v36.detailLite';
@@ -549,7 +551,8 @@ function applyPendingPortalDataRefreshP202_() {
       sessionStorage && Object.keys(sessionStorage).forEach(function(k) { if (String(k).indexOf('portalCustomerPage:') === 0) sessionStorage.removeItem(k); });
     }
   } catch (err) {}
-  try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true, clearDetail: true }); } catch (err) {}
+  try { customerSearchIndexStaleDueToMasterP310 = true; } catch (err) {}
+  try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true, clearDetail: true, renderAfterLoad: true }); } catch (err) {}
   try {
     if (document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active')) {
       if (typeof searchCustomerPage === 'function') setTimeout(function(){ searchCustomerPage(customerSearchState && customerSearchState.page || 0); }, 250);
@@ -581,7 +584,8 @@ function handlePortalExternalDataChangedP201_(meta) {
       sessionStorage && Object.keys(sessionStorage).forEach(function(k) { if (String(k).indexOf('portalCustomerPage:') === 0) sessionStorage.removeItem(k); });
     }
   } catch (err) {}
-  try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true, clearDetail: true }); } catch (err) {}
+  try { customerSearchIndexStaleDueToMasterP310 = true; } catch (err) {}
+  try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true, clearDetail: true, renderAfterLoad: true }); } catch (err) {}
   if (favoriteVisible) {
     try { loadCustomerFavoriteMap_({ silent: true, force: true }); } catch (err) {}
     try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}

@@ -1,0 +1,38 @@
+STEP22_SEARCH_INDEX_MASTER_PRIORITY_REPORT
+
+기준선: STEP21_검색로딩튐방지_메모전체표시보강
+
+문제 요약
+- 고객 검색 화면에서 브라우저 localStorage/sessionStorage 검색인덱스가 영업관리대장 마스터시트보다 우선 표시될 수 있었음.
+- 마스터시트를 직접 수정했는데 검색인덱스_DB가 아직 갱신되지 않은 경우, 진행현황 같은 핵심 상태값이 웹앱에 늦게 반영될 수 있었음.
+
+수정 원칙
+1. 영업관리대장 마스터시트 = 원천 데이터
+2. 검색인덱스_DB = 빠른 조회용 보조 캐시
+3. 브라우저 캐시 = 가장 낮은 우선순위의 임시 표시용 캐시
+
+반영 내용
+1. getCustomerSearchIndexData()에서 CUSTOMER_SEARCH_INDEX_DIRTY=Y이면 마스터시트 기준 rebuild를 먼저 시도하도록 변경.
+2. 서버 응답에 dirty/masterVersion/masterChangedAt 메타를 포함하도록 변경.
+3. 클라이언트가 dirty 또는 마스터 변경 감지 상태이면 브라우저 인덱스/페이지 캐시를 쓰지 않고 서버 조회로 우회하도록 변경.
+4. localStorage 검색인덱스에 dirty/masterVersion 정보를 저장하고, dirty 캐시는 로드하지 않도록 변경.
+5. 설정 화면에 서무/admin 전용 [마스터시트 기준 강제갱신] 버튼 추가.
+6. forceCustomerSearchIndexFromMasterP310() 서버 함수 추가. 서버에서도 canUseAdminHome 권한을 재검증함.
+7. 강제갱신 성공 시 브라우저 검색/상세 캐시를 삭제하고 fresh indexData를 즉시 반영함.
+
+주의
+- 마스터시트 직접수정 감지가 자동으로 되려면 기존 onEdit 트리거가 설치되어 있어야 함.
+- 트리거 설치 전/실패 시에도 서무/admin이 설정 > 마스터시트 기준 강제갱신을 누르면 수동 복구 가능.
+
+변경 파일
+- 05_CustomerService.gs
+- Client_State.html
+- Component_CustomerSearch.html
+- Component_FocusCustomer.html
+- Client_Router.html
+- Styles.html
+
+검증
+- 모든 .gs node --check 통과
+- 모든 .html script node --check 통과
+- Styles.html style 태그 1/1 및 trailing text 없음
