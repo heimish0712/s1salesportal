@@ -9,7 +9,7 @@ const PORTAL_SYSTEM_HEALTH_REQUIRED_MASTER_HEADERS_P208 = [
 ];
 
 const PORTAL_SYSTEM_HEALTH_REQUIRED_DB_SHEETS_P208 = [
-  '검색인덱스_DB', '고객즐겨찾기_DB', '컨택이력_DB', '공지사항_DB', '작업로그_DB', '변경큐_DB'
+  '검색인덱스_DB', '고객즐겨찾기_DB', '컨택이력_DB', '공지사항_DB', '작업로그_DB', '변경큐_DB', '오늘할일_DB', '권한_DB'
 ];
 
 function getPortalSystemHealthP208() {
@@ -93,6 +93,24 @@ function getPortalSystemHealthP208() {
     detail: triggerCheck.detail
   });
 
+  const permissionTriggerCheck = checkPortalPermissionCacheTriggerP350_();
+  addCheck({
+    group: '트리거/동기화',
+    name: '권한_DB 캐시 무효화 트리거',
+    status: permissionTriggerCheck.installed ? 'ok' : 'warn',
+    message: permissionTriggerCheck.installed ? '설치됨' : '미설치: 권한_DB 수정 후 권한 반영이 늦을 수 있음',
+    detail: permissionTriggerCheck.detail || '설정 필요 시 시스템 점검에서 설치 버튼 실행'
+  });
+
+  const permissionCacheCheck = checkPortalPermissionCacheP350_();
+  addCheck({
+    group: '권한/캐시',
+    name: '현재 계정 권한 캐시',
+    status: permissionCacheCheck.error ? 'warn' : 'ok',
+    message: permissionCacheCheck.error ? permissionCacheCheck.error : ('cacheHit=' + permissionCacheCheck.cacheHit + ', ttl=' + permissionCacheCheck.ttlSeconds + '초'),
+    detail: permissionCacheCheck.detail
+  });
+
   const version = getPortalSystemVersionInfoP208_();
   addCheck({
     group: '트리거/동기화',
@@ -156,6 +174,24 @@ function getPortalSystemHealthP208() {
     detail: todayCheck.badRows.slice(0, 10).join(', ')
   });
 
+  const todayStats = getPortalTodaySheetStatsP350_(webSs);
+  addCheck({
+    group: '오늘 할 일',
+    name: '데이터 누적/삭제 현황',
+    status: todayStats.error ? 'warn' : (todayStats.deletedRows > 500 ? 'warn' : 'ok'),
+    message: todayStats.error ? todayStats.error : ('전체 ' + todayStats.totalRows + '건 / 활성 ' + todayStats.activeRows + '건 / 삭제 ' + todayStats.deletedRows + '건 / 오늘 ' + todayStats.todayRows + '건'),
+    detail: todayStats.detail
+  });
+
+  const supportStats = getPortalSupportSheetStatsP350_(masterSs);
+  addCheck({
+    group: '영업지원요청',
+    name: '시트/캐시 상태',
+    status: supportStats.error ? 'warn' : 'ok',
+    message: supportStats.error ? supportStats.error : ('전체 ' + supportStats.totalRows + '건 / 미완료 ' + supportStats.openRows + '건 / cacheBust=' + supportStats.cacheBust),
+    detail: supportStats.detail
+  });
+
   const elapsedMs = new Date().getTime() - started.getTime();
   return {
     ok: true,
@@ -192,6 +228,24 @@ function processPortalChangeQueueFromHealthP209() {
     return processPortalChangeQueueP209({ limit: 80, includeErrors: true });
   }
   throw new Error('변경큐 재처리 함수가 없습니다. 21_ChangeQueueService.gs를 확인해 주세요.');
+}
+
+function installPortalPermissionCacheBusterFromHealthP350() {
+  const userInfo = getPortalSystemHealthUserP208_();
+  assertPortalSystemHealthAllowedP208_(userInfo);
+  if (typeof installPortalPermissionCacheBusterTriggerP230 === 'function') {
+    return installPortalPermissionCacheBusterTriggerP230();
+  }
+  throw new Error('권한 캐시 무효화 트리거 설치 함수가 없습니다. 15_PermissionService.gs를 확인해 주세요.');
+}
+
+function clearPortalPermissionCacheFromHealthP350() {
+  const userInfo = getPortalSystemHealthUserP208_();
+  assertPortalSystemHealthAllowedP208_(userInfo);
+  if (typeof clearPortalPermissionCache === 'function') {
+    return clearPortalPermissionCache();
+  }
+  throw new Error('권한 캐시 무효화 함수가 없습니다. 15_PermissionService.gs를 확인해 주세요.');
 }
 
 function getPortalSystemHealthUserP208_() {
@@ -300,6 +354,127 @@ function getPortalSystemVersionInfoP208_() {
     customerIndexDirty: props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY') || 'N',
     customerIndexDirtyReason: props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY_REASON') || ''
   };
+}
+
+function checkPortalPermissionCacheTriggerP350_() {
+  const handler = (typeof PORTAL_PERMISSION_CACHE_BUSTER_HANDLER_P230 !== 'undefined')
+    ? PORTAL_PERMISSION_CACHE_BUSTER_HANDLER_P230
+    : 'onPortalPermissionSheetEditP230';
+  let installed = false;
+  const detail = [];
+  try {
+    ScriptApp.getProjectTriggers().forEach(function(t) {
+      const h = t && t.getHandlerFunction ? t.getHandlerFunction() : '';
+      const sourceId = t && t.getTriggerSourceId ? t.getTriggerSourceId() : '';
+      if (h === handler) {
+        installed = true;
+        detail.push(h + ' / ' + sourceId);
+      }
+    });
+  } catch (err) {
+    detail.push('트리거 조회 실패: ' + (err && err.message ? err.message : String(err)));
+  }
+  return { installed: installed, detail: detail.join('\n') };
+}
+
+function checkPortalPermissionCacheP350_() {
+  try {
+    if (typeof getPortalPermissionCacheStatus !== 'function') {
+      return { error: '권한 캐시 상태 함수 없음', detail: '', cacheHit: false, ttlSeconds: 0 };
+    }
+    const res = getPortalPermissionCacheStatus();
+    return {
+      error: '',
+      cacheHit: res && res.cacheHit ? 'Y' : 'N',
+      ttlSeconds: Number(res && res.ttlSeconds || 0) || 0,
+      detail: 'email=' + ((res && res.emailKey) || '') + '\ncacheBust=' + ((res && res.cacheBust) || '') + '\nguestTtl=' + ((res && res.guestTtlSeconds) || 0)
+    };
+  } catch (err) {
+    return { error: err && err.message ? err.message : String(err), detail: '', cacheHit: 'N', ttlSeconds: 0 };
+  }
+}
+
+function getPortalTodaySheetStatsP350_(webSs) {
+  try {
+    const sheet = webSs.getSheetByName(PORTAL_CONFIG.TODAY_SHEET_NAME || '오늘할일_DB');
+    if (!sheet || sheet.getLastRow() < 2) return { totalRows: 0, activeRows: 0, deletedRows: 0, todayRows: 0, detail: '오늘할일_DB 데이터 없음' };
+    const headerMap = getPortalSystemHeaderMapP208_(sheet, 1);
+    const dateCol = findPortalSystemHeaderColP208_(headerMap, '일자');
+    const doneCol = findPortalSystemHeaderColP208_(headerMap, '완료여부');
+    const ownerCol = findPortalSystemHeaderColP208_(headerMap, ['담당자', '작성자']);
+    const deletedCol = findPortalSystemHeaderColP208_(headerMap, '삭제여부');
+    const lastRow = sheet.getLastRow();
+    const width = Math.max(sheet.getLastColumn(), deletedCol || 1, doneCol || 1, dateCol || 1, ownerCol || 1);
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
+    const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    let active = 0, deleted = 0, todayRows = 0, done = 0;
+    const owners = {};
+    values.forEach(function(r) {
+      const isDeleted = deletedCol ? String(r[deletedCol - 1] || '').trim().toUpperCase() === 'Y' : false;
+      if (isDeleted) { deleted++; return; }
+      active++;
+      if (doneCol && String(r[doneCol - 1] || '').trim().toUpperCase() === 'Y') done++;
+      const dateText = dateCol ? normalizePortalSystemDateKeyP350_(r[dateCol - 1]) : '';
+      if (dateText === today) todayRows++;
+      const owner = ownerCol ? String(r[ownerCol - 1] || '').trim() : '';
+      if (owner) owners[owner] = (owners[owner] || 0) + 1;
+    });
+    const topOwners = Object.keys(owners).sort(function(a,b){ return owners[b]-owners[a]; }).slice(0, 10).map(function(k){ return k + ' ' + owners[k] + '건'; });
+    return {
+      totalRows: values.length,
+      activeRows: active,
+      deletedRows: deleted,
+      todayRows: todayRows,
+      detail: '완료 ' + done + '건 / 미완료 ' + Math.max(0, active - done) + '건' + (topOwners.length ? '\n담당자별 상위: ' + topOwners.join(', ') : '')
+    };
+  } catch (err) {
+    return { error: err && err.message ? err.message : String(err), totalRows: 0, activeRows: 0, deletedRows: 0, todayRows: 0, detail: '' };
+  }
+}
+
+function getPortalSupportSheetStatsP350_(masterSs) {
+  try {
+    const sheet = masterSs.getSheetByName(PORTAL_CONFIG.SUPPORT_SHEET_NAME || '영업지원요청');
+    if (!sheet) return { error: '영업지원요청 시트 없음', totalRows: 0, openRows: 0, cacheBust: '', detail: '' };
+    const dataStart = Number(PORTAL_CONFIG.SUPPORT_DATA_START_ROW || 4);
+    const lastRow = sheet.getLastRow();
+    if (lastRow < dataStart) return { totalRows: 0, openRows: 0, cacheBust: getPortalSupportCacheBustP350_(), detail: '데이터 없음' };
+    const headerMap = getPortalSystemHeaderMapP208_(sheet, Number(PORTAL_CONFIG.SUPPORT_HEADER_ROW || 3));
+    const statusCol = findPortalSystemHeaderColP208_(headerMap, ['처리상태', '상태']);
+    const requesterCol = findPortalSystemHeaderColP208_(headerMap, ['요청자', '요청담당자']);
+    const width = Math.max(sheet.getLastColumn(), statusCol || 1, requesterCol || 1);
+    const values = sheet.getRange(dataStart, 1, lastRow - dataStart + 1, width).getDisplayValues();
+    let open = 0;
+    const requesters = {};
+    values.forEach(function(r) {
+      const st = statusCol ? String(r[statusCol - 1] || '').trim() : '';
+      if (!st || !/완료|반려/.test(st)) open++;
+      const req = requesterCol ? String(r[requesterCol - 1] || '').trim() : '';
+      if (req) requesters[req] = (requesters[req] || 0) + 1;
+    });
+    const top = Object.keys(requesters).sort(function(a,b){ return requesters[b]-requesters[a]; }).slice(0, 10).map(function(k){ return k + ' ' + requesters[k] + '건'; });
+    return { totalRows: values.length, openRows: open, cacheBust: getPortalSupportCacheBustP350_(), detail: top.length ? ('요청자별 상위: ' + top.join(', ')) : '' };
+  } catch (err) {
+    return { error: err && err.message ? err.message : String(err), totalRows: 0, openRows: 0, cacheBust: '', detail: '' };
+  }
+}
+
+function getPortalSupportCacheBustP350_() {
+  try {
+    if (typeof getPortalSupportCacheBustV64_ === 'function') return getPortalSupportCacheBustV64_();
+  } catch (err) {}
+  try { return PropertiesService.getScriptProperties().getProperty('PORTAL_SUPPORT_CACHE_BUST_V64') || ''; } catch (err2) {}
+  return '';
+}
+
+function normalizePortalSystemDateKeyP350_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const text = String(value == null ? '' : value).trim();
+  const m = text.match(/(20\d{2}|\d{2})[.\-\/]\s*(\d{1,2})[.\-\/]\s*(\d{1,2})/);
+  if (!m) return text;
+  let y = Number(m[1]);
+  if (y < 100) y += 2000;
+  return y + '-' + ('0' + Number(m[2])).slice(-2) + '-' + ('0' + Number(m[3])).slice(-2);
 }
 
 function checkPortalFavoriteDuplicatesP208_(webSs) {

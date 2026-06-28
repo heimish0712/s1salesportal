@@ -62,17 +62,85 @@ function getPortalTodayData(dateText, options) {
   };
 }
 
-function readPortalTodaySheetRowsForDateAllP370_(sheet, selectedDate, headerLen, options) {
-  options = options || {};
+
+function readPortalTodayMatchingDateRowsFastP380_(sheet, selectedDate, headerLen) {
+  selectedDate = normalizePortalTodoDate_(selectedDate || new Date());
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
-  return values.map(function(row, idx) {
-    const item = portalTodayRowToItemP360_(row);
+
+  // 속도 개선: 오늘할일_DB 전체 A:U를 매번 읽지 않고, B열 날짜만 먼저 읽은 뒤
+  // 해당 날짜의 행만 묶어서 가져옵니다. 데이터가 날짜별로 쌓일수록 차이가 큽니다.
+  const dateValues = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
+  const rowNos = [];
+  dateValues.forEach(function(row, idx) {
+    if (normalizePortalTodoDate_(row[0]) === selectedDate) rowNos.push(idx + 2);
+  });
+  if (!rowNos.length) return [];
+
+  const groups = [];
+  rowNos.forEach(function(rowNo) {
+    const last = groups.length ? groups[groups.length - 1] : null;
+    if (last && rowNo === last.end + 1) last.end = rowNo;
+    else groups.push({ start: rowNo, end: rowNo });
+  });
+
+  const result = [];
+  groups.forEach(function(g) {
+    const values = sheet.getRange(g.start, 1, g.end - g.start + 1, headerLen).getValues();
+    values.forEach(function(row, idx) {
+      result.push({ rowNo: g.start + idx, values: row });
+    });
+  });
+  return result;
+}
+
+function getPortalTodayAssignableAuthorOptionsP380_() {
+  const cache = CacheService.getScriptCache();
+  const bust = (typeof getPortalPermissionCacheBustP230_ === 'function') ? getPortalPermissionCacheBustP230_() : 'v1';
+  const key = 'PORTAL_TODAY_AUTHORS_P380_' + bust;
+  const cached = cache.get(key);
+  if (cached) {
+    try { return JSON.parse(cached) || []; } catch (err) {}
+  }
+
+  const seen = {};
+  const out = [];
+  function add(name) {
+    name = String(name || '').trim();
+    if (!name) return;
+    const keyName = portalTodayAuthorKeyP360_(name);
+    if (!keyName || seen[keyName]) return;
+    seen[keyName] = true;
+    out.push(name);
+  }
+
+  try {
+    const sheet = ensurePortalPermissionSheet_();
+    const lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      const values = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), 15)).getValues();
+      values.forEach(function(row) {
+        const active = String(row[14] || 'Y').trim().toUpperCase() !== 'N';
+        if (!active) return;
+        add(row[6] || row[1] || row[0]);
+      });
+    }
+  } catch (err) {}
+
+  out.sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
+  try { cache.put(key, JSON.stringify(out).slice(0, 90000), 300); } catch (err) {}
+  return out;
+}
+
+function readPortalTodaySheetRowsForDateAllP370_(sheet, selectedDate, headerLen, options) {
+  options = options || {};
+  const matchingRows = readPortalTodayMatchingDateRowsFastP380_(sheet, selectedDate, headerLen);
+  return matchingRows.map(function(rowInfo) {
+    const item = portalTodayRowToItemP360_(rowInfo.values);
     const deleted = String(item.deleted || '').toUpperCase() === 'Y';
     return {
-      rowNo: idx + 2,
-      values: row,
+      rowNo: rowInfo.rowNo,
+      values: rowInfo.values,
       id: item.id,
       date: item.date,
       deleted: deleted,
@@ -98,6 +166,10 @@ function buildPortalTodayAuthorOptionsFromRowsP370_(allDateRows, rawNextActions)
     seen[key] = true;
     out.push(name);
   }
+
+  // 서무/admin 담당자 필터는 그날 할 일이 있는 사람만 나오면 안 됩니다.
+  // 권한_DB의 활성 사용자 전체를 기본 옵션으로 깔고, 실제 데이터 작성자도 추가합니다.
+  getPortalTodayAssignableAuthorOptionsP380_().forEach(add);
   (Array.isArray(allDateRows) ? allDateRows : []).forEach(function(rowInfo) {
     const item = (rowInfo && rowInfo.item) || {};
     if (String(item.deleted || '').toUpperCase() === 'Y') return;
@@ -245,8 +317,8 @@ function carryOverPortalTodayOpenTasksP360_(selectedDate, access) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { moved: 0, deleted: 0 };
 
-  const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
-  const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
+  // 이월 판정에는 A:H까지만 필요합니다. 전체 컬럼을 읽지 않아도 됩니다.
+  const values = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
   const rowsToMove = [];
 
   values.forEach(function(row, idx) {
@@ -306,6 +378,7 @@ function savePortalTodosForDateCoreP360_(payload) {
   const selectedDate = normalizePortalTodoDate_(payload.date || new Date());
   const access = getPortalTodayAccessContextP360_(payload || {});
   const incomingRaw = Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload.todos) ? payload.todos : []);
+  const deletedRaw = Array.isArray(payload.deletedTasks) ? payload.deletedTasks : [];
   const baseTasks = Array.isArray(payload.baseTasks) ? payload.baseTasks : [];
   const baseTaskIds = (Array.isArray(payload.baseTaskIds) ? payload.baseTaskIds : baseTasks.map(function(t) { return t && t.id; }))
     .map(function(v) { return String(v || '').trim(); })
@@ -371,6 +444,31 @@ function savePortalTodosForDateCoreP360_(payload) {
   });
 
   const tombstoneRows = [];
+  const explicitDeletedById = {};
+  deletedRaw.forEach(function(raw) {
+    const t = normalizePortalTodayTaskP360_(raw || {}, selectedDate);
+    if (t.id) explicitDeletedById[t.id] = t;
+  });
+  Object.keys(explicitDeletedById).forEach(function(id) {
+    const t = explicitDeletedById[id];
+    const existing = existingAnyById[id];
+    if (existing && existing.rowNo && !existing.deleted) {
+      deleteRowNos.push(existing.rowNo);
+      return;
+    }
+    if (!existing && t && String(t.sourceType || '') === 'CONTACT_NEXT' && !incomingIds[id]) {
+      tombstoneRows.push(buildPortalTodayRowValuesP360_(t, {
+        id: id,
+        selectedDate: selectedDate,
+        order: 9999,
+        prev: {},
+        now: now,
+        user: user,
+        deleted: 'Y'
+      }));
+    }
+  });
+
   const baseTaskById = {};
   baseTasks.forEach(function(raw) {
     const t = normalizePortalTodayTaskP360_(raw || {}, selectedDate);
@@ -452,17 +550,15 @@ function buildPortalTodayRowValuesP360_(item, context) {
 
 function readPortalTodaySheetRowsForDateP360_(sheet, selectedDate, headerLen, access, options) {
   options = options || {};
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
-  return values.map(function(row, idx) {
-    const item = portalTodayRowToItemP360_(row);
+  const matchingRows = readPortalTodayMatchingDateRowsFastP380_(sheet, selectedDate, headerLen);
+  return matchingRows.map(function(rowInfo) {
+    const item = portalTodayRowToItemP360_(rowInfo.values);
     const deleted = String(item.deleted || '').toUpperCase() === 'Y';
     const matchesDate = item.date === selectedDate;
     const matchesAccess = portalTodayAuthorMatchesAccessP360_(item.author, access);
     return {
-      rowNo: idx + 2,
-      values: row,
+      rowNo: rowInfo.rowNo,
+      values: rowInfo.values,
       id: item.id,
       date: item.date,
       deleted: deleted,

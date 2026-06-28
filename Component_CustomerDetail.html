@@ -292,10 +292,7 @@ function getDetailFieldHelpTextP13_(key) {
 }
 
 function renderDetailFieldLabelP13_(f) {
-  const label = esc((f && f.label) || '');
-  const help = getDetailFieldHelpTextP13_(f && f.key);
-  if (!help) return label;
-  return label + '';
+  return esc((f && f.label) || '');
 }
 
 function renderDetailField(f, sectionKey, forceWide, extraClass) {
@@ -336,9 +333,19 @@ function getGenericOptionLabelP280_(opt) {
   return opt == null || String(opt) === '' ? '-' : String(opt);
 }
 
+function isDetailZeroDateLikeP340_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return false;
+  const compact = text.replace(/\s+/g, '');
+  if (/^1899[.\-\/]12[.\/](30|31)$/.test(compact)) return true;
+  if (/^1899년12월(30|31)일$/.test(compact)) return true;
+  return false;
+}
+
 function normalizeDetailSelectCurrentP280_(key, value) {
   const text = String(value == null ? '' : value).trim();
   if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (isDetailZeroDateLikeP340_(text)) return (key === 'maintenance' || key === 'performance') ? '0' : '';
   if (key === 'contractUnit') {
     if (text === '1년') return '12';
     if (text === '반년') return '6';
@@ -426,6 +433,7 @@ function normalizeDetailContractFieldForDbP280_(key, value) {
   }
   if (key === 'maintenance' || key === 'performance') {
     if (!text || text === '-' || text === '–' || text === '—') return '';
+    if (isDetailZeroDateLikeP340_(text)) return '0';
     const m = text.match(/\d+/);
     if (!m) return text;
     const n = Number(m[0]);

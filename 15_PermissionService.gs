@@ -44,7 +44,7 @@ const PORTAL_PERMISSION_SEED_ROWS = [
 
 // STEP6 P230: 권한_DB 반복 조회를 줄이기 위한 짧은 서버 캐시입니다.
 // 권한 정책은 그대로 두고, 같은 사용자 이메일의 계산 완료 권한 객체만 5분 이내 재사용합니다.
-const PORTAL_PERMISSION_CACHE_PREFIX_P230 = 'PORTAL_PERMISSION_P310_';
+const PORTAL_PERMISSION_CACHE_PREFIX_P230 = 'PORTAL_PERMISSION_P330_';
 const PORTAL_PERMISSION_CACHE_BUST_PROP_P230 = 'PORTAL_PERMISSION_CACHE_BUST_P230';
 const PORTAL_PERMISSION_CACHE_TTL_SEC_P230 = 300;
 const PORTAL_PERMISSION_GUEST_CACHE_TTL_SEC_P230 = 60;
@@ -329,11 +329,10 @@ function buildPortalPermissionFromRow_(row, rowNo, sessionEmail) {
   const canViewAllCustomers = baseAdmin || yn_(v(8)) || defaultScope === 'ALL';
   const canWriteNotice = baseAdmin || yn_(v(9));
   const canDeleteNotice = baseAdmin || yn_(v(10));
-  // STEP31 P310: 영업지원 요청 작성은 모든 등록/활성 사용자에게 허용합니다.
-  // 권한_DB의 '영업지원요청작성'이 Y인 경우는 당연히 허용하고,
-  // 기존 요청대로 활성 사용자(active)는 전원 작성 가능하게 유지합니다.
-  // 완료 처리/전체 열람 권한은 기존 권한_DB 정책을 그대로 유지합니다.
-  const canWriteSupport = active && (yn_(v(11)) || true);
+  // STEP33 P330: 영업지원 요청 작성 권한은 명확히 분리합니다.
+  // 요청 작성: 등록/활성 사용자 전원 허용
+  // 전체 열람/완료처리: 권한_DB 및 관리자성 권한 유지
+  const canWriteSupport = active;
   const canReadAllSupport = baseAdmin || yn_(v(12));
   const canCompleteSupport = baseAdmin || yn_(v(13));
   const canViewAllActivityLogs = baseAdmin || yn_(v(16));

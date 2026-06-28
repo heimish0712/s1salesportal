@@ -519,11 +519,11 @@ function checkPortalDataVersionP201_() {
       const nextIndexDirty = String(res.customerIndexDirty || 'N');
       const nextIndexDirtyAt = String(res.indexMeta && res.indexMeta.dirtyAt || res.customerIndexDirtyAt || '');
       const hadVersion = !!(portalLastDataVersionP201.customerIndexVersion || portalLastDataVersionP201.masterVersion || portalLastDataVersionP201.customerIndexDirtyAt);
-      // STEP23/P320: masterVersion 단독 변경만으로 검색 화면 전체 캐시를 밀어버리면
-      // 검색/페이지 이동 중 화면이 비고 다시 그려지는 튐이 생깁니다. 실제 목록 최신화는
-      // 검색인덱스 버전 변경 또는 dirty 플래그를 기준으로 처리합니다. 마스터만 바뀐 경우는
-      // 메타만 기억하고, 필요 시 서무/admin 강제갱신 버튼으로 복구합니다.
+      // STEP33/P330: 검색 화면을 빠르게 유지하되, 마스터시트 변경도 놓치지 않습니다.
+      // masterVersion 변경만으로 화면을 비우지는 않고, 백그라운드 검색인덱스 갱신 후 현재 페이지를 patch합니다.
+      const masterChangedP330 = hadVersion && nextMasterVersion && nextMasterVersion !== portalLastDataVersionP201.masterVersion;
       const changed = hadVersion && (
+        masterChangedP330 ||
         (nextIndexVersion && nextIndexVersion !== portalLastDataVersionP201.customerIndexVersion) ||
         (nextIndexDirty === 'Y' && nextIndexDirtyAt && nextIndexDirtyAt !== portalLastDataVersionP201.customerIndexDirtyAt) ||
         (nextIndexDirty && nextIndexDirty !== portalLastDataVersionP201.customerIndexDirty)
@@ -586,15 +586,15 @@ function handlePortalExternalDataChangedP201_(meta) {
   }
   portalDataRefreshPendingP201 = false;
   hidePortalDataRefreshBannerP202_();
+  try { customerSearchIndexStaleDueToMasterP310 = true; } catch (err) {}
   try {
-    if (typeof invalidateCustomerSearchCaches_ === 'function') invalidateCustomerSearchCaches_({ clearIndex: true, clearDetail: true });
-    else {
-      customerPageMemoryCache = {};
-      sessionStorage && Object.keys(sessionStorage).forEach(function(k) { if (String(k).indexOf('portalCustomerPage:') === 0) sessionStorage.removeItem(k); });
+    // STEP33: 기존 검색 결과를 먼저 비우지 않습니다. 서버 최신 인덱스가 도착하면 현재 페이지를 부드럽게 patch합니다.
+    if (typeof refreshCustomerSearchIndexFromMasterSignalP330_ === 'function') {
+      refreshCustomerSearchIndexFromMasterSignalP330_('version-watcher');
+    } else if (typeof initializeCustomerSearchIndex === 'function') {
+      initializeCustomerSearchIndex({ silent: true, useLocalFirst: true, skipNetworkIfReady: false, clearDetail: false, renderAfterLoad: false, backgroundRefresh: true, maxAgeMs: 0 });
     }
   } catch (err) {}
-  try { customerSearchIndexStaleDueToMasterP310 = true; } catch (err) {}
-  try { initializeCustomerSearchIndex({ silent: true, useLocalFirst: true, skipNetworkIfReady: false, clearDetail: false, renderAfterLoad: false, backgroundRefresh: true }); } catch (err) {}
   if (favoriteVisible) {
     try { loadCustomerFavoriteMap_({ silent: true, force: true }); } catch (err) {}
     try { if (typeof renderFavoritePage === 'function') renderFavoritePage(); } catch (err) {}

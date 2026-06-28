@@ -115,9 +115,21 @@ function makeFocusCustomerCacheKeyP290_(perm, opts) {
   const props = PropertiesService.getScriptProperties();
   const bust = props.getProperty('PORTAL_FOCUS_CACHE_BUST_P290') || '0';
   const indexVersion = props.getProperty('CUSTOMER_SEARCH_INDEX_VERSION') || '';
+  const indexDirty = props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY') || 'N';
+  const indexDirtyAt = props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY_AT') || '';
+  const masterVersion = props.getProperty('PORTAL_MASTER_DATA_VERSION') || '';
   const email = String(perm && perm.email || '').trim().toLowerCase();
   const scope = [perm && perm.level, perm && perm.defaultScope, perm && perm.canViewAllCustomers ? 'ALL' : 'OWN', perm && perm.salesRepName].join('|');
-  const raw = JSON.stringify({ email: email, scope: scope, opts: opts || {}, indexVersion: indexVersion, bust: bust });
+  const raw = JSON.stringify({
+    email: email,
+    scope: scope,
+    opts: opts || {},
+    indexVersion: indexVersion,
+    indexDirty: indexDirty,
+    indexDirtyAt: indexDirtyAt,
+    masterVersion: masterVersion,
+    bust: bust
+  });
   const digest = Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, raw)).slice(0, 30);
   return PORTAL_FOCUS_CACHE_PREFIX_P290 + digest;
 }

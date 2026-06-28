@@ -972,9 +972,7 @@ function refreshCustomerFavoriteStarButtonsP207_(keyOrRow) {
     btn.classList.toggle('active', !!active);
     btn.classList.toggle('pending', !!pending);
     btn.setAttribute('aria-busy', pending ? 'true' : 'false');
-    btn.setAttribute('title', label);
     const cell = btn.closest('.customer-favorite-cell');
-    if (cell) cell.setAttribute('title', label);
     btn.textContent = active ? '★' : '☆';
   });
 }
@@ -2099,6 +2097,11 @@ function initializeCustomerSearchIndex(options) {
 
       setCustomerSearchIndexData_(data, 'server');
       if (!options.silent) toast('검색인덱스_DB를 새로 불러왔습니다.');
+      try {
+        if (typeof options.onLoaded === 'function') options.onLoaded(data, customerSearchIndexState);
+      } catch (callbackErr) {
+        console.warn('검색인덱스 로딩 후 처리 실패', callbackErr);
+      }
       if (options.renderAfterLoad === true && customerSearchState) {
         const current = buildCustomerPageFromIndex_(customerSearchState.keyword || '', customerSearchState.page || 0);
         if (current && document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active')) {
@@ -2120,6 +2123,41 @@ function initializeCustomerSearchIndex(options) {
       }
     })
     .getCustomerSearchIndexData();
+}
+
+
+function refreshCustomerSearchIndexFromMasterSignalP330_(reason) {
+  // STEP33: 마스터시트 변경 감지 시 화면을 먼저 비우지 않고,
+  // 기존 브라우저 인덱스로 계속 보여준 뒤 서버 검색인덱스 최신본이 도착하면 현재 페이지를 부드럽게 patch합니다.
+  try { customerSearchIndexStaleDueToMasterP310 = true; } catch (err) {}
+  if (typeof google === 'undefined' || !google.script || !google.script.run) return;
+  const visible = !!(document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active'));
+  const stateAtStart = customerSearchState ? {
+    keyword: String(customerSearchState.keyword || ''),
+    page: Number(customerSearchState.page || 0),
+    scope: String(customerSearchState.scope || '')
+  } : null;
+  initializeCustomerSearchIndex({
+    silent: true,
+    useLocalFirst: true,
+    skipNetworkIfReady: false,
+    renderAfterLoad: false,
+    backgroundRefresh: true,
+    maxAgeMs: 0,
+    onLoaded: function(data) {
+      try { customerSearchIndexStaleDueToMasterP310 = !!(data && data.dirty); } catch (err) {}
+      const stillVisible = !!(document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active'));
+      if (!stillVisible || !stateAtStart) return;
+      if (!customerSearchState) return;
+      // 사용자가 갱신 중 검색어/페이지를 바꿨으면 최신 사용자 동작을 존중하고 다시 그리지 않습니다.
+      if (String(customerSearchState.keyword || '') !== stateAtStart.keyword) return;
+      if (Number(customerSearchState.page || 0) !== stateAtStart.page) return;
+      const current = buildCustomerPageFromIndex_(customerSearchState.keyword || '', customerSearchState.page || 0);
+      if (!current) return;
+      renderResults(current, true);
+      scheduleDetailPrefetchFromResult_(current, customerSearchState.keyword || '', customerSearchState.page || 0);
+    }
+  });
 }
 
 function setCustomerSearchIndexData_(data, source) {
@@ -2391,7 +2429,6 @@ function renderCustomerFilterPanel_() {
     });
     html += '</div></div>';
   });
-  html += '<div class="customer-filter-help">체크한 조건만 검색에 적용됩니다. 조건을 바꾼 뒤 상단 [검색]을 누르면 반영됩니다.</div>';
   html += '</div>';
   panel.innerHTML = html;
 }
@@ -2537,6 +2574,7 @@ function getCustomerFilterRowValue_(row, key) {
     businessLegalName: row.businessLegalName || row.legalName || row['법인명'] || row['사업자등록증상 법인명'],
     representativeName: row.representativeName || row.ceoName || row['대표자명']
   };
+  if (key === 'contractUnit' || key === 'maintenance' || key === 'performance') return normalizePortalContractDisplayValueClientP280_(key, map[key]);
   if (key === 'businessRegistrationReceived') return String(map.businessNo || '').trim() ? 'O' : 'X';
   if (key === 'serviceApplicationReceived') return normalizeCustomerFilterBooleanMark_(row.serviceApplicationReceived || row.serviceApplication || row['용역신청서']);
   if (key === 'appointmentReportReceived') return normalizeCustomerFilterBooleanMark_(row.appointmentReportReceived || row.appointmentReport || row['선임신고서']);
@@ -3118,9 +3156,21 @@ function buildPortalInspectionCountOptionsClientP280_(maxCount) {
   return opts;
 }
 
+function isPortalZeroDateLikeClientP340_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return false;
+  const compact = text.replace(/\s+/g, '');
+  if (/^1899[.\-\/]12[.\/](30|31)$/.test(compact)) return true;
+  if (/^1899년12월(30|31)일$/.test(compact)) return true;
+  return false;
+}
+
 function normalizePortalContractDisplayValueClientP280_(key, value) {
   const text = String(value == null ? '' : value).trim();
   if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (isPortalZeroDateLikeClientP340_(text)) {
+    return (key === 'maintenance' || key === 'performance') ? '0' : '';
+  }
   if (key === 'contractUnit') {
     if (text === '1년') return '12';
     if (text === '반년') return '6';

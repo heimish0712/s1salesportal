@@ -473,7 +473,10 @@ function rebuildCustomerSearchIndex(options) {
 
     indexSheet.clearContents();
     indexSheet.getRange(1, 1, 1, getCustomerSearchIndexHeadersK2_().length).setValues([getCustomerSearchIndexHeadersK2_()]);
-    if (rows.length) indexSheet.getRange(2, 1, rows.length, getCustomerSearchIndexHeadersK2_().length).setValues(rows);
+    if (rows.length) {
+      formatCustomerSearchIndexContractCellsP340_(indexSheet, 2, rows.length);
+      indexSheet.getRange(2, 1, rows.length, getCustomerSearchIndexHeadersK2_().length).setValues(rows);
+    }
     indexSheet.setFrozenRows(1);
     indexSheet.getRange(1, 1, 1, getCustomerSearchIndexHeadersK2_().length).setFontWeight('bold').setBackground('#f2f4f7');
     // STEP23/P320: autoResizeColumns는 대량 인덱스 재생성에서 체감 지연이 커서 생략합니다.
@@ -835,6 +838,18 @@ function ensureCustomerSearchIndexSheet_(ss) {
   return sheet;
 }
 
+function formatCustomerSearchIndexContractCellsP340_(sheet, startRow, numRows) {
+  if (!sheet || !startRow || !numRows) return;
+  try {
+    const width = Math.max(sheet.getLastColumn(), getCustomerSearchIndexHeadersK2_().length);
+    const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+    ['계약단위', '유지점검', '성능점검'].forEach(function(header) {
+      const col = headers.indexOf(header) + 1;
+      if (col > 0) sheet.getRange(startRow, col, numRows, 1).setNumberFormat('@');
+    });
+  } catch (err) {}
+}
+
 function buildCustomerSearchIndexRow_(obj, now) {
   now = now || new Date();
   obj = obj || {};
@@ -858,10 +873,10 @@ function buildCustomerSearchIndexRow_(obj, now) {
   const area = getCustomerIndexObjectValueK2_(obj, 'area');
   const grade = getCustomerIndexObjectValueK2_(obj, 'grade');
   const buildingType = getCustomerIndexObjectValueK2_(obj, 'buildingType');
-  const contractUnit = getCustomerIndexObjectValueK2_(obj, 'contractUnit');
+  const contractUnit = normalizePortalContractFieldForDbP280_('contractUnit', getCustomerIndexObjectValueK2_(obj, 'contractUnit'));
   const appointment = getCustomerIndexObjectValueK2_(obj, 'appointment');
-  const maintenance = getCustomerIndexObjectValueK2_(obj, 'maintenance');
-  const performance = getCustomerIndexObjectValueK2_(obj, 'performance');
+  const maintenance = normalizePortalContractFieldForDbP280_('maintenance', getCustomerIndexObjectValueK2_(obj, 'maintenance'));
+  const performance = normalizePortalContractFieldForDbP280_('performance', getCustomerIndexObjectValueK2_(obj, 'performance'));
   const vat = getCustomerIndexObjectValueK2_(obj, 'vat');
   const discountRate = getCustomerIndexObjectValueK2_(obj, 'discountRate');
   const specialTerms = getCustomerIndexObjectValueK2_(obj, 'specialTerms');
@@ -967,6 +982,7 @@ function updateCustomerSearchIndexRow_(rowNo) {
     for (let i = 0; i < rowNoValues.length; i++) if (Number(rowNoValues[i][0]) === rowNo) { targetRow = i + 2; break; }
   }
   if (!targetRow) targetRow = Math.max(2, indexSheet.getLastRow() + 1);
+  formatCustomerSearchIndexContractCellsP340_(indexSheet, targetRow, 1);
   indexSheet.getRange(targetRow, 1, 1, getCustomerSearchIndexHeadersK2_().length).setValues([rowValues]);
   const touched = touchCustomerSearchIndexVersion_(new Date());
   return { ok: true, rowNo: rowNo, indexRow: targetRow, version: touched.version, builtAt: touched.builtAt };
@@ -1046,9 +1062,12 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
 
   Object.keys(keyToHeader).forEach(function(key) {
     if (!Object.prototype.hasOwnProperty.call(values, key)) return;
-    const v = key === 'memo'
+    let v = key === 'memo'
       ? shortenTextForIndex_(values[key], PORTAL_CONFIG.CUSTOMER_INDEX_MEMO_MAX_LENGTH || 350)
       : values[key];
+    if (key === 'contractUnit' || key === 'maintenance' || key === 'performance') {
+      v = normalizePortalContractFieldForDbP280_(key, v);
+    }
     setByHeader(keyToHeader[key], v);
   });
   setByHeader('rowNo', rowNo);
@@ -1074,6 +1093,7 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
   setByHeader('마스터원본버전', values.__metaMasterVersion || ts);
   setByHeader('최종수정자', values.__metaEditor || getH('최종수정자'));
 
+  formatCustomerSearchIndexContractCellsP340_(indexSheet, targetRow, 1);
   indexSheet.getRange(targetRow, 1, 1, width).setValues([row]);
   const touched = touchCustomerSearchIndexVersion_(now);
   return { ok: true, rowNo: rowNo, indexRow: targetRow, version: touched.version, builtAt: touched.builtAt, fastPatch: true };
@@ -1306,10 +1326,10 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   const grade = getCustomerMasterHeaderValueK2_(obj, 'grade');
   const buildingType = getCustomerMasterHeaderValueK2_(obj, 'buildingType');
   const finalQuote = getCustomerMasterHeaderValueK2_(obj, 'finalQuote');
-  const contractUnit = getCustomerMasterHeaderValueK2_(obj, 'contractUnit');
+  const contractUnit = normalizePortalContractFieldForDbP280_('contractUnit', getCustomerMasterHeaderValueK2_(obj, 'contractUnit'));
   const appointment = getCustomerMasterHeaderValueK2_(obj, 'appointment');
-  const maintenance = getCustomerMasterHeaderValueK2_(obj, 'maintenance');
-  const performance = getCustomerMasterHeaderValueK2_(obj, 'performance');
+  const maintenance = normalizePortalContractFieldForDbP280_('maintenance', getCustomerMasterHeaderValueK2_(obj, 'maintenance'));
+  const performance = normalizePortalContractFieldForDbP280_('performance', getCustomerMasterHeaderValueK2_(obj, 'performance'));
   const vat = getCustomerMasterHeaderValueK2_(obj, 'vat');
   const discountRate = getCustomerMasterHeaderValueK2_(obj, 'discountRate');
   const specialTerms = getCustomerMasterHeaderValueK2_(obj, 'specialTerms');
@@ -1438,6 +1458,7 @@ function saveCustomerDetailCoreP202_(payload) {
     const range = sheet.getRange(rowNo, col);
     const prevValue = String(range.getDisplayValue() || '').trim();
     if (prevValue !== nextValue) {
+      if (isPortalContractNumericKeyP340_(def.key)) range.setNumberFormat('0');
       range.setValue(writeValue);
       changed.push(def.label);
     }
@@ -1541,6 +1562,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   changedTargets.forEach(function(t) { changedValues[t.key] = t.value; });
 
   if (changedTargets.length) {
+    changedTargets.forEach(function(t) { applyPortalContractCellNumberFormatP340_(sheet, rowNo, t.col, t.key); });
     changedTargets.sort(function(a, b) { return a.col - b.col; });
     let blockStart = changedTargets[0].col;
     let blockValues = [changedTargets[0].writeValue];
@@ -1716,7 +1738,26 @@ function updateCustomerSearchIndexMemoFast_(rowNo, memoValue, meta) {
 // PATCH P280: 계약조건 숫자형 저장 호환
 // - 마스터시트 U/W/X(계약단위/유지점검/성능점검)는 숫자 셀을 기준으로 사용합니다.
 // - 화면에는 "12개월", "2회"처럼 보여도 저장 payload와 시트 write 값은 12, 2 같은 숫자로 정규화합니다.
+function isPortalZeroDateLikeP340_(value) {
+  // Google Sheets에서 숫자 0이 날짜 서식 컬럼에 들어가면
+  // 1899. 12. 30 또는 1899-12-30처럼 표시될 수 있습니다.
+  // 유지점검/성능점검 0회가 날짜로 보이지 않게 여기서 0으로 복구합니다.
+  if (value instanceof Date) {
+    const y = value.getFullYear();
+    const m = value.getMonth() + 1;
+    const d = value.getDate();
+    return y === 1899 && m === 12 && (d === 30 || d === 31);
+  }
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return false;
+  const compact = text.replace(/\s+/g, '');
+  if (/^1899[.\-\/]12[.\\/](30|31)$/.test(compact)) return true;
+  if (/^1899년12월(30|31)일$/.test(compact)) return true;
+  return false;
+}
+
 function normalizePortalContractUnitMonthsP280_(value) {
+  if (isPortalZeroDateLikeP340_(value)) return '';
   const text = String(value == null ? '' : value).trim();
   if (!text || text === '-' || text === '–' || text === '—') return '';
   if (/^1년$/.test(text)) return 12;
@@ -1729,6 +1770,7 @@ function normalizePortalContractUnitMonthsP280_(value) {
 }
 
 function normalizePortalInspectionCountP280_(value) {
+  if (isPortalZeroDateLikeP340_(value)) return 0;
   const text = String(value == null ? '' : value).trim();
   if (!text || text === '-' || text === '–' || text === '—') return '';
   const m = text.match(/\d+/);
@@ -1736,6 +1778,16 @@ function normalizePortalInspectionCountP280_(value) {
   const n = Number(m[0]);
   if (!isFinite(n) || n < 0 || n > 12) return '';
   return n;
+}
+
+function isPortalContractNumericKeyP340_(key) {
+  key = String(key || '').trim();
+  return key === 'contractUnit' || key === 'maintenance' || key === 'performance';
+}
+
+function applyPortalContractCellNumberFormatP340_(sheet, rowNo, col, key) {
+  if (!sheet || !rowNo || !col || !isPortalContractNumericKeyP340_(key)) return;
+  try { sheet.getRange(rowNo, col).setNumberFormat('0'); } catch (err) {}
 }
 
 function normalizePortalContractFieldForDbP280_(key, value) {
@@ -2110,7 +2162,9 @@ function saveRegistrationCustomer(payload) {
       col = ensureMasterColumn_(sheet, headerMap, headerName);
       headerMap = getHeaderMap_(sheet);
     }
-    sheet.getRange(rowNo, col).setValue(getPortalMasterWriteValueP280_(def.key, merged[def.key]));
+    const writeRangeP340 = sheet.getRange(rowNo, col);
+    if (isPortalContractNumericKeyP340_(def.key)) writeRangeP340.setNumberFormat('0');
+    writeRangeP340.setValue(getPortalMasterWriteValueP280_(def.key, merged[def.key]));
   });
 
   SpreadsheetApp.flush();
