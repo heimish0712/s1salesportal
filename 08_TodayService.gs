@@ -12,17 +12,36 @@ function getPortalTodayData(dateText, options) {
   const selectedDate = normalizePortalTodoDate_(dateText || new Date());
   const access = getPortalTodayAccessContextP360_(options);
 
-  if (selectedDate === normalizePortalTodoDate_(new Date())) {
-    try { carryOverPortalTodayOpenTasksP360_(selectedDate, access); } catch (err) { console.warn('오늘할일 이월 처리 실패', err); }
+  if (!options.skipCarryover && selectedDate === normalizePortalTodoDate_(new Date())) {
+    try { carryOverPortalTodayOpenTasksCachedP370_(selectedDate, access); } catch (err) { console.warn('오늘할일 이월 처리 실패', err); }
   }
 
-  const storedTodos = getPortalTodosForDate_(selectedDate, access);
-  const deletedSourceMap = getPortalTodayDeletedSourceMapP360_(selectedDate, access);
-  let nextActions = getContactNextActionsForDate_(selectedDate, access);
-  nextActions = filterPortalTodayItemsByAccessP360_(nextActions, access);
+  const sheet = ensurePortalTodaySheet_();
+  const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
+  const allDateRows = readPortalTodaySheetRowsForDateAllP370_(sheet, selectedDate, headerLen, { includeDeleted: true });
+  const accessRows = allDateRows.filter(function(rowInfo) {
+    return portalTodayAuthorMatchesAccessP360_((rowInfo.item && rowInfo.item.author) || '', access);
+  });
 
+  const storedTodos = accessRows
+    .filter(function(rowInfo) { return !rowInfo.deleted && rowInfo.item && rowInfo.item.content; })
+    .map(function(rowInfo) { return rowInfo.item; })
+    .sort(function(a, b) { return (Number(a.order) || 0) - (Number(b.order) || 0); });
+
+  const deletedSourceMap = {};
+  accessRows.forEach(function(rowInfo) {
+    const item = rowInfo.item || {};
+    if (String(item.deleted || '').toUpperCase() !== 'Y') return;
+    if (item.id) deletedSourceMap['ID|' + item.id] = true;
+    if (item.sourceType && item.sourceId) deletedSourceMap[String(item.sourceType) + '|' + String(item.sourceId)] = true;
+  });
+
+  const rawNextActions = options.skipNextActions ? [] : getContactNextActionsRawForDateP370_(selectedDate);
+  const nextActions = filterPortalTodayItemsByAccessP360_(rawNextActions, access);
   const tasks = buildPortalTodayUnifiedTasksP360_(storedTodos, nextActions, selectedDate, deletedSourceMap);
   const dateMeta = getPortalTodayDateMetaP360_(selectedDate, tasks);
+
+  const authorOptions = access.canViewAll ? buildPortalTodayAuthorOptionsFromRowsP370_(allDateRows, rawNextActions) : [];
 
   return {
     ok: true,
@@ -32,15 +51,131 @@ function getPortalTodayData(dateText, options) {
     tasks: tasks,
     todos: tasks,
     nextActions: nextActions,
-    tagOptions: getPortalTodayTagOptions_(),
+    tagOptions: getPortalTodayTagOptionsFastP370_(tasks),
     hiddenTags: getPortalTodayHiddenTags_(),
     actionOptions: typeof PORTAL_NEXT_ACTION_OPTIONS !== 'undefined' ? PORTAL_NEXT_ACTION_OPTIONS : [],
     canViewAllTodos: !!access.canViewAll,
     authorFilter: access.authorFilter || 'ALL',
     currentUserLabel: access.currentUserLabel || '',
-    authorOptions: access.canViewAll ? getPortalTodayAuthorOptionsP360_(selectedDate) : [],
+    authorOptions: authorOptions,
     loadedAt: formatDateTimeText_(new Date())
   };
+}
+
+function readPortalTodaySheetRowsForDateAllP370_(sheet, selectedDate, headerLen, options) {
+  options = options || {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
+  return values.map(function(row, idx) {
+    const item = portalTodayRowToItemP360_(row);
+    const deleted = String(item.deleted || '').toUpperCase() === 'Y';
+    return {
+      rowNo: idx + 2,
+      values: row,
+      id: item.id,
+      date: item.date,
+      deleted: deleted,
+      active: item.date === selectedDate && !deleted && !!item.content,
+      access: true,
+      item: item
+    };
+  }).filter(function(rowInfo) {
+    if (rowInfo.date !== selectedDate) return false;
+    if (options.includeDeleted) return true;
+    return !rowInfo.deleted && !!rowInfo.item.content;
+  });
+}
+
+function buildPortalTodayAuthorOptionsFromRowsP370_(allDateRows, rawNextActions) {
+  const seen = {};
+  const out = [];
+  function add(name) {
+    name = String(name || '').trim();
+    if (!name) return;
+    const key = portalTodayAuthorKeyP360_(name);
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    out.push(name);
+  }
+  (Array.isArray(allDateRows) ? allDateRows : []).forEach(function(rowInfo) {
+    const item = (rowInfo && rowInfo.item) || {};
+    if (String(item.deleted || '').toUpperCase() === 'Y') return;
+    if (item.content) add(item.author);
+  });
+  (Array.isArray(rawNextActions) ? rawNextActions : []).forEach(function(item) { add(item && item.author); });
+  return out.sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
+}
+
+function getPortalTodayTagOptionsFastP370_(tasks) {
+  const defaults = Array.isArray(PORTAL_CONFIG.TODAY_DEFAULT_TAGS) ? PORTAL_CONFIG.TODAY_DEFAULT_TAGS : ['전화','메일','견적','컨택','계약','서류','영업지원','재확인','긴급','내부처리'];
+  const hidden = getPortalTodayHiddenTags_().reduce(function(acc, tag) { acc[tag] = true; return acc; }, {});
+  const seen = {};
+  const tags = [];
+  function add(v) {
+    v = String(v || '').replace(/^#+/, '').trim();
+    if (!v || seen[v] || hidden[v]) return;
+    seen[v] = true;
+    tags.push(v);
+  }
+  defaults.forEach(add);
+  (Array.isArray(tasks) ? tasks : []).forEach(function(task) {
+    normalizePortalTodayTags_((task && task.tags) || '').forEach(add);
+  });
+  return tags.slice(0, 30);
+}
+
+function carryOverPortalTodayOpenTasksCachedP370_(selectedDate, access) {
+  const cache = CacheService.getScriptCache();
+  const key = 'PORTAL_TODAY_CARRY_P370_' + selectedDate + '_' + (access && access.canViewAll ? String(access.authorFilter || 'ALL') : 'ME');
+  if (cache.get(key)) return { moved: 0, cached: true };
+  const result = carryOverPortalTodayOpenTasksP360_(selectedDate, access);
+  cache.put(key, '1', 90);
+  return result;
+}
+
+function getContactNextActionsRawForDateP370_(selectedDate) {
+  const cache = CacheService.getScriptCache();
+  const key = 'PORTAL_TODAY_NEXT_RAW_P370_' + selectedDate;
+  const cached = cache.get(key);
+  if (cached) {
+    try { return JSON.parse(cached) || []; } catch (err) {}
+  }
+  const ss = getWebAppDbSpreadsheet_();
+  const sheet = ss.getSheetByName(PORTAL_CONFIG.CONTACT_HISTORY_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+  const map = {};
+  headers.forEach(function(h, i) { if (h) map[h] = i; });
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getDisplayValues();
+
+  const result = values.map(function(row, idx) {
+      const nextAt = cellByHeader_(row, map, '다음액션일시') || cellByHeader_(row, map, '다음연락일');
+      const nextDate = normalizePortalTodoDate_(nextAt);
+      const historyId = cellByHeader_(row, map, '이력ID') || ('row' + (idx + 2));
+      const customerNo = cellByHeader_(row, map, '고객번호');
+      const rowNo = cellByHeader_(row, map, '마스터행');
+      const nextAction = cellByHeader_(row, map, '다음액션');
+      return {
+        historyId: historyId,
+        sourceId: historyId || [customerNo, rowNo, nextAt, nextAction].join('|'),
+        customerNo: customerNo,
+        company: cellByHeader_(row, map, '회사명'),
+        rowNo: rowNo,
+        nextAction: nextAction,
+        nextActionAt: nextAt,
+        nextDate: nextDate,
+        content: cellByHeader_(row, map, '컨택내용'),
+        author: cellByHeader_(row, map, '작성자'),
+        nextActionTags: cellByHeader_(row, map, '다음액션태그')
+      };
+    })
+    .filter(function(item) { return item.nextDate === selectedDate && (item.nextAction || item.nextActionAt); })
+    .sort(function(a, b) { return String(a.nextActionAt || '').localeCompare(String(b.nextActionAt || '')); });
+  try { cache.put(key, JSON.stringify(result).slice(0, 95000), 120); } catch (err) {}
+  return result;
 }
 
 function getPortalTodayAccessContextP360_(options) {
@@ -91,29 +226,14 @@ function filterPortalTodayItemsByAccessP360_(items, access) {
 }
 
 function getPortalTodayAuthorOptionsP360_(selectedDate) {
-  const seen = {};
-  const out = [];
-  function add(name) {
-    name = String(name || '').trim();
-    if (!name) return;
-    const key = portalTodayAuthorKeyP360_(name);
-    if (!key || seen[key]) return;
-    seen[key] = true;
-    out.push(name);
-  }
   try {
     const sheet = ensurePortalTodaySheet_();
-    const lastRow = sheet.getLastRow();
-    const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
-    if (lastRow >= 2) {
-      sheet.getRange(2, 1, lastRow - 1, headerLen).getValues().forEach(function(row) {
-        const item = portalTodayRowToItemP360_(row);
-        if (item.date === selectedDate && String(item.deleted || '').toUpperCase() !== 'Y' && item.content) add(item.author);
-      });
-    }
-  } catch (err) {}
-  try { getContactNextActionsForDate_(selectedDate, { canViewAll: true }).forEach(function(item) { add(item.author); }); } catch (err) {}
-  return out.sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
+    const allRows = readPortalTodaySheetRowsForDateAllP370_(sheet, selectedDate, PORTAL_CONFIG.TODAY_HEADERS.length, { includeDeleted: true });
+    const rawNext = getContactNextActionsRawForDateP370_(selectedDate);
+    return buildPortalTodayAuthorOptionsFromRowsP370_(allRows, rawNext);
+  } catch (err) {
+    return [];
+  }
 }
 
 function carryOverPortalTodayOpenTasksP360_(selectedDate, access) {
@@ -162,7 +282,7 @@ function savePortalTodosForDate(payload) {
     });
   } catch (err) {}
 
-  const data = getPortalTodayData(writeMeta.selectedDate, { assigneeFilter: writeMeta.authorFilter || 'ALL' });
+  const data = getPortalTodayData(writeMeta.selectedDate, { assigneeFilter: writeMeta.authorFilter || 'ALL', skipCarryover: true });
   data.saved = true;
   data.saveMeta = writeMeta;
   return data;
@@ -668,41 +788,8 @@ function formatPortalTodayInputDateTime_(value) {
 }
 
 function getContactNextActionsForDate_(selectedDate, access) {
-  const ss = getWebAppDbSpreadsheet_();
-  const sheet = ss.getSheetByName(PORTAL_CONFIG.CONTACT_HISTORY_SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-
-  const lastCol = sheet.getLastColumn();
-  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
-  const map = {};
-  headers.forEach(function(h, i) { if (h) map[h] = i; });
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getDisplayValues();
-
   access = access || getPortalTodayAccessContextP360_({});
-  return values.map(function(row, idx) {
-      const nextAt = cellByHeader_(row, map, '다음액션일시') || cellByHeader_(row, map, '다음연락일');
-      const nextDate = normalizePortalTodoDate_(nextAt);
-      const historyId = cellByHeader_(row, map, '이력ID') || ('row' + (idx + 2));
-      const customerNo = cellByHeader_(row, map, '고객번호');
-      const rowNo = cellByHeader_(row, map, '마스터행');
-      const nextAction = cellByHeader_(row, map, '다음액션');
-      return {
-        historyId: historyId,
-        sourceId: historyId || [customerNo, rowNo, nextAt, nextAction].join('|'),
-        customerNo: customerNo,
-        company: cellByHeader_(row, map, '회사명'),
-        rowNo: rowNo,
-        nextAction: nextAction,
-        nextActionAt: nextAt,
-        nextDate: nextDate,
-        content: cellByHeader_(row, map, '컨택내용'),
-        author: cellByHeader_(row, map, '작성자'),
-        nextActionTags: cellByHeader_(row, map, '다음액션태그')
-      };
-    })
-    .filter(function(item) {
-      return item.nextDate === selectedDate && (item.nextAction || item.nextActionAt) && portalTodayAuthorMatchesAccessP360_(item.author, access);
-    })
+  return filterPortalTodayItemsByAccessP360_(getContactNextActionsRawForDateP370_(selectedDate), access)
     .sort(function(a, b) { return String(a.nextActionAt || '').localeCompare(String(b.nextActionAt || '')); });
 }
 

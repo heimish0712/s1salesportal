@@ -4790,4 +4790,32 @@ button[disabled], .portal-btn-pending {
 @media (max-width: 900px) {
   .focus-help-grid-p340 { grid-template-columns: 1fr; }
 }
+
+/* STEP30: 오늘 할 일 담당자 표시/필터 렌더링 경량화 보강 */
+.today-author-wrap-p350 {
+  display: grid !important;
+  grid-template-columns: auto minmax(72px, 110px) !important;
+  align-items: center !important;
+  gap: 5px !important;
+}
+.today-author-wrap-p350 input {
+  height: 34px !important;
+  border-radius: 9px !important;
+  border: 1px solid #dbe3ee !important;
+  background: #f8fafc !important;
+  color: #344054 !important;
+  font-size: 12px !important;
+  font-weight: 850 !important;
+  padding: 0 8px !important;
+}
+.today-task-line-p123 .today-author-wrap-p350,
+.today-task-line-p123 .today-content-wrap,
+.today-task-line-p123 .today-detail-wrap,
+.today-task-line-p123 .today-due-wrap,
+.today-task-line-p123 .today-completed-wrap {
+  min-width: 0 !important;
+}
+.today-task-line-p123.today-task-line-admin-p370 {
+  grid-template-columns: minmax(92px, .36fr) minmax(220px, 1.16fr) minmax(180px, .82fr) minmax(190px, .72fr) !important;
+}
 </style>

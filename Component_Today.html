@@ -13,6 +13,7 @@ let todayPreloadMemoryP360_ = {};
 let todayDeletedTasksP360_ = [];
 let todayCustomerLinkTargetRowP123_ = null;
 let todayCustomerLinkCandidatesP123_ = [];
+let todaySummaryTimerP370_ = null;
 const TODAY_DEFAULT_TAGS_P123_ = ['전화','메일','견적','컨택','계약','서류','영업지원','재확인','긴급','내부처리'];
 
 function isTodaySectionActiveV57_() {
@@ -247,8 +248,7 @@ function renderTodaySummaryV111_(tasks) {
 
 function setTodayTaskFilterP117_(filter) {
   todayTaskFilterP117_ = filter || 'open';
-  renderTodayTasksP117_(collectTodayTodos_({ includeEmpty: true }));
-  renderTodaySummaryV111_(collectTodayTodos_({ includeEmpty: true }));
+  applyTodayTaskFilterFastP370_();
 }
 
 function getTodayTaskVisibleP117_(task) {
@@ -273,7 +273,7 @@ function renderTodayTasksP117_(tasks) {
     '<div class="today-workbench-p122 today-workbench-p123">' +
       '<div class="today-list-shell-p122 today-list-shell-p123">' +
         '<div class="today-task-list" id="todayTodoList">' + rowsHtml + '</div>' +
-        (visibleCount ? '' : '<div class="today-empty-state"><b>등록된 할 일이 없습니다.</b><span>+ 할 일 추가를 누르면 입력 라인이 생깁니다. 작성 후 반드시 [저장]을 눌러야 반영됩니다.</span></div>') +
+        '<div class="today-empty-state" id="todayEmptyStateP370" style="' + (visibleCount ? 'display:none;' : '') + '"><b>등록된 할 일이 없습니다.</b><span>+ 할 일 추가를 누르면 입력 라인이 생깁니다. 작성 후 반드시 [저장]을 눌러야 반영됩니다.</span></div>' +
       '</div>' +
     '</div>';
 }
@@ -339,14 +339,14 @@ function renderTodayTodoRow_(todo, idx) {
   const customerLabel = (rowNo || todo.customerNo || todo.company) ? ('연동고객: ' + (todo.company || todo.customerNo || ('행 ' + rowNo))) : '고객연동';
   return '<div class="today-task-row today-task-row-compact today-task-row-p122 today-task-row-p123 ' + (todo.done ? 'done ' : '') + dueClass + (!visible ? 'today-task-hidden ' : '') + '" ' +
       'data-id="' + escAttrP117_(todo.id) + '" data-category="' + escAttrP117_(todo.category) + '" data-source-type="' + escAttrP117_(todo.sourceType) + '" data-source-id="' + escAttrP117_(todo.sourceId) + '" ' +
-      'data-customer-no="' + escAttrP117_(todo.customerNo) + '" data-company="' + escAttrP117_(todo.company) + '" data-row-no="' + escAttrP117_(todo.rowNo) + '" data-time-text="' + escAttrP117_(todo.timeText) + '" data-priority="' + escAttrP117_(todo.priority) + '" data-updated-at="' + escAttrP117_(todo.updatedAt || '') + '" data-author="' + escAttrP117_(todo.author || getTodayNewTaskAuthorP360_()) + '">' +
+      'data-customer-no="' + escAttrP117_(todo.customerNo) + '" data-company="' + escAttrP117_(todo.company) + '" data-row-no="' + escAttrP117_(todo.rowNo) + '" data-time-text="' + escAttrP117_(todo.timeText) + '" data-priority="' + escAttrP117_(todo.priority) + '" data-updated-at="' + escAttrP117_(todo.updatedAt || '') + '" data-author="' + escAttrP117_(todo.author || getTodayNewTaskAuthorP360_()) + '" data-done="' + (todo.done ? 'Y' : '') + '" data-tags-flat="' + escAttrP117_(todo.tags.join(',')) + '">' +
     '<label class="today-task-check"><input type="checkbox" class="todayTodoDone" onchange="onTodayTaskDoneChangeP117_(this)" ' + (todo.done ? 'checked' : '') + '><span></span></label>' +
     '<div class="today-task-body">' +
       '<div class="today-task-topline today-task-topline-p119 today-task-topline-p122 today-task-topline-p123">' +
         '<div class="today-tag-box today-tag-box-inline" data-tags="' + escAttrP117_(todo.tags.join(',')) + '">' + tagHtml + '</div>' +
         '<button type="button" class="today-customer-link-btn-p123 ' + ((rowNo || todo.customerNo || todo.company) ? 'linked' : '') + '" onclick="handleTodayCustomerLinkClickP123_(this)">' + esc(customerLabel) + '</button>' +
       '</div>' +
-      '<div class="today-task-line-p119 today-task-line-p122 today-task-line-p123">' +
+      '<div class="today-task-line-p119 today-task-line-p122 today-task-line-p123 ' + (canTodayViewAllP350_() ? 'today-task-line-admin-p370' : '') + '">' +
         '<input class="todayCreatedAt" type="hidden" value="' + escAttrP117_(todo.createdAt || todayNowLocalDateTimeP118_()) + '">' +
         (canTodayViewAllP350_() ? '<label class="today-author-wrap-p350"><span>담당자</span><input class="todayAuthorP350" readonly value="' + escAttrP117_(todo.author || getTodayNewTaskAuthorP360_()) + '"></label>' : '') +
         '<label class="today-content-wrap"><span>할 일</span><input class="todayTodoText" placeholder="해야 할 일" value="' + escAttrP117_(todo.content || '') + '" oninput="markTodayTaskDirtyP117_()"></label>' +
@@ -437,9 +437,22 @@ function deleteTodayTagOptionP123_(tag) {
 
 function markTodayTaskDirtyP117_() {
   todayHasLocalDraftP120_ = true;
+  scheduleTodaySummaryRefreshP370_();
+}
+
+function scheduleTodaySummaryRefreshP370_() {
+  if (todaySummaryTimerP370_) clearTimeout(todaySummaryTimerP370_);
+  todaySummaryTimerP370_ = setTimeout(function() {
+    todaySummaryTimerP370_ = null;
+    refreshTodaySummaryFromDomP370_();
+  }, 180);
+}
+
+function refreshTodaySummaryFromDomP370_() {
   const tasks = collectTodayTodos_({ includeEmpty: true });
   todayCurrentData = Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks, tagOptions: todayTagOptionsP118_ });
   renderTodaySummaryV111_(tasks);
+  updateTodayEmptyStateP370_();
 }
 
 function onTodayTaskDoneChangeP117_(checkbox) {
@@ -447,6 +460,7 @@ function onTodayTaskDoneChangeP117_(checkbox) {
   if (!row) return;
   const done = !!checkbox.checked;
   row.classList.toggle('done', done);
+  row.setAttribute('data-done', done ? 'Y' : '');
   const dueWrap = row.querySelector('.today-due-wrap');
   const completedWrap = row.querySelector('.today-completed-wrap');
   if (dueWrap) dueWrap.classList.toggle('hidden', done);
@@ -460,13 +474,17 @@ function onTodayTaskDoneChangeP117_(checkbox) {
 }
 
 function addTodayTodoRow() {
-  const tasks = collectTodayTodos_({ includeEmpty: true });
-  tasks.unshift(createTodayBlankTaskP118_());
+  const blank = createTodayBlankTaskP118_();
   todayTaskFilterP117_ = 'open';
   todayHasLocalDraftP120_ = true;
-  todayCurrentData = Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks, tagOptions: todayTagOptionsP118_ });
-  renderTodayTasksP117_(tasks);
-  renderTodaySummaryV111_(tasks);
+  let list = document.getElementById('todayTodoList');
+  if (!list) {
+    renderTodayTasksP117_([blank]);
+  } else {
+    list.insertAdjacentHTML('afterbegin', renderTodayTodoRow_(blank, 0));
+    applyTodayTaskFilterFastP370_({ skipSidebar: true });
+  }
+  refreshTodaySummaryFromDomP370_();
   const first = document.querySelector('#todayTodoList .today-task-row .todayTodoText');
   if (first) first.focus();
 }
@@ -482,10 +500,9 @@ function removeTodayTodoRow(btn) {
   if (deleted && deleted.id) todayDeletedTasksP360_.push(deleted);
   row.remove();
   todayHasLocalDraftP120_ = true;
-  const tasks = collectTodayTodos_({ includeEmpty: true });
-  todayCurrentData = Object.assign({}, todayCurrentData || {}, { selectedDate: todaySelectedDate, tasks: tasks, todos: tasks, tagOptions: todayTagOptionsP118_ });
-  renderTodayTasksP117_(tasks);
-  renderTodaySummaryV111_(tasks);
+  refreshTodaySummaryFromDomP370_();
+  renderTodaySideFiltersP123_(collectTodayTodos_({ includeEmpty: true }));
+  applyTodayTaskFilterFastP370_({ skipSidebar: true });
 }
 
 function collectTodayTodos_(options) {
@@ -505,6 +522,8 @@ function collectTodayTaskFromRowP120_(row) {
   const created = row.querySelector('.todayCreatedAt');
   const authorInput = row.querySelector('.todayAuthorP350');
   const box = row.querySelector('.today-tag-box');
+  row.setAttribute('data-done', done ? 'Y' : '');
+  if (box) row.setAttribute('data-tags-flat', box.getAttribute('data-tags') || '');
   return {
     id: row.getAttribute('data-id') || '',
     done: done,
@@ -580,10 +599,54 @@ function setTodaySavingUiP360_(saving) {
 }
 
 function refreshTodayVisibleRowsP120_() {
-  Array.from(document.querySelectorAll('#todayTodoList .today-task-row')).forEach(function(row) {
-    const item = collectTodayTaskFromRowP120_(row);
-    row.classList.toggle('today-task-hidden', !getTodayTaskVisibleP117_(item));
+  applyTodayTaskFilterFastP370_({ skipSidebar: true });
+}
+
+function applyTodayTaskFilterFastP370_(options) {
+  options = options || {};
+  const rows = Array.from(document.querySelectorAll('#todayTodoList .today-task-row'));
+  let visibleCount = 0;
+  rows.forEach(function(row) {
+    const done = String(row.getAttribute('data-done') || '').toUpperCase() === 'Y' || row.classList.contains('done');
+    const tagBox = row.querySelector('.today-tag-box');
+    const tags = normalizeTodayTagsP118_(tagBox ? tagBox.getAttribute('data-tags') : row.getAttribute('data-tags-flat'));
+    const f = todayTaskFilterP117_ || 'open';
+    let visible = true;
+    if (f === 'open') visible = !done;
+    else if (f === 'done') visible = done;
+    else if (String(f).indexOf('tag:') === 0) visible = !done && tags.indexOf(String(f).slice(4)) >= 0;
+    row.classList.toggle('today-task-hidden', !visible);
+    if (visible) visibleCount++;
   });
+  updateTodayEmptyStateP370_(visibleCount);
+  updateTodayFilterChipActiveP370_();
+  if (!options.skipSidebar) renderTodaySideFiltersP123_(collectTodayTodos_({ includeEmpty: true }));
+}
+
+function updateTodayFilterChipActiveP370_() {
+  const f = String(todayTaskFilterP117_ || 'open');
+  Array.from(document.querySelectorAll('#todayTagFilterArea .today-filter-chip')).forEach(function(btn) {
+    const oc = String(btn.getAttribute('onclick') || '');
+    let active = false;
+    if (f === 'open' && oc.indexOf("'open'") >= 0) active = true;
+    else if (f === 'all' && oc.indexOf("'all'") >= 0) active = true;
+    else if (f === 'done' && oc.indexOf("'done'") >= 0) active = true;
+    else if (f.indexOf('tag:') === 0 && oc.indexOf("'" + f.replace(/'/g, "\'") + "'") >= 0) active = true;
+    btn.classList.toggle('active', active);
+    const wrap = btn.closest('.today-side-tag-wrap-p123');
+    if (wrap) wrap.classList.toggle('active', active);
+  });
+}
+
+function updateTodayEmptyStateP370_(visibleCount) {
+  const empty = document.getElementById('todayEmptyStateP370');
+  if (!empty) return;
+  if (typeof visibleCount !== 'number') {
+    visibleCount = Array.from(document.querySelectorAll('#todayTodoList .today-task-row')).filter(function(row) {
+      return !row.classList.contains('today-task-hidden');
+    }).length;
+  }
+  empty.style.display = visibleCount ? 'none' : '';
 }
 
 function openTodayDateTimePickerP123_(btn) {
