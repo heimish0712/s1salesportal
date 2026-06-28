@@ -4292,9 +4292,8 @@ button[disabled], .portal-btn-pending {
 .customer-order-modal-actions button {
   min-width: 82px;
 }
-</style>
 
-
+/* STEP17: CSS 원문 노출 방지 - STEP16에서 style 닫힘 밖에 있던 규칙을 내부로 이동 */
 /* STEP16/P270: 계약종합관리 드라이브 반영 버튼 */
 .contract-drive-sync-btn {
   background: linear-gradient(135deg, #ff8a00, #ff5c35) !important;
@@ -4332,3 +4331,20 @@ button[disabled], .portal-btn-pending {
   color: #b42318;
   border-color: #fecdd3;
 }
+
+/* STEP17: 사이드바 하단 문구 겹침 방지 */
+.sidebar-company {
+  bottom: 86px !important;
+  line-height: 1.25 !important;
+}
+.sidebar-bottom-links {
+  bottom: 16px !important;
+  gap: 6px !important;
+  padding-top: 4px !important;
+}
+.sidebar-bottom-link {
+  display: block !important;
+  width: 100% !important;
+  line-height: 1.25 !important;
+}
+</style>
