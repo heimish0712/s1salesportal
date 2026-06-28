@@ -1,0 +1,290 @@
+<script>
+let focusCustomerStateP290_ = {
+  page: 0,
+  pageSize: 50,
+  keyword: '',
+  rank: 'ALL',
+  salesRep: 'ALL',
+  status: 'ALL',
+  priorityOnly: false,
+  includeExcluded: false,
+  sortMode: 'priority',
+  loading: false,
+  data: null
+};
+
+function loadFocusCustomerPageP290(forceRefresh) {
+  const area = document.getElementById('focusCustomerArea');
+  if (!area) return;
+  if (!focusCustomerStateP290_.data || forceRefresh) {
+    area.innerHTML = '<div class="loading">중점고객관리 데이터를 불러오는 중입니다.</div>';
+  }
+  requestFocusCustomerDataP290_(!!forceRefresh);
+}
+
+function collectFocusCustomerFiltersP290_() {
+  const keyword = document.getElementById('focusKeywordP290');
+  const rank = document.getElementById('focusRankFilterP290');
+  const salesRep = document.getElementById('focusSalesRepFilterP290');
+  const status = document.getElementById('focusStatusFilterP290');
+  const priorityOnly = document.getElementById('focusPriorityOnlyP290');
+  const includeExcluded = document.getElementById('focusIncludeExcludedP290');
+  const sortMode = document.getElementById('focusSortModeP290');
+  focusCustomerStateP290_.keyword = keyword ? keyword.value || '' : '';
+  focusCustomerStateP290_.rank = rank ? rank.value || 'ALL' : 'ALL';
+  focusCustomerStateP290_.salesRep = salesRep ? salesRep.value || 'ALL' : 'ALL';
+  focusCustomerStateP290_.status = status ? status.value || 'ALL' : 'ALL';
+  focusCustomerStateP290_.priorityOnly = priorityOnly ? !!priorityOnly.checked : false;
+  focusCustomerStateP290_.includeExcluded = includeExcluded ? !!includeExcluded.checked : false;
+  focusCustomerStateP290_.sortMode = sortMode ? sortMode.value || 'priority' : 'priority';
+}
+
+function requestFocusCustomerDataP290_(forceRefresh) {
+  collectFocusCustomerFiltersP290_();
+  const area = document.getElementById('focusCustomerArea');
+  if (!area) return;
+  focusCustomerStateP290_.loading = true;
+  const btn = document.getElementById('focusRefreshBtnP290');
+  if (btn) { btn.disabled = true; btn.textContent = forceRefresh ? '갱신 중' : '조회 중'; }
+  const payload = {
+    keyword: focusCustomerStateP290_.keyword,
+    rank: focusCustomerStateP290_.rank,
+    salesRep: focusCustomerStateP290_.salesRep,
+    status: focusCustomerStateP290_.status,
+    priorityOnly: focusCustomerStateP290_.priorityOnly,
+    includeExcluded: focusCustomerStateP290_.includeExcluded,
+    sortMode: focusCustomerStateP290_.sortMode,
+    page: focusCustomerStateP290_.page,
+    pageSize: focusCustomerStateP290_.pageSize
+  };
+  google.script.run
+    .withSuccessHandler(function(res) {
+      focusCustomerStateP290_.loading = false;
+      if (btn) { btn.disabled = false; btn.textContent = '새로고침'; }
+      if (forceRefresh && typeof toast === 'function') toast('중점고객관리 데이터를 갱신했습니다.');
+      focusCustomerStateP290_.data = res || {};
+      renderFocusCustomerDataP290_(res || {});
+    })
+    .withFailureHandler(function(err) {
+      focusCustomerStateP290_.loading = false;
+      if (btn) { btn.disabled = false; btn.textContent = '새로고침'; }
+      area.innerHTML = '<div class="loading" style="color:#b42318;">중점고객관리 데이터를 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+    })
+    .getFocusCustomerDashboardP290(payload);
+}
+
+function renderFocusCustomerShellP290_() {
+  const area = document.getElementById('focusCustomerArea');
+  if (!area) return;
+  area.innerHTML = '<div class="focus-toolbar-p290">' +
+    '<input id="focusKeywordP290" placeholder="회사명, 고객번호, 담당자, 메모 검색" onkeydown="if(event.key===\'Enter\') searchFocusCustomersP290()">' +
+    '<select id="focusRankFilterP290" onchange="searchFocusCustomersP290()"><option value="ALL">전체등급</option><option value="A급">A급</option><option value="B급">B급</option><option value="C급">C급</option><option value="보류">보류</option><option value="제외">제외</option></select>' +
+    '<select id="focusSalesRepFilterP290" onchange="searchFocusCustomersP290()"><option value="ALL">전체담당자</option></select>' +
+    '<select id="focusStatusFilterP290" onchange="searchFocusCustomersP290()"><option value="ALL">전체진행현황</option></select>' +
+    '<select id="focusSortModeP290" onchange="searchFocusCustomersP290()"><option value="priority">우선순위순</option><option value="scoreDesc">점수높은순</option><option value="areaDesc">연면적큰순</option><option value="customerNoDesc">고객번호최신순</option><option value="companyAsc">회사명순</option></select>' +
+    '<label class="focus-check-p290"><input id="focusPriorityOnlyP290" type="checkbox" onchange="searchFocusCustomersP290()"> 오늘 우선만</label>' +
+    '<label class="focus-check-p290"><input id="focusIncludeExcludedP290" type="checkbox" onchange="searchFocusCustomersP290()"> 제외 포함</label>' +
+    '<button onclick="searchFocusCustomersP290()">조회</button>' +
+    '<button class="secondary" id="focusRefreshBtnP290" onclick="refreshFocusCustomersP290()">새로고침</button>' +
+    '</div>' +
+    '<div id="focusSummaryP290"></div>' +
+    '<div id="focusTodayP290"></div>' +
+    '<div id="focusListP290"><div class="loading">중점고객 데이터를 불러오는 중입니다.</div></div>';
+}
+
+function renderFocusCustomerDataP290_(data) {
+  renderFocusCustomerShellP290_();
+  hydrateFocusFilterOptionsP290_(data || {});
+  restoreFocusFilterValuesP290_();
+  renderFocusStatsP290_(data || {});
+  renderFocusTodayP290_(data || {});
+  renderFocusRowsP290_(data || {});
+}
+
+function hydrateFocusFilterOptionsP290_(data) {
+  const salesEl = document.getElementById('focusSalesRepFilterP290');
+  const statusEl = document.getElementById('focusStatusFilterP290');
+  if (salesEl) {
+    const opts = ['<option value="ALL">전체담당자</option>'].concat((data.options && data.options.salesReps || []).map(function(v) {
+      return '<option value="' + escAttr(normalizeFocusFilterValueClientP290_(v)) + '">' + esc(v) + '</option>';
+    }));
+    salesEl.innerHTML = opts.join('');
+  }
+  if (statusEl) {
+    const opts = ['<option value="ALL">전체진행현황</option>'].concat((data.options && data.options.statuses || []).map(function(v) {
+      return '<option value="' + escAttr(normalizeFocusFilterValueClientP290_(v)) + '">' + esc(v) + '</option>';
+    }));
+    statusEl.innerHTML = opts.join('');
+  }
+}
+
+function restoreFocusFilterValuesP290_() {
+  const setVal = function(id, val) { const el = document.getElementById(id); if (el) el.value = val == null ? '' : val; };
+  setVal('focusKeywordP290', focusCustomerStateP290_.keyword || '');
+  setVal('focusRankFilterP290', focusCustomerStateP290_.rank || 'ALL');
+  setVal('focusSalesRepFilterP290', focusCustomerStateP290_.salesRep || 'ALL');
+  setVal('focusStatusFilterP290', focusCustomerStateP290_.status || 'ALL');
+  setVal('focusSortModeP290', focusCustomerStateP290_.sortMode || 'priority');
+  const p = document.getElementById('focusPriorityOnlyP290'); if (p) p.checked = !!focusCustomerStateP290_.priorityOnly;
+  const ex = document.getElementById('focusIncludeExcludedP290'); if (ex) ex.checked = !!focusCustomerStateP290_.includeExcluded;
+}
+
+function renderFocusStatsP290_(data) {
+  const el = document.getElementById('focusSummaryP290');
+  if (!el) return;
+  const s = data.stats || {};
+  const fs = data.filterStats || {};
+  el.innerHTML = '<div class="focus-stat-grid-p290">' +
+    renderFocusMetricP290_('A급', s.a || 0, 'a') +
+    renderFocusMetricP290_('B급', s.b || 0, 'b') +
+    renderFocusMetricP290_('C급', s.c || 0, 'c') +
+    renderFocusMetricP290_('보류', s.pending || 0, 'pending') +
+    renderFocusMetricP290_('제외', s.excluded || 0, 'excluded') +
+    renderFocusMetricP290_('오늘 우선', s.today || 0, 'today') +
+    renderFocusMetricP290_('견적 후 무응답', s.quoteNoResponse || 0, 'quote') +
+    renderFocusMetricP290_('조회 결과', fs.total || data.total || 0, 'result') +
+    '</div>' +
+    '<div class="focus-meta-p290">기준: ' + esc(data.source || '검색인덱스_DB') + ' · 인덱스 ' + esc(data.indexBuiltAt || '-') + (data.fromCache ? ' · 캐시' : '') + '</div>';
+}
+
+function renderFocusMetricP290_(label, value, type) {
+  return '<div class="focus-metric-p290 focus-metric-' + escAttr(type) + '"><div>' + esc(label) + '</div><b>' + esc(value) + '</b></div>';
+}
+
+function renderFocusTodayP290_(data) {
+  const el = document.getElementById('focusTodayP290');
+  if (!el) return;
+  const rows = data.todayRows || [];
+  if (!rows.length) {
+    el.innerHTML = '<div class="focus-today-box-p290"><div class="focus-section-title-p290">오늘 처리할 고객</div><div class="focus-empty-p290">현재 조건에서 우선 처리 고객이 없습니다.</div></div>';
+    return;
+  }
+  el.innerHTML = '<div class="focus-today-box-p290"><div class="focus-section-title-p290">오늘 처리할 고객</div><div class="focus-today-list-p290">' + rows.map(renderFocusTodayCardP290_).join('') + '</div></div>';
+}
+
+function renderFocusTodayCardP290_(row) {
+  return '<div class="focus-today-card-p290" onclick="openFocusCustomerDetailP290_(' + Number(row.rowNo || 0) + ',\'' + escJs(row.customerNo || '') + '\')">' +
+    '<div><span class="focus-rank-badge-p290 rank-' + escAttr(row.finalRank || '보류') + '">' + esc(row.finalRank || '-') + '</span> <b>' + esc(row.company || '-') + '</b></div>' +
+    '<div class="focus-today-sub-p290">' + esc(row.salesRep || '-') + ' · ' + esc(row.status || '-') + ' · ' + esc(row.nextAction || '-') + '</div>' +
+    '</div>';
+}
+
+function renderFocusRowsP290_(data) {
+  const el = document.getElementById('focusListP290');
+  if (!el) return;
+  const rows = data.rows || [];
+  if (!rows.length) {
+    el.innerHTML = '<div class="loading">조건에 맞는 중점고객이 없습니다.</div>';
+    return;
+  }
+  const pager = renderFocusPagerP290_(data);
+  el.innerHTML = pager + '<div class="focus-table-wrap-p290"><table class="focus-table-p290"><thead><tr>' +
+    '<th>등급/점수</th><th>고객</th><th>진행현황</th><th>연면적/등급</th><th>담당/연락처</th><th>추천 액션</th><th>산정 사유</th><th>작업</th>' +
+    '</tr></thead><tbody>' + rows.map(renderFocusRowP290_).join('') + '</tbody></table></div>' + pager;
+}
+
+function renderFocusRowP290_(row) {
+  const reasons = (row.reasons || []).slice(0, 4).map(function(v) { return '<span>' + esc(v) + '</span>'; }).join('');
+  const deductions = (row.deductions || []).slice(0, 2).map(function(v) { return '<em>' + esc(v) + '</em>'; }).join('');
+  return '<tr>' +
+    '<td><div class="focus-rank-line-p290"><span class="focus-rank-badge-p290 rank-' + escAttr(row.finalRank || '보류') + '">' + esc(row.finalRank || '-') + '</span><b>' + esc(row.score || 0) + '</b></div>' + (row.priorityTarget ? '<div class="focus-priority-pill-p290">오늘 우선</div>' : '') + '</td>' +
+    '<td><b>' + esc(row.company || '-') + '</b><div class="focus-sub-p290">고객번호 ' + esc(row.customerNo || '-') + ' · ' + esc(row.salesRep || '-') + '</div><div class="focus-memo-preview-p290">' + esc(row.memoPreview || '') + '</div></td>' +
+    '<td><span class="status-chip">' + esc(row.status || '-') + '</span></td>' +
+    '<td>' + esc(formatFocusAreaP290_(row.area)) + '<div class="focus-sub-p290">' + esc(row.grade || '-') + ' · ' + esc(row.buildingType || '-') + '</div></td>' +
+    '<td>' + esc(row.contact || '-') + '<div class="focus-sub-p290">' + esc(row.phone || row.directPhone || '-') + '</div><div class="focus-sub-p290">' + esc(row.email || '-') + '</div></td>' +
+    '<td><b>' + esc(row.nextAction || '-') + '</b></td>' +
+    '<td><div class="focus-reason-tags-p290">' + reasons + deductions + '</div></td>' +
+    '<td><div class="focus-row-actions-p290">' +
+      '<button type="button" onclick="openFocusCustomerDetailP290_(' + Number(row.rowNo || 0) + ',\'' + escJs(row.customerNo || '') + '\')">상세</button>' +
+      '<button type="button" class="secondary" onclick="openFocusCustomerSendP290_(' + Number(row.rowNo || 0) + ')">자료발송</button>' +
+      '<button type="button" class="secondary" onclick="openFocusCustomerSupportP290_(\'' + encodeURIComponent(JSON.stringify(row)).replace(/'/g, '%27') + '\')">영업지원</button>' +
+    '</div></td>' +
+    '</tr>';
+}
+
+function renderFocusPagerP290_(data) {
+  const total = Number(data.total || 0);
+  const page = Number(data.page || 0);
+  const pageSize = Number(data.pageSize || 50);
+  const start = total ? Number(data.start || 0) + 1 : 0;
+  const end = Number(data.end || 0);
+  const pageText = start + '-' + end + ' / ' + total;
+  return '<div class="focus-pager-p290"><span>' + esc(pageText) + '</span>' +
+    '<button class="secondary" ' + (page <= 0 ? 'disabled' : '') + ' onclick="goFocusCustomerPageP290_(' + (page - 1) + ')">이전</button>' +
+    '<button class="secondary" ' + (!data.hasNext ? 'disabled' : '') + ' onclick="goFocusCustomerPageP290_(' + (page + 1) + ')">다음</button></div>';
+}
+
+function searchFocusCustomersP290() {
+  focusCustomerStateP290_.page = 0;
+  requestFocusCustomerDataP290_(false);
+}
+
+function refreshFocusCustomersP290() {
+  focusCustomerStateP290_.page = 0;
+  google.script.run.withSuccessHandler(function(){ requestFocusCustomerDataP290_(true); }).withFailureHandler(function(){ requestFocusCustomerDataP290_(true); }).clearFocusCustomerCacheP290();
+}
+
+function goFocusCustomerPageP290_(page) {
+  focusCustomerStateP290_.page = Math.max(0, Number(page) || 0);
+  requestFocusCustomerDataP290_(false);
+}
+
+function openFocusCustomerDetailP290_(rowNo, customerNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  if (typeof openDetailSafe_ === 'function') openDetailSafe_(rowNo, customerNo || '', { forceEdit: false });
+}
+
+function openFocusCustomerSendP290_(rowNo) {
+  rowNo = Number(rowNo) || 0;
+  if (!rowNo) return;
+  if (typeof openSendForCustomer === 'function') openSendForCustomer(rowNo);
+}
+
+function openFocusCustomerSupportP290_(encodedRow) {
+  let row = {};
+  try { row = JSON.parse(decodeURIComponent(String(encodedRow || ''))); } catch (err) {}
+  switchPage('support');
+  let tries = 0;
+  const timer = setInterval(function() {
+    tries++;
+    if (typeof fillSupportInlineCustomerInfo_ === 'function') {
+      clearInterval(timer);
+      fillSupportInlineCustomerInfo_({
+        rowNo: row.rowNo || '',
+        customerNo: row.customerNo || '',
+        customerName: row.company || '',
+        quoteAmount: row.finalQuote || '',
+        status: row.status || '',
+        area: row.area || '',
+        region: row.region || '',
+        contactName: row.contact || '',
+        contactEmail: row.email || '',
+        masterMemo: row.memo || '',
+        contractSummary: [row.finalRank || '', row.score ? ('점수 ' + row.score) : '', row.nextAction || ''].filter(Boolean).join(' / ')
+      });
+      const text = document.getElementById('supportInlineRequestText');
+      if (text && !text.value) text.value = '[중점고객관리] ' + (row.nextAction || '후속조치 필요');
+      if (text) text.focus();
+      return;
+    }
+    if (tries > 30) {
+      clearInterval(timer);
+      toast('영업지원 요청 화면을 준비하지 못했습니다. 고객번호 ' + (row.customerNo || '') + '를 직접 입력하세요.');
+    }
+  }, 100);
+}
+
+function normalizeFocusFilterValueClientP290_(v) {
+  return String(v || '').replace(/[\s\n\r\t]+/g, '').trim().toLowerCase();
+}
+function formatFocusAreaP290_(v) {
+  const raw = String(v || '').replace(/[,㎡\s]/g, '');
+  const n = Number(raw);
+  if (isNaN(n) || !n) return '-';
+  return n.toLocaleString('ko-KR') + '㎡';
+}
+function escJs(value) {
+  return String(value == null ? '' : value).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
+}
+</script>

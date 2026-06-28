@@ -40,7 +40,7 @@ function switchPage(page, skipSearch) {
   if (page === 'dashboard') page = 'home';
 
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.getAttribute('data-page') === page));
-  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
+  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('active');
   });
@@ -82,6 +82,16 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '내가 즐겨찾기한 고객만 빠르게 조회합니다.';
     refreshFavoriteCustomers(false);
     setTimeout(function() { const el = document.getElementById('favoriteKeyword'); if (el) el.focus(); }, 80);
+    return;
+  }
+
+  if (page === 'focusCustomers') {
+    document.getElementById('focusCustomerSection').classList.add('active');
+    pageTitle.textContent = '중점고객관리';
+    pageSubtitle.textContent = '자동점수와 추천등급으로 오늘 우선 챙길 고객을 확인합니다.';
+    if (typeof renderFocusCustomerShellP290_ === 'function') renderFocusCustomerShellP290_();
+    if (typeof loadFocusCustomerPageP290 === 'function') loadFocusCustomerPageP290(false);
+    setTimeout(function() { const el = document.getElementById('focusKeywordP290'); if (el) el.focus(); }, 80);
     return;
   }
 

@@ -15,6 +15,7 @@
       <div class="nav-item" data-page="today" onclick="switchPage('today')"><span class="nav-icon">✓</span><span class="nav-label">오늘 할 일</span></div>
       <div class="nav-item" data-page="customers" onclick="switchPage('customers')"><span class="nav-icon">⌕</span><span class="nav-label">고객 상세 검색</span></div>
       <div class="nav-item" data-page="favorites" onclick="switchPage('favorites')"><span class="nav-icon">★</span><span class="nav-label">고객 즐겨찾기</span></div>
+      <div class="nav-item" data-page="focusCustomers" onclick="switchPage('focusCustomers')"><span class="nav-icon">◆</span><span class="nav-label">중점고객관리</span></div>
       <div class="nav-item" data-page="send" onclick="switchPage('send')"><span class="nav-icon">✉</span><span class="nav-label">견적/자료 발송</span></div>
       <div class="nav-item" data-page="contracts" onclick="switchPage('contracts')"><span class="nav-icon">▤</span><span class="nav-label">계약종합관리</span></div>
       <div class="nav-item" data-page="support" onclick="switchPage('support')"><span class="nav-icon">▣</span><span class="nav-label">영업지원 요청</span></div>
@@ -112,6 +113,12 @@
           </div>
         </div>
         <div id="favoriteResultArea" class="loading customer-result-area">즐겨찾기 고객을 불러오는 중입니다.</div>
+      </section>
+
+      <section class="panel page-section focus-customer-panel-p290" id="focusCustomerSection">
+        <div id="focusCustomerArea" class="customer-result-area">
+          <div class="loading">중점고객관리 데이터를 불러오는 중입니다.</div>
+        </div>
       </section>
 
       <section class="panel page-section contract-complete-panel" id="contractCompleteSection">
@@ -379,6 +386,7 @@
   <?!= include('Component_Notice'); ?>
   <?!= include('Component_CustomerSearch'); ?>
   <?!= include('Component_Favorites'); ?>
+  <?!= include('Component_FocusCustomer'); ?>
   <?!= include('Component_ContractComplete'); ?>
   <?!= include('Component_Send'); ?>
   <?!= include('Component_CustomerDetail'); ?>
