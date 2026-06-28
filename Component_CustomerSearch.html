@@ -558,7 +558,7 @@ function startCustomerInlineEdit_(event, rowNo, key) {
   const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
   const detail = getCustomerDetailCache_(rowNo, rowSummary.customerNo) || null;
 
-  if (key === 'memo' && (!detail || detail.__summary || detail.__lite || !detail.__masterBacked)) {
+  if (key === 'memo' && (!detail || (!detail.memo && !detail.memoPreview && (detail.__summary || detail.__lite || !detail.__masterBacked)))) {
     cell.setAttribute('data-original-html', cell.innerHTML);
     cell.classList.add('customer-inline-editing-cell');
     cell.innerHTML = '<div class="customer-inline-memo-loading-p300">전체 메모를 불러오는 중입니다...</div>';
@@ -585,7 +585,7 @@ function startCustomerInlineEdit_(event, rowNo, key) {
   }
 
   let currentValue = '';
-  if (key === 'memo') currentValue = detail && detail.memo != null ? detail.memo : '';
+  if (key === 'memo') currentValue = detail && detail.memo != null ? detail.memo : (rowSummary.memo || '');
   else currentValue = detail && detail[key] != null ? detail[key] : rowSummary[key];
   currentValue = String(currentValue == null ? '' : currentValue);
 
@@ -1300,7 +1300,7 @@ function findCustomerRowSummary_(rowNo, customerNo) {
 
 // PATCH P1-12: 마스터시트 단건 최신화 TTL
 // 전체 목록을 매번 재생성하지 않고, 펼침/상세/프리패치 시 보이는 row만 짧은 주기로 마스터에서 재조회합니다.
-const CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112 = 8000;
+const CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112 = 10 * 60 * 1000;
 const CUSTOMER_DETAIL_EXPAND_REALTIME_TTL_MS_P112 = 3000;
 
 function getCustomerDetailLoadedAtMsP112_(detail) {
@@ -1443,16 +1443,17 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
     ]
   ], detail, 'extra', 'customer-expand-block-biz');
 
+  const hasImmediateMemoP360 = !!(detail && (detail.memo || detail.memoPreview));
   const isFullMemoReadyP300 = !!(detail && detail.__masterBacked && !detail.__summary && !detail.__lite);
-  const memoValue = isFullMemoReadyP300 ? (getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '') : '';
+  const memoValue = isFullMemoReadyP300 ? (getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '') : (hasImmediateMemoP360 ? (detail.memo || detail.memoPreview || '') : '');
   const expandedMemoInputId = 'expandedMemo_' + rowNo;
   html += '<div class="customer-expand-form-block customer-expand-memo-box-v58" id="expandedMemoBox_' + rowNo + '">' +
     '<div class="customer-expand-memo-label-v58">마스터시트<br>메모</div>' +
     '<div class="customer-expand-memo-main-v58">' +
-      (!isFullMemoReadyP300 ? '<div class="customer-expand-memo-loading-p300">전체 메모를 불러오는 중입니다. 요약 메모는 저장/수정 화면에 사용하지 않습니다.</div>' : '') +
+      (!isFullMemoReadyP300 && !hasImmediateMemoP360 ? '<div class="customer-expand-memo-loading-p300">전체 메모를 백그라운드에서 불러오는 중입니다.</div>' : '') +
       '<div class="customer-expand-memo-edit-wrap-p15 customer-expand-memo-edit-wrap-fixed-tags">' +
         '<div class="customer-expand-memo-tag-row customer-expand-memo-tag-row-always">' + renderCustomerMemoTagPopover_(expandedMemoInputId, 'customer-expand-memo-tag-popover') + '</div>' +
-        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '"' + (!isFullMemoReadyP300 ? ' readonly data-memo-loading="Y" placeholder="전체 메모 불러오는 중"' : '') + '>' + esc(memoValue) + '</textarea>' +
+        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '"' + (!isFullMemoReadyP300 && !hasImmediateMemoP360 ? ' readonly data-memo-loading="Y" placeholder="전체 메모 불러오는 중"' : '') + '>' + esc(memoValue) + '</textarea>' +
       '</div>' +
       '<div class="customer-expand-save-row">' +
         '<button type="button" class="secondary" onclick="event.stopPropagation(); resetExpandedCustomerMemo(' + rowNo + ')">되돌리기</button>' +
@@ -3229,10 +3230,9 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     customerRank: row.customerRank || '',
     statusOptions: [],
     customerRankOptions: ['', 'A급', 'B급', 'C급', '보류', '제외'],
-    // 검색인덱스_DB의 메모는 목록 표시용 요약값일 수 있습니다.
-    // 상세/펼침/메모수정 화면에서는 잘린 메모를 보여주거나 저장하면 안 되므로,
-    // 마스터 상세 조회가 끝나기 전까지는 빈 값으로 두고 full detail 도착 후 채웁니다.
-    memo: '',
+    // STEP36: 검색인덱스의 메모 보관 길이를 늘려 펼침/수정 화면에서도 즉시 표시합니다.
+    // 마스터 full detail은 뒤에서 프리패치로 보강하지만, 화면을 로딩으로 막지 않습니다.
+    memo: row.memo || '',
     memoPreview: row.memo || '',
     lastSent: row.lastSent || '',
     sentAt: row.sentAt || '',
@@ -3523,7 +3523,11 @@ function prefetchCustomerDetailsForRows_(rows, options) {
             }
           });
           if (!(typeof isPortalUserEditingNow_ === 'function' && isPortalUserEditingNow_())) {
-            if (touchedVisible) {
+            // STEP36: 상세 프리패치가 도착할 때마다 현재 고객목록 전체를 다시 그리면
+            // 행을 펼치거나 접는 중 화면이 튀고 렉처럼 보입니다. 현재 펼쳐진 행이
+            // 실제로 보강된 경우에만 부분 렌더링을 허용합니다.
+            const expandedNo = Number(customerExpandedRowNo || 0);
+            if (expandedNo && visibleMap[expandedNo]) {
               try { renderResults(lastCustomerResultResponse, lastCustomerResultFromCache); } catch (err) {}
             }
             try {
@@ -3710,4 +3714,48 @@ const SEND_FILE_OPTIONS = [
   { key:'compareQuote', label:'비교견적서' },
   { key:'serviceStandardContract', label:'수행사 용역표준계약서' }
 ];
+
+
+// STEP36: HOME 진입 후 고객검색 기본 페이지와 상세정보를 백그라운드로 예열합니다.
+// 메뉴 진입 시 검색결과/펼침/메모가 다시 서버 로딩으로 막히지 않게 하기 위한 캐시 워밍입니다.
+function prewarmCustomerSearchDefaultP360_(options) {
+  options = options || {};
+  try {
+    initializeCustomerSearchIndex({
+      silent: true,
+      useLocalFirst: true,
+      skipNetworkIfReady: true,
+      renderAfterLoad: false,
+      backgroundRefresh: false
+    });
+  } catch (err) {}
+
+  setTimeout(function() {
+    try {
+      const keyword = '';
+      const page = 0;
+      let res = buildCustomerPageFromIndex_(keyword, page);
+      if (res) {
+        setCustomerPageCache_(keyword, page, res);
+        scheduleDetailPrefetchFromResult_(res, keyword, page);
+        return;
+      }
+      if (getCustomerPageFromCache_(keyword, page)) {
+        res = getCustomerPageFromCache_(keyword, page);
+        scheduleDetailPrefetchFromResult_(res, keyword, page);
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(function(serverRes) {
+          try { setCustomerPageCache_(keyword, page, serverRes); } catch (err) {}
+          try { scheduleDetailPrefetchFromResult_(serverRes, keyword, page); } catch (err) {}
+        })
+        .withFailureHandler(function(err) { if (!options.silent) console.warn('고객검색 기본 페이지 예열 실패', err); })
+        .searchCustomersPaged(keyword, page, CUSTOMER_PAGE_SIZE, customerSortModeV67, getCustomerScopeForRequestP04_());
+    } catch (err) {
+      if (!options.silent) console.warn('고객검색 기본 캐시 예열 실패', err);
+    }
+  }, 700);
+}
+
 </script>
