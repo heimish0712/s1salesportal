@@ -37,16 +37,16 @@ function toggleSidebar() {
 
 
 function renderPortalSettingsPageP310_() {
-  const title = document.getElementById('placeholderTitle');
-  const desc = document.getElementById('placeholderDesc');
-  if (title) title.textContent = '설정';
+  const panel = document.querySelector('#placeholderSection .placeholder-panel');
+  if (!panel) return;
   const isAdmin = (typeof isPortalAdmin_ === 'function') && isPortalAdmin_();
-  if (!desc) return;
   let html = '';
+  html += '<div class="placeholder-title" id="placeholderTitle">설정</div>';
+  html += '<div class="placeholder-desc" id="placeholderDesc">';
   html += '<div class="portal-settings-panel-p310">';
   html += '<div class="portal-settings-card-p310">';
   html += '<div class="portal-settings-card-title-p310">마스터시트 기준 강제갱신</div>';
-  html += '<div class="portal-settings-card-desc-p310">영업관리대장 마스터시트를 원천으로 검색인덱스_DB와 브라우저 캐시를 다시 맞춥니다. 마스터시트에서 직접 수정한 진행현황/담당자/계약조건이 웹앱에 늦게 반영될 때 사용합니다.</div>';
+  html += '<div class="portal-settings-card-desc-p310">영업관리대장 마스터시트를 원천으로 검색인덱스_DB와 브라우저 캐시를 다시 맞춥니다. 마스터시트에서 직접 수정한 진행현황/담당자/계약조건이 웹앱에 늦게 반영될 때만 사용합니다.</div>';
   if (isAdmin) {
     html += '<button type="button" class="portal-danger-primary-p310" id="forceMasterSearchIndexBtnP310" onclick="forceMasterSearchIndexRefreshP310_()">마스터시트 기준 강제갱신</button>';
     html += '<div class="portal-settings-status-p310" id="forceMasterSearchIndexStatusP310">대기 중</div>';
@@ -55,7 +55,8 @@ function renderPortalSettingsPageP310_() {
   }
   html += '</div>';
   html += '</div>';
-  desc.innerHTML = html;
+  html += '</div>';
+  panel.innerHTML = html;
 }
 
 function forceMasterSearchIndexRefreshP310_() {
@@ -233,7 +234,7 @@ function switchPage(page, skipSearch) {
   if (page === 'settings') {
     document.getElementById('placeholderSection').classList.add('active');
     pageTitle.textContent = '설정';
-    pageSubtitle.textContent = '상태값, 권한, 캐시, 검색인덱스 관련 운영 기능을 관리합니다.';
+    pageSubtitle.textContent = '마스터시트 기준 강제갱신 기능만 제공합니다.';
     renderPortalSettingsPageP310_();
     setTimeout(function(){ try { applyPortalPermissionToUi_(); } catch (err) {} }, 50);
     return;

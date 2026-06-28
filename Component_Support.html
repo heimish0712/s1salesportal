@@ -209,15 +209,17 @@ function isSupportProcessorModeV65_() {
 
 function updateSupportRoleUiV65_() {
   const isProcessor = isSupportProcessorModeV65_();
+  const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
+  const canWrite = !!(p && p.active !== false && p.canWriteSupport);
   const newPanel = document.getElementById('supportNewPanel');
   const resetBtn = document.getElementById('supportInlineResetBtn');
   const sub = document.getElementById('supportPageSubtext');
   const title = document.querySelector('#supportSection .support-existing-title');
-  if (newPanel) newPanel.style.display = isProcessor ? 'none' : '';
-  if (resetBtn) resetBtn.style.display = isProcessor ? 'none' : '';
-  if (sub) sub.textContent = isProcessor
-    ? '접수된 영업지원 요청을 처리하고 고객 상세 검색으로 바로 이동합니다.'
-    : '신규 요청 등록과 기존 요청 목록을 분리해서 관리합니다.';
+  if (newPanel) newPanel.style.display = canWrite ? '' : 'none';
+  if (resetBtn) resetBtn.style.display = canWrite ? '' : 'none';
+  if (sub) sub.textContent = canWrite
+    ? '신규 영업지원 요청을 등록하고 기존 요청 처리 상태를 확인합니다.'
+    : '영업지원 요청 조회 권한만 있습니다.';
   if (title) title.textContent = isProcessor ? '처리할 요청 목록' : '기존 요청 목록';
 }
 
@@ -285,7 +287,7 @@ function renderSupportBoard(rows) {
       '</tr>';
     }).join('') : '<tr><td colspan="10" class="customer-cell-center" style="color:#667085; padding:18px;">등록된 영업지원 요청이 없습니다.</td></tr>';
 
-  if (!isProcessor) renderSupportInlineEntryPanel_();
+  if (canPortal_('canWriteSupport')) renderSupportInlineEntryPanel_();
   const meta = supportCurrentData && supportCurrentData.meta ? supportCurrentData.meta : null;
   const metaText = meta ? ('<div class="cache-note" style="padding:0 0 8px 0;">' +
     esc((meta.source === 'MASTER_SPREADSHEET_ID' ? '마스터시트 영업지원요청' : '영업지원요청') + ' · ' +
@@ -310,8 +312,8 @@ function renderSupportBoard(rows) {
 function renderSupportInlineEntryPanel_() {
   const area = document.getElementById('supportInlineArea');
   if (!area) return;
-  if (isSupportProcessorModeV65_()) {
-    area.innerHTML = '';
+  if (!canPortal_('canWriteSupport')) {
+    area.innerHTML = '<div class="support-inline-denied">영업지원 요청 작성 권한이 없습니다.</div>';
     updateSupportRoleUiV65_();
     return;
   }
