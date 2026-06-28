@@ -132,9 +132,10 @@ function forceMasterSearchIndexRefreshP310_() {
 }
 
 function switchPage(page, skipSearch) {
-  try { applyPortalPermissionToUi_(); } catch (err) {}
   page = page || 'home';
   if (page === 'dashboard') page = 'home';
+  if (typeof confirmLeaveTodayPageP350_ === 'function' && !confirmLeaveTodayPageP350_(page)) return;
+  try { applyPortalPermissionToUi_(); } catch (err) {}
 
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.getAttribute('data-page') === page));
   ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
@@ -184,7 +185,7 @@ function switchPage(page, skipSearch) {
 
   if (page === 'focusCustomers') {
     document.getElementById('focusCustomerSection').classList.add('active');
-    pageTitle.textContent = '중점고객관리';
+    pageTitle.innerHTML = '중점고객관리 <button type="button" class="focus-help-title-btn-p340" onclick="openFocusHelpP340_()">도움말</button>';
     pageSubtitle.textContent = '자동점수와 추천등급으로 오늘 우선 챙길 고객을 확인합니다.';
     if (typeof renderFocusCustomerShellP290_ === 'function') renderFocusCustomerShellP290_();
     if (typeof loadFocusCustomerPageP290 === 'function') loadFocusCustomerPageP290(false);

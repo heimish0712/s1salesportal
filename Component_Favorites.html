@@ -174,7 +174,7 @@ function renderFavoritePage() {
     html += '<td><div class="customer-actions">' +
       '<button type="button" class="customer-row-btn primary" onclick="event.stopPropagation(); openDetailSafe_(' + rowNo + ')">상세</button>' +
       '<button type="button" class="customer-row-btn" onclick="event.stopPropagation(); openSendForCustomer(' + rowNo + ')">발송</button>' +
-      '<button type="button" class="customer-row-btn customer-row-expand-btn" title="상세 펼침/접기" onclick="event.stopPropagation(); toggleFavoriteCustomerExpand_(' + rowNo + ')">' + (isExpanded ? '▲' : '▼') + '</button>' +
+      '<button type="button" class="customer-row-btn customer-row-expand-btn" onclick="event.stopPropagation(); toggleFavoriteCustomerExpand_(' + rowNo + ')">' + (isExpanded ? '▲' : '▼') + '</button>' +
       '</div></td>';
     html += '</tr>';
 

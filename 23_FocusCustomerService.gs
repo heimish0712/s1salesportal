@@ -25,6 +25,7 @@ function getFocusCustomerDashboardP290(options) {
   const page = Math.max(0, Number(options.page) || 0);
   const pageSize = Math.max(10, Math.min(PORTAL_FOCUS_MAX_RETURN_ROWS_P290, Number(options.pageSize) || PORTAL_FOCUS_DEFAULT_PAGE_SIZE_P290));
   const sortMode = String(options.sortMode || 'priority').trim();
+  const metricFilter = String(options.metricFilter || 'ALL').trim() || 'ALL';
   const cacheKey = makeFocusCustomerCacheKeyP290_(perm, {
     keyword: keyword,
     rank: rankFilter,
@@ -34,7 +35,8 @@ function getFocusCustomerDashboardP290(options) {
     includeExcluded: includeExcluded,
     page: page,
     pageSize: pageSize,
-    sortMode: sortMode
+    sortMode: sortMode,
+    metricFilter: metricFilter
   });
 
   const cached = readFocusCustomerCacheP290_(cacheKey);
@@ -55,6 +57,7 @@ function getFocusCustomerDashboardP290(options) {
     if (!includeExcluded && row.finalRank === '제외') return false;
     if (priorityOnly && !row.priorityTarget) return false;
     if (rankFilter && rankFilter !== 'ALL' && row.finalRank !== rankFilter) return false;
+    if (metricFilter === 'quoteNoResponse' && !isFocusQuoteNoResponseP340_(row)) return false;
     if (salesRepFilter && salesRepFilter !== 'ALL' && normalizeFocusTextP290_(row.salesRep) !== salesRepFilter) return false;
     if (statusFilter && statusFilter !== 'ALL' && normalizeFocusTextP290_(row.status) !== statusFilter) return false;
     if (keyword && !doesFocusCustomerMatchKeywordP290_(row, keyword)) return false;
@@ -92,6 +95,7 @@ function getFocusCustomerDashboardP290(options) {
     priorityOnly: priorityOnly,
     includeExcluded: includeExcluded,
     sortMode: sortMode,
+    metricFilter: metricFilter,
     source: '검색인덱스_DB+자동점수',
     indexVersion: indexData.version || '',
     indexBuiltAt: indexData.builtAt || '',
@@ -292,6 +296,13 @@ function isFocusPriorityTargetP290_(row, score, finalRank) {
   return false;
 }
 
+
+function isFocusQuoteNoResponseP340_(row) {
+  const text = buildFocusCombinedTextP290_(row);
+  return hasAnyFocusKeywordP290_(text, ['견적발송', '견적제출', '견적서발송']) &&
+    !hasAnyFocusKeywordP290_(text, ['확인', '검토', '회신', '재연락']);
+}
+
 function buildFocusCustomerStatsP290_(rows) {
   const stats = { total: 0, a: 0, b: 0, c: 0, pending: 0, excluded: 0, today: 0, delayed: 0, quoteNoResponse: 0, byRank: {} };
   (rows || []).forEach(function(r) {
@@ -304,7 +315,7 @@ function buildFocusCustomerStatsP290_(rows) {
     else if (rank === '제외') stats.excluded++;
     else stats.pending++;
     if (r.priorityTarget) stats.today++;
-    if (hasAnyFocusKeywordP290_(buildFocusCombinedTextP290_(r), ['견적발송', '견적제출', '견적서발송']) && !hasAnyFocusKeywordP290_(buildFocusCombinedTextP290_(r), ['확인', '검토', '회신', '재연락'])) stats.quoteNoResponse++;
+    if (isFocusQuoteNoResponseP340_(r)) stats.quoteNoResponse++;
   });
   return stats;
 }

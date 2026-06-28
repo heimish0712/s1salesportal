@@ -1361,6 +1361,10 @@
   color: #111827;
   font-weight: 700;
   text-align: left;
+  width: 100%;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
   cursor: pointer;
   box-sizing: border-box;
 }
@@ -1778,54 +1782,9 @@
   line-height: 1.35;
 }
 
-/* PATCH P1-3B: 실제 화면에 보이는 ? 도움말 배지 */
-.portal-guide-help {
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: center;
-  width: 19px;
-  height: 19px;
-  min-width: 19px;
-  margin-left: 6px;
-  border-radius: 999px;
-  border: 1px solid #93c5fd;
-  background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1;
-  vertical-align: middle;
-  cursor: help;
-  user-select: none;
-  box-shadow: 0 1px 3px rgba(37, 99, 235, .12);
-}
-.portal-guide-help:hover {
-  background: #dbeafe;
-  border-color: #60a5fa;
-  color: #1e40af;
-}
-.field-label .portal-guide-help,
-.contact-form-label .portal-guide-help,
-.support-form-label .portal-guide-help,
-.support-section-title .portal-guide-help {
-  margin-left: 4px;
-}
-.send-step-title .portal-guide-help,
-.portal-panel-title .portal-guide-help,
-.customer-search-title .portal-guide-help,
-.contact-modal-title .portal-guide-help {
-  transform: translateY(-1px);
-}
-button .portal-guide-help,
-.customer-scope-btn .portal-guide-help,
-.customer-top-pager .portal-guide-help {
-  width: 16px;
-  height: 16px;
-  min-width: 16px;
-  margin-left: 4px;
-  font-size: 10px;
-  background: rgba(255,255,255,.88);
-}
+/* 도움말 ? 배지 제거: hover 툴팁/물음표 UI 비활성화 */
+.portal-guide-help { display:none !important; }
+
 
 
 
@@ -4426,6 +4385,9 @@ button[disabled], .portal-btn-pending {
 .focus-metric-b { border-color: #fed7aa; background: #fff7ed; }
 .focus-metric-c { border-color: #bfdbfe; background: #eff6ff; }
 .focus-metric-today { border-color: #abefc6; background: #ecfdf3; }
+.focus-metric-quote { border-color: #fcd34d; background: #fffbeb; }
+.focus-metric-excluded { border-color: #d0d5dd; background: #f9fafb; }
+.focus-metric-result { border-color: #dbeafe; background: #ffffff; }
 .focus-meta-p290 {
   font-size: 12px;
   color: #667085;
@@ -4687,4 +4649,190 @@ button[disabled], .portal-btn-pending {
   font-weight: 800;
 }
 
+
+
+/* STEP26/P340: 중점고객관리 도움말/통계 클릭 필터 */
+.focus-help-title-btn-p340 {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 10px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid #b2ccff;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #175cd3;
+  font-size: 12px;
+  font-weight: 900;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.focus-help-title-btn-p340:hover { background:#dbeafe; }
+.focus-check-row-p290 {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+}
+.focus-check-p290 input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.focus-check-p290 span {
+  display: inline-block;
+  line-height: 1;
+}
+.focus-metric-p290 {
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.focus-metric-p290:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(16, 24, 40, .08);
+}
+.focus-metric-p290.is-active {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(29, 78, 216, .12);
+}
+.focus-metric-p290 span {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  color: #667085;
+  margin-bottom: 4px;
+}
+.focus-help-modal-p340 {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+.focus-help-backdrop-p340 {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, .45);
+}
+.focus-help-card-p340 {
+  position: relative;
+  width: min(980px, calc(100vw - 48px));
+  max-height: calc(100vh - 72px);
+  overflow: auto;
+  margin: 36px auto;
+  background: #fff;
+  border-radius: 18px;
+  border: 1px solid #d0d5dd;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .22);
+  padding: 26px 28px 24px;
+}
+.focus-help-card-p340 h2 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  color: #101828;
+}
+.focus-help-lead-p340 {
+  margin: 0 0 18px;
+  color: #475467;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.focus-help-close-p340 {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: #f2f4f7;
+  color: #344054;
+  font-size: 22px;
+  cursor: pointer;
+}
+.focus-help-grid-p340 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.focus-help-grid-p340 section {
+  border: 1px solid #e4e7ec;
+  border-radius: 14px;
+  padding: 14px 15px;
+  background: #fcfcfd;
+}
+.focus-help-grid-p340 h3 {
+  margin: 0 0 7px;
+  font-size: 15px;
+  color: #1d2939;
+}
+.focus-help-grid-p340 p {
+  margin: 0;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.focus-help-note-p340 {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #175cd3;
+  font-size: 13px;
+  font-weight: 800;
+}
+@media (max-width: 900px) {
+  .focus-help-grid-p340 { grid-template-columns: 1fr; }
+}
+
 </style>
+
+/* STEP27: 오늘 할 일 명시 저장/담당자 조회 보강 */
+.today-assignee-filter-area-p350 {
+  display: flex;
+  align-items: center;
+  min-width: 150px;
+}
+.today-assignee-filter-label-p350 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #475467;
+  white-space: nowrap;
+}
+.today-assignee-filter-label-p350 select {
+  height: 34px;
+  min-width: 128px;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  padding: 0 10px;
+  background: #fff;
+  font-weight: 800;
+  color: #344054;
+}
+.today-author-wrap-p350 input {
+  background: #f8fafc !important;
+  color: #475467 !important;
+  font-weight: 800;
+}
+.today-task-line-p123 {
+  grid-template-columns: minmax(120px,.45fr) minmax(220px,1.15fr) minmax(170px,.8fr) minmax(150px,.7fr) !important;
+}
+.today-empty-state b { display:block; margin-bottom:4px; }
+.today-empty-state span { color:#667085; font-size:13px; }
+@media (max-width: 1300px) {
+  .today-task-line-p123 { grid-template-columns: 1fr 1fr !important; }
+}
+@media (max-width: 920px) {
+  .today-card-headline { flex-direction: column; }
+  .today-head-actions { flex-wrap: wrap; }
+  .today-task-line-p123 { grid-template-columns: 1fr !important; }
+}

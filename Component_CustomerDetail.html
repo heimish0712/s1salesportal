@@ -274,8 +274,7 @@ function getDetailButtonHelpTextP13_(text) {
 }
 
 function renderButtonCell(text, onclick, cls, id) {
-  const help = getDetailButtonHelpTextP13_(text);
-  return '<div class="field-item button-cell"><button ' + (id ? 'id="' + escAttr(id) + '" ' : '') + (help ? 'title="' + escAttr(help) + '" ' : '') + 'class="' + escAttr(cls || '') + '" onclick="' + onclick + '">' + esc(text) + '</button></div>';
+  return '<div class="field-item button-cell"><button ' + (id ? 'id="' + escAttr(id) + '" ' : '') + 'class="' + escAttr(cls || '') + '" onclick="' + onclick + '">' + esc(text) + '</button></div>';
 }
 
 
@@ -296,7 +295,7 @@ function renderDetailFieldLabelP13_(f) {
   const label = esc((f && f.label) || '');
   const help = getDetailFieldHelpTextP13_(f && f.key);
   if (!help) return label;
-  return label + ' <span class="portal-guide-help" title="' + escAttr(help) + '">?</span>';
+  return label + '';
 }
 
 function renderDetailField(f, sectionKey, forceWide, extraClass) {
@@ -1060,8 +1059,8 @@ function goToSupportForCurrentDetailP19_() {
 
 function renderContactQuickPanel(d) {
   return '<div class="section-card"><div class="section-title" style="font-size:17px;margin-bottom:8px;">컨택 이력 추가</div>' +
-    '<div class="section-sub">컨택내용을 저장하면 마스터시트 메모 하단과 컨택이력_DB에 동시에 반영됩니다. <span class="portal-guide-help" title="통화/문자/메일 등 고객 접촉 내역을 시간순으로 남깁니다.">?</span></div>' +
-    '<button type="button" title="이 고객의 통화, 문자, 메일, 방문 내용을 새 이력으로 저장합니다." onclick="openContactHistoryModal(' + Number(d.rowNo || 0) + ')">컨택이력 추가</button></div>';
+    '<div class="section-sub">컨택내용을 저장하면 마스터시트 메모 하단과 컨택이력_DB에 동시에 반영됩니다.</div>' +
+    '<button type="button" onclick="openContactHistoryModal(' + Number(d.rowNo || 0) + ')">컨택이력 추가</button></div>';
 }
 
 function openContactHistoryModal(rowNo, customerNo) {

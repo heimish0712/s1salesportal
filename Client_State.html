@@ -256,7 +256,7 @@ function renderStatusChip_(statusText, extraClass) {
   const text = String(statusText || '').trim() || '-';
   const st = getPortalStatusStyle_(text);
   const cls = 'status portal-status-chip' + (extraClass ? ' ' + extraClass : '');
-  return '<span class="' + escAttr(cls) + '" style="background:' + escAttr(st.bg) + ';color:' + escAttr(st.fg) + ';border-color:' + escAttr(st.bg) + ';" title="' + escAttr(text) + '">' + esc(st.label || text) + '</span>';
+  return '<span class="' + escAttr(cls) + '" style="background:' + escAttr(st.bg) + ';color:' + escAttr(st.fg) + ';border-color:' + escAttr(st.bg) + ';">' + esc(st.label || text) + '</span>';
 }
 
 function loadPortalSettings_(options) {

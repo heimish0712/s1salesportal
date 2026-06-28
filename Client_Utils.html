@@ -146,7 +146,7 @@ function getPortalSortArrowP15_(activeKey, activeDir, key) {
 function makePortalSortableThP15_(label, key, activeKey, activeDir, handlerName, styleText) {
   const arrow = getPortalSortArrowP15_(activeKey, activeDir, key);
   return '<th class="portal-sortable-th" ' + (styleText ? 'style="' + escAttr(styleText) + '" ' : '') +
-    'title="클릭하면 오름차순, 한 번 더 클릭하면 내림차순 정렬" onclick="' + escAttr(handlerName) + '(\'' + escAttr(key) + '\')">' +
+    'onclick="' + escAttr(handlerName) + '(\'' + escAttr(key) + '\')">' +
     esc(label || key) + '<span class="portal-sort-arrow">' + esc(arrow) + '</span></th>';
 }
 

@@ -977,37 +977,37 @@ function renderSendWorkspaceBodyP211_() {
     '<div class="send-workspace-body">' +
       '<div class="send-big-box">' +
         '<div class="send-top-search">' +
-          '<div class="send-step-title">1. 발송 고객 검색 <span class="portal-guide-help" title="자료를 보낼 고객을 검색하고 선택합니다.">?</span></div>' +
-          '<input id="sendKeyword" placeholder="회사명, 고객번호, 주소, 담당자, 전화번호 검색" title="회사명, 고객번호, 주소, 담당자, 전화번호로 발송 대상 고객을 검색합니다.">' +
+          '<div class="send-step-title">1. 발송 고객 검색</div>' +
+          '<input id="sendKeyword" placeholder="회사명, 고객번호, 주소, 담당자, 전화번호 검색">' +
           '<button onclick="searchSendCustomers()">검색</button>' +
           '<button class="secondary" onclick="resetSendPageAllV50()">초기화</button>' +
         '</div>' +
         '<div id="sendResultArea" style="margin-top:14px;"><div class="send-empty-box"></div></div>' +
       '</div>' +
       '<div class="send-big-box">' +
-        '<div class="send-step-title" style="margin-bottom:16px;">2. 선택 고객 <span class="portal-guide-help" title="선택한 고객의 수신자, 회사명, 계약 조건이 발송 자료에 반영됩니다.">?</span></div>' +
+        '<div class="send-step-title" style="margin-bottom:16px;">2. 선택 고객</div>' +
         '<div id="sendSelectedPanel"><div class="send-empty-box">선택된 고객이 없습니다.</div></div>' +
       '</div>' +
       '<div class="send-two-col">' +
         '<div class="send-big-box send-tall-card">' +
-          '<div class="send-step-title" style="margin-bottom:16px;">3. 발송자료 선택 <span class="portal-guide-help" title="체크한 자료만 생성/첨부 또는 링크 발송 대상이 됩니다.">?</span></div>' +
+          '<div class="send-step-title" style="margin-bottom:16px;">3. 발송자료 선택</div>' +
           renderSendFileQuickPresetPanel_() +
           '<div class="send-file-grid">' + renderSendFileCheckboxes() + '</div>' +
         '</div>' +
         '<div class="send-big-box send-tall-card">' +
-          '<div class="send-step-title" style="margin-bottom:16px;">4. 발송내용 확인 <span class="portal-guide-help" title="고객명, 담당자명, 계약 조건, 선택 자료가 맞는지 확인합니다.">?</span></div>' +
+          '<div class="send-step-title" style="margin-bottom:16px;">4. 발송내용 확인</div>' +
           '<div id="sendPreviewArea"><div class="send-empty-box">고객/자료 선택 시 발송내용이 자동 표시됩니다.</div></div>' +
           '<div id="sendResultMessage" class="send-warning" style="display:none;"></div>' +
         '</div>' +
       '</div>' +
       '<div class="send-big-box">' +
-        '<div class="send-step-title" style="margin-bottom:16px;">5. 메일 발송 진행상황 <span class="portal-guide-help" title="파일 생성, 테스트 발송, 실제 발송 진행률과 실패 여부를 표시합니다.">?</span></div>' +
+        '<div class="send-step-title" style="margin-bottom:16px;">5. 메일 발송 진행상황</div>' +
         '<div id="sendInlineProgress" class="send-inline-progress"></div>' +
       '</div>' +
       '<div class="send-fixed-footer">' +
-        '<button class="secondary" onclick="preparePortalMailFilesForReviewFromUi()" title="선택한 견적서, 용역신청서 등 수정 가능한 파일을 먼저 확인합니다.">파일 확인/수정</button>' +
-        '<button onclick="sendPortalMailFromUi(\'TEST\')" title="고객에게 보내기 전에 내 메일로 먼저 확인합니다.">나에게 테스트 발송</button>' +
-        '<button onclick="sendPortalMailFromUi(\'CUSTOMER\')" title="현재 선택된 고객에게 실제 메일을 발송합니다.">고객에게 발송</button>' +
+        '<button class="secondary" onclick="preparePortalMailFilesForReviewFromUi()">파일 확인/수정</button>' +
+        '<button onclick="sendPortalMailFromUi(\'TEST\')">나에게 테스트 발송</button>' +
+        '<button onclick="sendPortalMailFromUi(\'CUSTOMER\')">고객에게 발송</button>' +
       '</div>' +
     '</div>';
 

@@ -197,7 +197,7 @@ function renderContractCompleteCellV69_(row, col) {
   const rowNo = Number(row && row.rowNo) || 0;
   const clickAttr = key === 'billingMemo' ? ' onclick="event.stopPropagation(); toggleContractCompleteExpandV69(' + rowNo + ')"' : '';
   const title = key === 'billingMemo' ? (rawTitle + '\n\n클릭하면 상세 카드가 펼쳐집니다.') : rawTitle;
-  return '<td class="' + escAttr(className.trim()) + '" title="' + escAttr(title) + '"' + clickAttr + '>' + esc(value) + '</td>';
+  return '<td class="' + escAttr(className.trim()) + '"' + clickAttr + '>' + esc(value) + '</td>';
 }
 
 function shortenContractCompleteMemoV69_(value, maxLen) {

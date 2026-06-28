@@ -35,11 +35,11 @@
         </div>
         <div class="topbar-right">
           <div class="current-user-badge" id="currentUserBadge">권한 확인 중</div>
-          <div class="font-scale-control" id="fontScaleControl" title="현재 계정의 화면 글자 크기를 조정합니다. 재접속해도 유지됩니다.">
+          <div class="font-scale-control" id="fontScaleControl">
             <span class="font-scale-label">글자</span>
-            <button type="button" class="font-scale-btn" onclick="changePortalFontScale_(-1)" title="글자 줄이기">A-</button>
-            <button type="button" class="font-scale-btn font-scale-reset" onclick="resetPortalFontScale_()" title="기본 글자 크기">기본</button>
-            <button type="button" class="font-scale-btn" onclick="changePortalFontScale_(1)" title="글자 키우기">A+</button>
+            <button type="button" class="font-scale-btn" onclick="changePortalFontScale_(-1)">A-</button>
+            <button type="button" class="font-scale-btn font-scale-reset" onclick="resetPortalFontScale_()">기본</button>
+            <button type="button" class="font-scale-btn" onclick="changePortalFontScale_(1)">A+</button>
             <span class="font-scale-value" id="fontScaleValue">100%</span>
           </div>
           <div class="badge">MVP v73 · contract detail</div>
@@ -87,13 +87,13 @@
           <div class="customer-search-controls customer-search-controls-with-filter">
             <div id="customerScopeToggle" class="customer-scope-toggle" style="display:none"></div>
             <div id="customerFilterSummary" class="customer-filter-summary" style="display:none"></div>
-            <input id="keyword" placeholder="회사명, 주소, 전화번호, 담당자, 영업담당자 검색" title="회사명, 주소, 전화번호, 담당자, 영업담당자를 한 번에 검색합니다.">
-            <button onclick="search()" title="현재 검색어와 필터 조건으로 고객 목록을 조회합니다.">검색 <span class="portal-guide-help" title="검색어와 필터 조건으로 고객을 조회합니다.">?</span></button>
-            <button id="customerFilterToggleBtn" class="secondary customer-filter-toggle-btn" onclick="toggleCustomerFilterPanel()" title="진행현황, 담당자, 지역 등 상세 조건을 열고 닫습니다.">필터 <span class="portal-guide-help" title="진행현황, 담당자, 지역 등 상세 조건을 열고 닫습니다.">?</span></button>
-            <button id="customerFilterResetBtn" class="secondary customer-filter-reset-btn" onclick="resetCustomerFilters_()" title="검색어와 필터 조건을 초기화합니다.">초기화 <span class="portal-guide-help" title="검색어와 필터 조건을 초기화합니다.">?</span></button>
-            <button class="secondary" onclick="openNewCustomer()" title="새 고객 정보를 등록합니다. 저장 시 관리등급과 최종견적가가 자동 계산됩니다.">고객 등록 <span class="portal-guide-help" title="새 고객 정보를 등록합니다. 저장 시 관리등급과 최종견적가가 자동 계산됩니다.">?</span></button>
+            <input id="keyword" placeholder="회사명, 주소, 전화번호, 담당자, 영업담당자 검색">
+            <button onclick="search()">검색</button>
+            <button id="customerFilterToggleBtn" class="secondary customer-filter-toggle-btn" onclick="toggleCustomerFilterPanel()">필터</button>
+            <button id="customerFilterResetBtn" class="secondary customer-filter-reset-btn" onclick="resetCustomerFilters_()">초기화</button>
+            <button class="secondary" onclick="openNewCustomer()">고객 등록</button>
             <div class="customer-sort-wrap">
-              <button id="customerSortButtonV67" class="secondary customer-sort-button" onclick="toggleCustomerSortMenuV67_(event)" title="고객 목록의 정렬 기준을 선택합니다.">정렬 <span class="portal-guide-help" title="고객 목록의 정렬 기준을 선택합니다.">?</span></button>
+              <button id="customerSortButtonV67" class="secondary customer-sort-button" onclick="toggleCustomerSortMenuV67_(event)">정렬</button>
               <div id="customerSortMenuV67" class="customer-sort-menu" style="display:none"></div>
             </div>
             <div id="customerTopPager" class="customer-top-pager" style="display:none"></div>
@@ -139,7 +139,7 @@
           <button class="secondary" id="supportInlineResetBtn" onclick="resetSupportInlineEntry()">신규 요청 초기화</button>
         </div>
         <div class="support-new-panel" id="supportNewPanel">
-          <div class="support-new-title">신규 요청하기 <span class="portal-guide-help" title="고객번호를 불러온 뒤 요청할 업무를 남기면 요청 이력이 저장됩니다.">?</span></div>
+          <div class="support-new-title">신규 요청하기</div>
           <div class="support-inline-area" id="supportInlineArea"><div class="loading">신규 요청 입력행을 준비하는 중입니다.</div></div>
         </div>
         <div class="support-existing-title">기존 요청 목록</div>
@@ -181,6 +181,7 @@
                   <div class="today-muted">태그별로 빠르게 조회하고, 할 일·처리내용·예정/완료시간을 한 줄에서 관리합니다.</div>
                 </div>
                 <div class="today-head-actions">
+                  <div id="todayAssigneeFilterAreaP350" class="today-assignee-filter-area-p350"></div>
                   <button class="secondary" onclick="addTodayTodoRow()">+ 할 일 추가</button>
                   <button onclick="saveTodayTodos()">저장</button>
                 </div>
@@ -264,13 +265,13 @@
   <div class="contact-modal-backdrop" id="contactHistoryBackdrop">
     <div class="contact-modal">
       <div class="contact-modal-header">
-        <div class="contact-modal-title">컨택 이력 추가 <span class="portal-guide-help" title="통화, 문자, 메일 등 고객 접촉 내용을 고객별 이력으로 남깁니다.">?</span></div>
+        <div class="contact-modal-title">컨택 이력 추가</div>
         <button class="contact-modal-close" onclick="closeContactHistoryModal()">X</button>
       </div>
       <div class="contact-modal-body">
         <div class="contact-form-grid">
           <div class="contact-form-item">
-            <div class="contact-form-label">몇 차인지 <span class="portal-guide-help" title="고객에게 몇 번째로 연락한 건인지 선택합니다.">?</span></div>
+            <div class="contact-form-label">몇 차인지</div>
             <select id="contactRoundSelect"></select>
           </div>
           <div class="contact-form-item">
@@ -278,7 +279,7 @@
             <select id="contactMethodSelect"></select>
           </div>
           <div class="contact-form-item">
-            <div class="contact-form-label">컨택 일시 <span class="portal-guide-help" title="비워두면 저장 시점의 현재 시간이 자동 기록됩니다.">?</span></div>
+            <div class="contact-form-label">컨택 일시</div>
             <input id="contactAtInput" type="datetime-local">
             <div class="contact-auto-note">자동 기록됩니다. 비워두면 저장 시각으로 저장됩니다.</div>
           </div>
@@ -287,7 +288,7 @@
             <input id="contactAuthorInput" placeholder="기본값: 현재 사용자">
           </div>
           <div class="contact-form-item">
-            <div class="contact-form-label">다음 액션 <span class="portal-guide-help" title="후속 전화, 자료 발송, 재확인 등 다음에 해야 할 일을 선택합니다.">?</span></div>
+            <div class="contact-form-label">다음 액션</div>
             <select id="contactNextActionSelect"></select>
             <div class="contact-next-tag-panel" id="contactNextActionTagPanel"></div>
           </div>
@@ -296,7 +297,7 @@
             <input id="contactNextAtInput" type="datetime-local">
           </div>
           <div class="contact-form-item wide contact-content-item">
-            <div class="contact-form-label">컨택 내용 <span class="portal-guide-help" title="태그만 선택해도 저장할 수 있고, 필요한 내용을 뒤에 추가로 적을 수 있습니다.">?</span></div>
+            <div class="contact-form-label">컨택 내용</div>
             <div class="contact-quick-tags" id="contactQuickTagPanel"></div>
             <textarea id="contactContentInput" placeholder="예: 견적서 보내달라고 함"></textarea>
           </div>
@@ -335,7 +336,7 @@
             <select id="supportRequester"></select>
           </div>
           <div class="support-form-item">
-            <div class="support-form-label">고객번호 / 고객명 검색 <span class="portal-guide-help" title="고객번호 또는 고객명을 입력한 뒤 불러오기/검색으로 기본 정보를 채웁니다.">?</span></div>
+            <div class="support-form-label">고객번호 / 고객명 검색</div>
             <div class="support-customer-line">
               <input id="supportCustomerNo" placeholder="고객번호 또는 고객명">
               <button class="secondary" onclick="lookupSupportCustomer()">불러오기</button>
@@ -354,7 +355,7 @@
           <div class="support-form-item half"><div class="support-form-label">담당자 이메일</div><input id="supportContactEmail"></div>
           <div class="support-form-item wide"><div class="support-form-label">마스터시트 메모 <span class="support-muted">서무 참고용 / 여기서 수정해도 마스터시트에는 반영 안 됨</span></div><textarea id="supportMasterMemo" disabled></textarea></div>
 
-          <div class="support-section-title">요청 내용 <span class="portal-guide-help" title="서무/관리자가 처리해야 할 견적 수정, 자료 발송, 계약서류 요청 등을 적습니다.">?</span></div>
+          <div class="support-section-title">요청 내용</div>
           <div class="support-form-item wide"><div class="support-form-label">요청업무</div><textarea id="supportRequestText" placeholder="요청할 내용을 구체적으로 입력하세요."></textarea></div>
 
           <div class="support-section-title">서무 처리 내용</div>

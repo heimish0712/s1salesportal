@@ -6,10 +6,14 @@
  * - 작성시간/처리내용/완료예정시간/완료시간 관리
  ***************************************/
 
-function getPortalTodayData(dateText) {
+function getPortalTodayData(dateText, options) {
+  options = options || {};
   const selectedDate = normalizePortalTodoDate_(dateText || new Date());
-  const storedTodos = getPortalTodosForDate_(selectedDate);
-  const nextActions = getContactNextActionsForDate_(selectedDate);
+  const access = getPortalTodayAccessContextP350_(options);
+  try { carryOverPortalTodayOpenTasksP350_(selectedDate, access); } catch (err) { console.warn('오늘할일 이월 처리 실패', err); }
+  const storedTodos = getPortalTodosForDate_(selectedDate, access);
+  let nextActions = getContactNextActionsForDate_(selectedDate);
+  nextActions = filterPortalTodayItemsByAccessP350_(nextActions, access);
   const tasks = buildPortalTodayUnifiedTasks_(storedTodos, nextActions, selectedDate);
   const dateMeta = getPortalTodayDateMetaP130_(selectedDate, storedTodos);
   return {
@@ -23,8 +27,124 @@ function getPortalTodayData(dateText) {
     nextActions: nextActions,
     tagOptions: getPortalTodayTagOptions_(),
     hiddenTags: getPortalTodayHiddenTags_(),
-    actionOptions: PORTAL_NEXT_ACTION_OPTIONS
+    actionOptions: PORTAL_NEXT_ACTION_OPTIONS,
+    canViewAllTodos: !!access.canViewAll,
+    authorFilter: access.authorFilter || 'ALL',
+    currentUserLabel: access.currentUserLabel || '',
+    authorOptions: access.canViewAll ? getPortalTodayAuthorOptionsP350_(selectedDate) : []
   };
+}
+
+function getPortalTodayAccessContextP350_(options) {
+  options = options || {};
+  const perm = getPortalCurrentPermission_ ? getPortalCurrentPermission_() : null;
+  const canViewAll = !!(perm && perm.active !== false && (perm.canUseAdminHome || perm.canReadAllSupport));
+  const currentUserLabel = String((perm && (perm.displayName || perm.name || perm.salesRepName)) || getCurrentUserLabel_() || '').trim();
+  const myNames = [];
+  if (perm) {
+    myNames.push(perm.name, perm.displayName, perm.salesRepName, perm.email);
+    (perm.salesRepAliases || []).forEach(function(v) { myNames.push(v); });
+  }
+  myNames.push(currentUserLabel);
+  const myKeys = myNames.map(portalTodayAuthorKeyP350_).filter(Boolean);
+  let authorFilter = String(options.assigneeFilter || options.authorFilter || options.author || 'ALL').trim();
+  if (!authorFilter) authorFilter = 'ALL';
+  const authorFilterKey = (canViewAll && authorFilter !== 'ALL') ? portalTodayAuthorKeyP350_(authorFilter) : '';
+  return {
+    perm: perm,
+    canViewAll: canViewAll,
+    currentUserLabel: currentUserLabel,
+    myKeys: myKeys,
+    authorFilter: canViewAll ? authorFilter : currentUserLabel,
+    authorFilterKey: authorFilterKey
+  };
+}
+
+function portalTodayAuthorKeyP350_(value) {
+  if (typeof normalizePortalNameForPermission_ === 'function') return normalizePortalNameForPermission_(value);
+  return String(value || '').replace(/\s+/g, '').toLowerCase();
+}
+
+function portalTodayAuthorMatchesAccessP350_(author, access) {
+  access = access || getPortalTodayAccessContextP350_({});
+  const key = portalTodayAuthorKeyP350_(author);
+  if (access.canViewAll) {
+    if (!access.authorFilterKey) return true;
+    return key && key === access.authorFilterKey;
+  }
+  if (!access.myKeys || !access.myKeys.length) return true;
+  return !key || access.myKeys.indexOf(key) >= 0;
+}
+
+function filterPortalTodayItemsByAccessP350_(items, access) {
+  return (Array.isArray(items) ? items : []).filter(function(item) {
+    return portalTodayAuthorMatchesAccessP350_((item && item.author) || '', access);
+  });
+}
+
+function getPortalTodayAuthorOptionsP350_(selectedDate) {
+  const seen = {};
+  const out = [];
+  function add(name) {
+    name = String(name || '').trim();
+    if (!name) return;
+    const key = portalTodayAuthorKeyP350_(name);
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    out.push(name);
+  }
+  try {
+    const sheet = ensurePortalTodaySheet_();
+    const lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
+      const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
+      values.forEach(function(row) {
+        const item = portalTodayRowToItemP130_(row);
+        if (item.date === selectedDate && String(item.deleted || '').toUpperCase() !== 'Y' && item.content) add(item.author);
+      });
+    }
+  } catch (err) {}
+  try { getContactNextActionsForDate_(selectedDate).forEach(function(item) { add(item.author); }); } catch (err) {}
+  return out.sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
+}
+
+function carryOverPortalTodayOpenTasksP350_(selectedDate, access) {
+  selectedDate = normalizePortalTodoDate_(selectedDate || new Date());
+  const todayStr = normalizePortalTodoDate_(new Date());
+  if (String(selectedDate) < String(todayStr)) return { moved: 0 };
+  const sheet = ensurePortalTodaySheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { moved: 0 };
+  const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
+  const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
+  const selectedActiveIds = {};
+  values.forEach(function(row) {
+    const item = portalTodayRowToItemP130_(row);
+    if (item.date === selectedDate && String(item.deleted || '').toUpperCase() !== 'Y' && item.content) selectedActiveIds[item.id] = true;
+  });
+  const moveRows = [];
+  const deleteRows = [];
+  values.forEach(function(row, idx) {
+    const item = portalTodayRowToItemP130_(row);
+    if (!item.id || !item.content) return;
+    if (String(item.deleted || '').toUpperCase() === 'Y') return;
+    if (item.done) return;
+    if (!portalTodayAuthorMatchesAccessP350_(item.author, access)) return;
+    if (!(item.date && String(item.date) < String(todayStr))) return;
+    const rowNo = idx + 2;
+    if (selectedActiveIds[item.id]) deleteRows.push(rowNo);
+    else moveRows.push(rowNo);
+  });
+  if (!moveRows.length && !deleteRows.length) return { moved: 0, deleted: 0 };
+  const now = new Date();
+  if (moveRows.length) {
+    sheet.getRangeList(moveRows.map(function(r) { return 'B' + r; })).setValue(selectedDate);
+    sheet.getRangeList(moveRows.map(function(r) { return 'G' + r; })).setValue(now);
+  }
+  if (deleteRows.length) markPortalTodayRowsDeletedP130_(sheet, deleteRows);
+  SpreadsheetApp.flush();
+  return { moved: moveRows.length, deleted: deleteRows.length };
 }
 
 function savePortalTodosForDate(payload) {
@@ -66,12 +186,13 @@ function runPortalTodayWriteLockedP130_(label, callback) {
 function savePortalTodosForDateCoreP130_(payload) {
   payload = payload || {};
   const selectedDate = normalizePortalTodoDate_(payload.date || new Date());
+  const access = getPortalTodayAccessContextP350_(payload || {});
   const todos = Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload.todos) ? payload.todos : []);
   const sheet = ensurePortalTodaySheet_();
   const now = new Date();
   const user = getCurrentUserLabel_();
   const headerLen = PORTAL_CONFIG.TODAY_HEADERS.length;
-  const existingRows = readPortalTodayRowsForDateP130_(sheet, selectedDate, headerLen);
+  const existingRows = readPortalTodayRowsForDateP130_(sheet, selectedDate, headerLen, access);
   const currentMeta = getPortalTodayDateMetaFromRowsP130_(selectedDate, existingRows);
   const baseDateVersion = String(payload.baseDateVersion || '').trim();
   const mergedDueToStaleBase = !!(baseDateVersion && currentMeta.version && baseDateVersion !== currentMeta.version);
@@ -93,7 +214,9 @@ function savePortalTodosForDateCoreP130_(payload) {
   const appendRows = [];
   let upsertedCount = 0;
   todos.forEach(function(rawItem, idx) {
-    const item = rawItem || {};
+    const item = Object.assign({}, rawItem || {});
+    if (!access.canViewAll) item.author = access.currentUserLabel || item.author || getCurrentUserLabel_();
+    else if (!String(item.author || '').trim() && access.authorFilter && access.authorFilter !== 'ALL') item.author = access.authorFilter;
     const content = String(item.content || '').trim();
     if (!content) return;
     const id = String(item.id || '').trim() || Utilities.getUuid().slice(0, 8);
@@ -180,7 +303,7 @@ function buildPortalTodayRowValuesP130_(item, context) {
   ];
 }
 
-function readPortalTodayRowsForDateP130_(sheet, selectedDate, headerLen) {
+function readPortalTodayRowsForDateP130_(sheet, selectedDate, headerLen, access) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   const values = sheet.getRange(2, 1, lastRow - 1, headerLen).getValues();
@@ -193,7 +316,7 @@ function readPortalTodayRowsForDateP130_(sheet, selectedDate, headerLen) {
         id: item.id,
         date: item.date,
         deleted: deleted,
-        active: item.date === selectedDate && !deleted && !!item.content,
+        active: item.date === selectedDate && !deleted && !!item.content && portalTodayAuthorMatchesAccessP350_(item.author, access),
         item: item
       };
     })
@@ -404,7 +527,7 @@ function ensurePortalTodaySheet_() {
   return sheet;
 }
 
-function getPortalTodosForDate_(selectedDate) {
+function getPortalTodosForDate_(selectedDate, access) {
   const sheet = ensurePortalTodaySheet_();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
@@ -444,7 +567,7 @@ function getPortalTodosForDate_(selectedDate) {
       return item;
     })
     .filter(function(item) {
-      return item.date === selectedDate && item.deleted.toUpperCase() !== 'Y' && item.content;
+      return item.date === selectedDate && item.deleted.toUpperCase() !== 'Y' && item.content && portalTodayAuthorMatchesAccessP350_(item.author, access);
     })
     .sort(function(a, b) { return (a.order || 0) - (b.order || 0); });
 }

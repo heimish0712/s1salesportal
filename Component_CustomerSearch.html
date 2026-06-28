@@ -70,8 +70,8 @@ function renderCustomerScopeToggleP04_() {
   const scope = getEffectiveCustomerScopeP04_();
   const allDisabled = canAll ? '' : ' disabled';
   el.innerHTML = '' +
-    '<button type="button" title="권한 범위 내 전체 고객을 조회합니다." class="customer-scope-btn ' + (scope === 'ALL' ? 'active' : '') + '"' + allDisabled + ' onclick="setCustomerScopeModeP04_(\'ALL\')">전체 고객</button>' +
-    '<button type="button" title="현재 로그인한 담당자에게 배정된 고객만 표시합니다." class="customer-scope-btn ' + (scope === 'OWN' ? 'active' : '') + '" onclick="setCustomerScopeModeP04_(\'OWN\')">나의 고객</button>';
+    '<button type="button" class="customer-scope-btn ' + (scope === 'ALL' ? 'active' : '') + '"' + allDisabled + ' onclick="setCustomerScopeModeP04_(\'ALL\')">전체 고객</button>' +
+    '<button type="button" class="customer-scope-btn ' + (scope === 'OWN' ? 'active' : '') + '" onclick="setCustomerScopeModeP04_(\'OWN\')">나의 고객</button>';
   el.style.display = 'inline-flex';
   el.classList.toggle('only-own', !canAll);
 }
@@ -284,7 +284,7 @@ function renderResults(response, fromCache) {
     html += '<td><div class="customer-actions">' +
       '<button type="button" class="customer-row-btn primary" onclick="event.stopPropagation(); openDetailSafe_(' + rowNo + ')">상세</button>' +
       '<button type="button" class="customer-row-btn" onclick="event.stopPropagation(); openSendForCustomer(' + rowNo + ')">발송</button>' +
-      '<button type="button" class="customer-row-btn customer-row-expand-btn" title="상세 펼침/접기" onclick="event.stopPropagation(); toggleCustomerExpand(' + rowNo + ')">' + (isExpanded ? '▲' : '▼') + '</button>' +
+      '<button type="button" class="customer-row-btn customer-row-expand-btn" onclick="event.stopPropagation(); toggleCustomerExpand(' + rowNo + ')">' + (isExpanded ? '▲' : '▼') + '</button>' +
       '</div></td>';
     html += '</tr>';
 
@@ -408,9 +408,9 @@ function renderCustomerResultCell_(row, col) {
 
   let inner = valueHtml;
   if (editableKeys[key]) {
-    inner = '<span class="customer-inline-text-trigger" title="이 글자를 더블클릭하면 바로 수정합니다.">' + valueHtml + '</span>';
+    inner = '<span class="customer-inline-text-trigger">' + valueHtml + '</span>';
   } else if (expandKeys[key]) {
-    inner = '<span class="customer-expand-text-trigger" title="더블클릭하면 고객 상세 정보가 아래로 펼쳐집니다.">' + valueHtml + '</span>';
+    inner = '<span class="customer-expand-text-trigger">' + valueHtml + '</span>';
   }
 
   let titleText = title;
@@ -422,7 +422,7 @@ function renderCustomerResultCell_(row, col) {
     titleText = title + '\n\n빈 공간을 더블클릭하면 고객 상세 정보가 아래로 펼쳐집니다.';
   }
 
-  return '<td class="' + escAttr(className.trim()) + '" title="' + escAttr(titleText) + '" data-row-no="' + rowNo + '" data-key="' + escAttr(key) + '">' + inner + '</td>';
+  return '<td class="' + escAttr(className.trim()) + '" data-row-no="' + rowNo + '" data-key="' + escAttr(key) + '">' + inner + '</td>';
 }
 
 function handleCustomerResultDelegatedDblClick_(event) {
@@ -688,7 +688,7 @@ function finishCustomerInlineEditCell_(cell, rowNo, key, value) {
   if (!cell) return;
   const displayHtml = renderCustomerInlineDisplayHtml_(key, value);
   if (['status','phone','memo'].indexOf(String(key || '')) >= 0) {
-    cell.innerHTML = '<span class="customer-inline-text-trigger" title="이 글자를 더블클릭하면 바로 수정합니다.">' + displayHtml + '</span>';
+    cell.innerHTML = '<span class="customer-inline-text-trigger">' + displayHtml + '</span>';
   } else {
     cell.innerHTML = displayHtml;
   }
@@ -949,11 +949,11 @@ function renderCustomerFavoriteCell_(row) {
   const favoriteKey = getFavoriteCustomerKey_(row);
   const pending = typeof isCustomerFavoritePending_ === 'function' && isCustomerFavoritePending_(row);
   const label = pending ? '즐겨찾기 저장 대기 중' : (active ? '즐겨찾기 해제' : '즐겨찾기 추가');
-  return '<td class="customer-favorite-cell" title="' + escAttr(label) + '">' +
+  return '<td class="customer-favorite-cell">' +
     '<button type="button" class="customer-favorite-star ' + (active ? 'active' : '') + (pending ? ' pending' : '') + '" ' +
       'data-favorite-key="' + escAttr(favoriteKey) + '" data-row-no="' + escAttr(rowNo) + '" ' +
       (pending ? 'aria-busy="true" ' : 'aria-busy="false" ') +
-      'title="' + escAttr(label) + '" onclick="event.stopPropagation(); toggleCustomerFavoriteFromList(' + rowNo + ')">' + (active ? '★' : '☆') + '</button>' +
+      'onclick="event.stopPropagation(); toggleCustomerFavoriteFromList(' + rowNo + ')">' + (active ? '★' : '☆') + '</button>' +
   '</td>';
 }
 
@@ -1539,7 +1539,7 @@ function renderCustomerExpandOrderStatusHtmlP250_(detail) {
   if (!orderInfo || typeof orderInfo.exists === 'undefined') {
     const statusText = String(detail.status || '').trim();
     if (statusText === '발주완료' || statusText === '계약완료') {
-      return '<span class="customer-order-status done" title="진행현황 기준 발주완료">O</span>';
+      return '<span class="customer-order-status done">O</span>';
     }
     // 서버 상세 보강 전에도 다른 기본정보와 같은 타이밍에 표시되도록 진행현황/요약 캐시 기준 X를 먼저 보여줍니다.
     // 실제 수주확정/계약완료 중복 여부는 발주 처리 서버 함수에서 다시 검증합니다.
@@ -1547,7 +1547,7 @@ function renderCustomerExpandOrderStatusHtmlP250_(detail) {
   }
   if (orderInfo.exists) {
     const contractNo = String(orderInfo.contractNo || '').trim();
-    return '<span class="customer-order-status done" title="' + escAttr(contractNo ? '계약번호 ' + contractNo + '번' : '발주완료') + '">O</span>';
+    return '<span class="customer-order-status done">O</span>';
   }
   return renderCustomerOrderActionHtmlP260_(detail);
 }
@@ -1992,8 +1992,8 @@ function updateCustomerTopPager_(res, fromCache) {
   const pageText = (res.start + 1) + '-' + res.end + ' / ' + res.total;
   el.innerHTML = '' +
     '<span class="customer-top-pager-info">' + esc(pageText) + '</span>' +
-    '<button type="button" title="현재 검색 조건의 이전 20건을 봅니다." class="secondary customer-top-pager-btn" ' + (res.hasPrev ? '' : 'disabled') + ' onclick="searchCustomerPage(' + Math.max(0, res.page - 1) + ')">이전 20건</button>' +
-    '<button type="button" title="현재 검색 조건의 다음 20건을 봅니다." class="secondary customer-top-pager-btn" ' + (res.hasNext ? '' : 'disabled') + ' onclick="searchCustomerPage(' + (res.page + 1) + ')">다음 20건</button>';
+    '<button type="button" class="secondary customer-top-pager-btn" ' + (res.hasPrev ? '' : 'disabled') + ' onclick="searchCustomerPage(' + Math.max(0, res.page - 1) + ')">이전 20건</button>' +
+    '<button type="button" class="secondary customer-top-pager-btn" ' + (res.hasNext ? '' : 'disabled') + ' onclick="searchCustomerPage(' + (res.page + 1) + ')">다음 20건</button>';
   el.style.display = 'inline-flex';
   el.classList.add('active');
 }
