@@ -317,7 +317,7 @@ function renderDetailField(f, sectionKey, forceWide, extraClass) {
     if (f.key === 'status') {
       html += '<select class="detail-edit-input portal-status-select"' + data + ' disabled>' + renderStatusOptionsForDetail_(f.value || '') + '</select>';
     } else {
-      html += '<select class="detail-edit-input"' + data + ' disabled>' + renderGenericOptions(f.options || [], f.value || '') + '</select>';
+      html += '<select class="detail-edit-input"' + data + ' disabled>' + renderGenericOptions(f.options || [], f.value || '', f.key) + '</select>';
     }
   } else {
     const inputType = f.type === 'email' ? 'email' : 'text';
@@ -327,11 +327,46 @@ function renderDetailField(f, sectionKey, forceWide, extraClass) {
   return html;
 }
 
-function renderGenericOptions(options, current) {
-  options = options || []; current = current || '';
+function getGenericOptionValueP280_(opt) {
+  if (opt && typeof opt === 'object') return opt.value == null ? '' : String(opt.value);
+  return opt == null ? '' : String(opt);
+}
+
+function getGenericOptionLabelP280_(opt) {
+  if (opt && typeof opt === 'object') return opt.label == null ? getGenericOptionValueP280_(opt) : String(opt.label);
+  return opt == null || String(opt) === '' ? '-' : String(opt);
+}
+
+function normalizeDetailSelectCurrentP280_(key, value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (key === 'contractUnit') {
+    if (text === '1년') return '12';
+    if (text === '반년') return '6';
+    const m = text.match(/\d+/);
+    return m ? String(Math.max(1, Math.min(12, Number(m[0]) || 12))) : text;
+  }
+  if (key === 'maintenance' || key === 'performance') {
+    const m = text.match(/\d+/);
+    return m ? String(Math.max(0, Math.min(12, Number(m[0]) || 0))) : text;
+  }
+  return text;
+}
+
+function renderGenericOptions(options, current, key) {
+  options = (options || []).slice();
+  const normalizedCurrent = normalizeDetailSelectCurrentP280_(key || '', current);
   const seen = {}; let html = '';
-  if (current && options.indexOf(current) < 0) options.unshift(current);
-  options.forEach(opt => { if (seen[opt]) return; seen[opt]=true; html += '<option value="' + escAttr(opt) + '"' + (String(opt)===String(current)?' selected':'') + '>' + esc(opt || '-') + '</option>'; });
+  const hasCurrent = options.some(function(opt) { return String(getGenericOptionValueP280_(opt)) === String(normalizedCurrent); });
+  if (normalizedCurrent && !hasCurrent) options.unshift({ value: normalizedCurrent, label: current || normalizedCurrent });
+  options.forEach(function(opt) {
+    const value = getGenericOptionValueP280_(opt);
+    const label = getGenericOptionLabelP280_(opt);
+    const seenKey = String(value);
+    if (seen[seenKey]) return;
+    seen[seenKey] = true;
+    html += '<option value="' + escAttr(value) + '"' + (String(value) === String(normalizedCurrent) ? ' selected' : '') + '>' + esc(label || '-') + '</option>';
+  });
   return html;
 }
 
@@ -378,6 +413,36 @@ const DETAIL_CONTRACT_REQUIRED_LABELS_P112 = {
 };
 const DETAIL_CONTRACT_SAVE_KEYS_P112 = DETAIL_CONTRACT_REQUIRED_KEYS_P112.concat(['discountRate','grade','finalQuote','targetFinalPrice']);
 
+
+function normalizeDetailContractFieldForDbP280_(key, value) {
+  const text = String(value == null ? '' : value).trim();
+  if (key === 'contractUnit') {
+    if (!text || text === '-' || text === '–' || text === '—') return '';
+    if (text === '1년') return '12';
+    if (text === '반년') return '6';
+    const m = text.match(/\d+/);
+    if (!m) return text;
+    const n = Number(m[0]);
+    return n >= 1 && n <= 12 ? String(n) : '';
+  }
+  if (key === 'maintenance' || key === 'performance') {
+    if (!text || text === '-' || text === '–' || text === '—') return '';
+    const m = text.match(/\d+/);
+    if (!m) return text;
+    const n = Number(m[0]);
+    return n >= 0 && n <= 12 ? String(n) : '';
+  }
+  return text;
+}
+
+function normalizeDetailContractValuesForDbP280_(values) {
+  values = Object.assign({}, values || {});
+  ['contractUnit', 'maintenance', 'performance'].forEach(function(key) {
+    if (Object.prototype.hasOwnProperty.call(values, key)) values[key] = normalizeDetailContractFieldForDbP280_(key, values[key]);
+  });
+  return values;
+}
+
 function isDetailContractValueBlankP112_(value) {
   const text = String(value == null ? '' : value).trim();
   if (!text) return true;
@@ -393,12 +458,12 @@ function isDetailContractSaveTouchedP112_(values) {
 
 function prepareDetailContractValuesForClientSaveP112_(values, options) {
   options = options || {};
-  values = Object.assign({}, values || {});
+  values = normalizeDetailContractValuesForDbP280_(Object.assign({}, values || {}));
   const requireFull = !!options.requireFull;
   if (!requireFull && !isDetailContractSaveTouchedP112_(values)) return values;
 
   const currentValues = collectCurrentDetailInputValues_ ? collectCurrentDetailInputValues_() : gatherRegistrationValues();
-  const effective = Object.assign({}, currentValues || {}, values || {});
+  const effective = normalizeDetailContractValuesForDbP280_(Object.assign({}, currentValues || {}, values || {}));
   if (isDetailContractValueBlankP112_(effective.discountRate)) {
     effective.discountRate = '0';
     values.discountRate = '0';
@@ -642,7 +707,7 @@ function applyNewCustomerRegistrationDefaults_() {
     }
   }
 
-  setInputValueByKeyIfExists_('contractUnit', '12개월', { onlyBlank: true });
+  setInputValueByKeyIfExists_('contractUnit', '12', { onlyBlank: true });
   updateRegionVendorFromAddress_({ onlyIfAddress: true, onlyBlankVendor: true, normalizeAddress: false });
   enforceRegionReadonly_();
 }
@@ -759,9 +824,13 @@ function setInputValueByKeyIfExists_(key, value, options) {
 
 function normalizeContractUnitValue_(value) {
   const text = String(value || '').trim();
-  if (text === '12개월' || text === '1년') return '12개월';
-  if (text === '6개월' || text === '반년') return '6개월';
-  return text;
+  if (!text) return '';
+  if (text === '1년') return '12';
+  if (text === '반년') return '6';
+  const m = text.match(/\d+/);
+  if (!m) return text;
+  const n = Number(m[0]);
+  return n >= 1 && n <= 12 ? String(n) : text;
 }
 
 function applyContractUnitDefaults_(contractUnit, options) {
@@ -772,17 +841,17 @@ function applyContractUnitDefaults_(contractUnit, options) {
     return;
   }
 
-  if (unit === '12개월') {
+  if (unit === '12') {
     setInputValueByKeyIfExists_('appointment', '선임', options);
-    setInputValueByKeyIfExists_('maintenance', '2회', options);
-    setInputValueByKeyIfExists_('performance', '1회', options);
+    setInputValueByKeyIfExists_('maintenance', '2', options);
+    setInputValueByKeyIfExists_('performance', '1', options);
     setInputValueByKeyIfExists_('vat', '별도', options.onlyBlank ? { onlyBlank: true } : options);
     return;
   }
 
-  if (unit === '6개월') {
+  if (unit === '6') {
     setInputValueByKeyIfExists_('appointment', '선임', options);
-    setInputValueByKeyIfExists_('maintenance', '1회', options);
+    setInputValueByKeyIfExists_('maintenance', '1', options);
     // 6개월은 성능점검 0회/1회가 모두 쓰이므로 미리 선택하지 않습니다.
     setInputValueByKeyIfExists_('performance', '', options);
     setInputValueByKeyIfExists_('vat', '별도', options.onlyBlank ? { onlyBlank: true } : options);
@@ -794,7 +863,7 @@ function applyContractDefaultsOnRender_(options) {
   setInputValueByKeyIfExists_('vat', '별도', { onlyBlank: true });
   const unitEl = getDetailInputByKey_('contractUnit');
   if (currentDetail && currentDetail.isNew && unitEl && !String(unitEl.value || '').trim()) {
-    unitEl.value = '12개월';
+    unitEl.value = '12';
   }
   if (unitEl && String(unitEl.value || '').trim()) {
     applyContractUnitDefaults_(unitEl.value, { onlyBlank: true });

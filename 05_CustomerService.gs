@@ -1382,11 +1382,12 @@ function saveCustomerDetailCoreP202_(payload) {
     if (!Object.prototype.hasOwnProperty.call(values, def.key)) return;
     const col = findFirstExistingHeaderCol_(headerMap, def.headers || []) || ensureMasterColumn_(sheet, headerMap, (def.headers && def.headers[0]) || def.label);
     headerMap = getHeaderMap_(sheet);
-    const nextValue = String(values[def.key] == null ? '' : values[def.key]).trim();
+    const nextValue = getPortalMasterCompareTextP280_(def.key, values[def.key]);
+    const writeValue = getPortalMasterWriteValueP280_(def.key, values[def.key]);
     const range = sheet.getRange(rowNo, col);
     const prevValue = String(range.getDisplayValue() || '').trim();
     if (prevValue !== nextValue) {
-      range.setValue(nextValue);
+      range.setValue(writeValue);
       changed.push(def.label);
     }
   });
@@ -1455,8 +1456,9 @@ function saveCustomerDetailFastCoreP202_(payload) {
     if (!Object.prototype.hasOwnProperty.call(values, def.key)) return;
     const col = findFirstExistingHeaderCol_(headerMap, def.headers || []) || ensureMasterColumn_(sheet, headerMap, (def.headers && def.headers[0]) || def.label);
     headerMap = getHeaderMap_(sheet);
-    const nextValue = String(values[def.key] == null ? '' : values[def.key]).trim();
-    targets.push({ key: def.key, label: def.label, col: col, value: nextValue });
+    const nextValue = getPortalMasterCompareTextP280_(def.key, values[def.key]);
+    const writeValue = getPortalMasterWriteValueP280_(def.key, values[def.key]);
+    targets.push({ key: def.key, label: def.label, col: col, value: nextValue, writeValue: writeValue });
     appliedValues[def.key] = nextValue;
   });
 
@@ -1490,7 +1492,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   if (changedTargets.length) {
     changedTargets.sort(function(a, b) { return a.col - b.col; });
     let blockStart = changedTargets[0].col;
-    let blockValues = [changedTargets[0].value];
+    let blockValues = [changedTargets[0].writeValue];
     let prevCol = changedTargets[0].col;
 
     const flushBlock = function() {
@@ -1500,12 +1502,12 @@ function saveCustomerDetailFastCoreP202_(payload) {
     for (let i = 1; i < changedTargets.length; i++) {
       const t = changedTargets[i];
       if (t.col === prevCol + 1) {
-        blockValues.push(t.value);
+        blockValues.push(t.writeValue);
         prevCol = t.col;
       } else {
         flushBlock();
         blockStart = t.col;
-        blockValues = [t.value];
+        blockValues = [t.writeValue];
         prevCol = t.col;
       }
     }
@@ -1659,6 +1661,73 @@ function updateCustomerSearchIndexMemoFast_(rowNo, memoValue, meta) {
 }
 
 
+
+// PATCH P280: 계약조건 숫자형 저장 호환
+// - 마스터시트 U/W/X(계약단위/유지점검/성능점검)는 숫자 셀을 기준으로 사용합니다.
+// - 화면에는 "12개월", "2회"처럼 보여도 저장 payload와 시트 write 값은 12, 2 같은 숫자로 정규화합니다.
+function normalizePortalContractUnitMonthsP280_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (/^1년$/.test(text)) return 12;
+  if (/^반년$/.test(text)) return 6;
+  const m = text.match(/\d+/);
+  if (!m) return '';
+  const n = Number(m[0]);
+  if (!isFinite(n) || n < 1 || n > 12) return '';
+  return n;
+}
+
+function normalizePortalInspectionCountP280_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  const m = text.match(/\d+/);
+  if (!m) return '';
+  const n = Number(m[0]);
+  if (!isFinite(n) || n < 0 || n > 12) return '';
+  return n;
+}
+
+function normalizePortalContractFieldForDbP280_(key, value) {
+  key = String(key || '').trim();
+  if (key === 'contractUnit') {
+    const months = normalizePortalContractUnitMonthsP280_(value);
+    return months === '' ? '' : String(months);
+  }
+  if (key === 'maintenance' || key === 'performance') {
+    const count = normalizePortalInspectionCountP280_(value);
+    return count === '' ? '' : String(count);
+  }
+  return value == null ? '' : String(value).trim();
+}
+
+function normalizePortalContractPayloadFieldsP280_(values) {
+  values = Object.assign({}, values || {});
+  ['contractUnit', 'maintenance', 'performance'].forEach(function(key) {
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      values[key] = normalizePortalContractFieldForDbP280_(key, values[key]);
+    }
+  });
+  return values;
+}
+
+function getPortalMasterWriteValueP280_(key, value) {
+  key = String(key || '').trim();
+  if (key === 'contractUnit') {
+    const months = normalizePortalContractUnitMonthsP280_(value);
+    return months === '' ? '' : months;
+  }
+  if (key === 'maintenance' || key === 'performance') {
+    const count = normalizePortalInspectionCountP280_(value);
+    return count === '' ? '' : count;
+  }
+  return String(value == null ? '' : value).trim();
+}
+
+function getPortalMasterCompareTextP280_(key, value) {
+  const writeValue = getPortalMasterWriteValueP280_(key, value);
+  return String(writeValue == null ? '' : writeValue).trim();
+}
+
 // PATCH P1-12: 계약조건 저장 검증 + 할인율 공란 0 보정
 // - 변수 입력 부족이 시트 수식에 남지 않도록 계약 계산 필수값을 저장 전 차단합니다.
 // - 할인율은 공란이면 0으로 강제 저장합니다.
@@ -1690,7 +1759,7 @@ function isPortalContractSaveTouchedP112_(values) {
 
 function preparePortalContractValuesForSaveP112_(values, options) {
   options = options || {};
-  values = Object.assign({}, values || {});
+  values = normalizePortalContractPayloadFieldsP280_(Object.assign({}, values || {}));
   const requireFull = !!options.requireFull;
   const shouldValidate = requireFull || isPortalContractSaveTouchedP112_(values);
   if (!shouldValidate) return values;
@@ -1746,6 +1815,9 @@ function calculateQuoteDiscount(payload) {
   const maintenanceText = String(payload.maintenance || '').trim();
   const performanceText = String(payload.performance || '').trim();
   const vatText = String(payload.vat || '').trim();
+  const normalizedContractMonthsP280 = normalizePortalContractUnitMonthsP280_(contractUnitText);
+  const normalizedMaintenanceCountP280 = normalizePortalInspectionCountP280_(maintenanceText);
+  const normalizedPerformanceCountP280 = normalizePortalInspectionCountP280_(performanceText);
 
   const anyInput = [grade, discountTextRaw, contractUnitText, appointmentText, maintenanceText, performanceText, vatText, String(payload.targetFinalPrice || '').trim(), String(payload.area || '').trim()]
     .some(v => String(v || '').trim() !== '');
@@ -1756,10 +1828,10 @@ function calculateQuoteDiscount(payload) {
   const missing = [];
   if (!(area > 0)) missing.push('연면적');
   if (!grade) missing.push('관리등급');
-  if (isPortalContractValueBlankP112_(contractUnitText)) missing.push('계약단위');
+  if (isPortalContractValueBlankP112_(contractUnitText) || normalizedContractMonthsP280 === '') missing.push('계약단위');
   if (isPortalContractValueBlankP112_(appointmentText)) missing.push('관리자 선임 여부');
-  if (isPortalContractValueBlankP112_(maintenanceText)) missing.push('유지점검');
-  if (isPortalContractValueBlankP112_(performanceText)) missing.push('성능점검');
+  if (isPortalContractValueBlankP112_(maintenanceText) || normalizedMaintenanceCountP280 === '') missing.push('유지점검');
+  if (isPortalContractValueBlankP112_(performanceText) || normalizedPerformanceCountP280 === '') missing.push('성능점검');
   if (isPortalContractValueBlankP112_(vatText)) missing.push('부가세');
 
   if (missing.length) {
@@ -1780,10 +1852,10 @@ function calculateQuoteDiscount(payload) {
   const basis = getContractBasisForGrade_(grade);
   if (!basis) throw new Error('계약기준 시트에서 관리등급 [' + (grade || '-') + '] 기준단가를 찾지 못했습니다.');
 
-  const months = /12개월|1년/.test(contractUnitText) ? 12 : 6;
+  const months = normalizedContractMonthsP280 || 12;
   const hasAppointment = appointmentText === '선임' || (appointmentText.indexOf('선임') >= 0 && appointmentText.indexOf('미선임') < 0 && appointmentText.indexOf('해당없음') < 0);
-  const maintenanceCount = parseCount_(maintenanceText);
-  const performanceCount = parseCount_(performanceText);
+  const maintenanceCount = normalizedMaintenanceCountP280 === '' ? 0 : normalizedMaintenanceCountP280;
+  const performanceCount = normalizedPerformanceCountP280 === '' ? 0 : normalizedPerformanceCountP280;
 
   const appointmentAmount = hasAppointment ? basis.appointmentUnit * months : 0;
   const maintenanceAmount = basis.maintenanceUnit * maintenanceCount;
@@ -1813,7 +1885,7 @@ function calculateQuoteDiscount(payload) {
     ok: true,
     grade: grade,
     months: months,
-    contractUnit: months === 12 ? '12개월' : '6개월',
+    contractUnit: String(months),
     hasAppointment: hasAppointment,
     maintenanceCount: maintenanceCount,
     performanceCount: performanceCount,
@@ -1898,11 +1970,11 @@ function getNewCustomerTemplate() {
   };
   setField('basic', 'firstRegisteredAt', todayText);
   setField('basic', 'status', '');
-  setField('contract', 'contractUnit', '12개월');
+  setField('contract', 'contractUnit', '12');
   setField('contract', 'vat', '별도');
   setField('contract', 'appointment', '선임');
-  setField('contract', 'maintenance', '2회');
-  setField('contract', 'performance', '1회');
+  setField('contract', 'maintenance', '2');
+  setField('contract', 'performance', '1');
 
   return detail;
 }
@@ -1987,7 +2059,7 @@ function saveRegistrationCustomer(payload) {
       col = ensureMasterColumn_(sheet, headerMap, headerName);
       headerMap = getHeaderMap_(sheet);
     }
-    sheet.getRange(rowNo, col).setValue(String(merged[def.key] == null ? '' : merged[def.key]).trim());
+    sheet.getRange(rowNo, col).setValue(getPortalMasterWriteValueP280_(def.key, merged[def.key]));
   });
 
   SpreadsheetApp.flush();

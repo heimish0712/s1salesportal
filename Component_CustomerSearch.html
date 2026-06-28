@@ -1453,6 +1453,14 @@ function formatCustomerExpandDisplayValue_(key, value, detail) {
   if (key === 'serviceApplicationReceived' || key === 'appointmentReportReceived') {
     return normalizeCustomerExpandBooleanMark_(normalized);
   }
+  if (key === 'contractUnit') {
+    const v = normalizePortalContractDisplayValueClientP280_('contractUnit', normalized);
+    return v ? v + '개월' : disp(normalized);
+  }
+  if (key === 'maintenance' || key === 'performance') {
+    const v = normalizePortalContractDisplayValueClientP280_(key, normalized);
+    return v !== '' ? v + '회' : disp(normalized);
+  }
   if (key === 'phone' || key === 'directPhone') {
     return splitCustomerExpandPhoneLines_(normalized) || disp(normalized);
   }
@@ -3006,6 +3014,42 @@ function findCustomerRowSummaryByRowNo_(rowNo) {
 }
 
 
+
+function buildPortalContractUnitOptionsClientP280_() {
+  const opts = [{ value: '', label: '-' }];
+  for (let i = 1; i <= 12; i++) opts.push({ value: String(i), label: i + '개월' });
+  return opts;
+}
+
+function buildPortalInspectionCountOptionsClientP280_(maxCount) {
+  maxCount = Number(maxCount) || 12;
+  const opts = [{ value: '', label: '-' }];
+  for (let i = 0; i <= maxCount; i++) opts.push({ value: String(i), label: i + '회' });
+  return opts;
+}
+
+function normalizePortalContractDisplayValueClientP280_(key, value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (key === 'contractUnit') {
+    if (text === '1년') return '12';
+    if (text === '반년') return '6';
+    const m = text.match(/\d+/);
+    return m ? String(Math.max(1, Math.min(12, Number(m[0]) || 12))) : text;
+  }
+  if (key === 'maintenance' || key === 'performance') {
+    const m = text.match(/\d+/);
+    return m ? String(Math.max(0, Math.min(12, Number(m[0]) || 0))) : text;
+  }
+  return text;
+}
+
+function getPortalContractFieldOptionsClientP280_(key) {
+  if (key === 'contractUnit') return buildPortalContractUnitOptionsClientP280_();
+  if (key === 'maintenance' || key === 'performance') return buildPortalInspectionCountOptionsClientP280_(12);
+  return null;
+}
+
 function findCustomerRowSummaryByCustomerNo_(customerNo) {
   const cno = normalizeCustomerNoForKey_(customerNo);
   if (!cno) return null;
@@ -3056,10 +3100,10 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     grade: row.grade || '',
     buildingType: row.buildingType || '',
     finalQuote: row.finalQuote || '',
-    contractUnit: row.contractUnit || '',
+    contractUnit: normalizePortalContractDisplayValueClientP280_('contractUnit', row.contractUnit || ''),
     appointment: row.appointment || '',
-    maintenance: row.maintenance || '',
-    performance: row.performance || '',
+    maintenance: normalizePortalContractDisplayValueClientP280_('maintenance', row.maintenance || ''),
+    performance: normalizePortalContractDisplayValueClientP280_('performance', row.performance || ''),
     vat: row.vat || '',
     discountRate: row.discountRate || '',
     specialTerms: row.specialTerms || '',
@@ -3099,8 +3143,12 @@ function buildDetailFieldsFromFlatDetail_(detail) {
     ['discountRate','할인율',true,'numberText'], ['specialTerms','용역신청서특약사항',true,'textarea',true]
   ];
   const make = function(def) {
-    const field = { key:def[0], label:def[1], editable:def[2], type:def[3], wide:!!def[4], value: detail[def[0]] || '' };
+    const key = def[0];
+    const opts = getPortalContractFieldOptionsClientP280_(key);
+    const value = opts ? normalizePortalContractDisplayValueClientP280_(key, detail[key] || '') : (detail[key] || '');
+    const field = { key:key, label:def[1], editable:def[2], type:def[3], wide:!!def[4], value: value };
     if (field.key === 'customerRank') field.options = ['', 'A급', 'B급', 'C급', '보류', '제외'];
+    if (opts) field.options = opts;
     return field;
   };
   return { basic: basicDefs.map(make), contract: contractDefs.map(make) };

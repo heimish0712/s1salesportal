@@ -1,0 +1,187 @@
+{
+  "syntax": {
+    "gs": {
+      "00_Config.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "01_Schema.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "02_Utils.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "03_DbAccess.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "04_MasterRepository.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "05_CustomerService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "06_ContactHistoryService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "07_NoticeService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "08_TodayService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "09_SupportRequestService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "10_DashboardService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "11_MailBridgeService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "12_SetupDiagnostics.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "13_SettingsService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "14_FavoriteService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "15_PermissionService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "16_ContractCompleteService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "17_ActivityLogService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "18_ConcurrencySyncService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "19_RequestGuardService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "20_SystemHealthService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "21_ChangeQueueService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "22_ConcurrencyTestService.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Code.gs": {
+        "ok": true,
+        "stderr": ""
+      },
+      "PortalMailWorkerFallbackConfig.gs": {
+        "ok": true,
+        "stderr": ""
+      }
+    },
+    "html": {
+      "Client_Router.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Client_State.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Client_Utils.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_ActivityLog.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_ConcurrencyTest.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_ContractComplete.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_CustomerDetail.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_CustomerSearch.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_Favorites.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_Home.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_Modals.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_Notice.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_Send.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_Support.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_SystemHealth.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Component_Today.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Index.html": {
+        "ok": true,
+        "stderr": ""
+      },
+      "Styles.html": {
+        "ok": true,
+        "stderr": ""
+      }
+    }
+  },
+  "duplicates": {},
+  "changed_files": [
+    "01_Schema.gs",
+    "05_CustomerService.gs",
+    "Component_CustomerDetail.html",
+    "Component_CustomerSearch.html"
+  ]
+}

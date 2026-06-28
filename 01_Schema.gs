@@ -31,10 +31,10 @@ const PORTAL_MASTER_FIELD_SCHEMA = {
   area: { label: '연면적', headers: ['연면적', '연면적(㎡)', '연면적㎡', '면적'], type: 'numberText' },
   buildingType: { label: '건물 유형', headers: ['건물 유형', '건물유형'], type: 'select', options: ['', '기업', '공동주택', '학교', '공공', '기타'] },
   finalQuote: { label: '최종 견적가', headers: ['최종 견적가', '최종견적가', '최종단가', '최종 견적금액', '견적금액'], type: 'money' },
-  contractUnit: { label: '계약단위', headers: ['계약단위', '계약 단위'], type: 'select', options: ['', '6개월', '12개월'] },
+  contractUnit: { label: '계약단위', headers: ['계약단위', '계약 단위'], type: 'select', options: buildPortalContractUnitOptionsP280_() },
   appointment: { label: '관리자 선임 여부', headers: ['관리자\n선임 여부', '관리자 선임 여부', '관리자선임여부', '선임 여부', '관리자선임'], type: 'select', options: ['', '선임', '미선임', '해당없음'] },
-  maintenance: { label: '유지점검', headers: ['유지점검', '유지 점검'], type: 'select', options: ['', '0회', '1회', '2회', '3회', '4회', '5회', '6회'] },
-  performance: { label: '성능점검', headers: ['성능점검', '성능 점검'], type: 'select', options: ['', '0회', '1회', '2회', '3회', '4회', '5회', '6회'] },
+  maintenance: { label: '유지점검', headers: ['유지점검', '유지 점검'], type: 'select', options: buildPortalInspectionCountOptionsP280_(12) },
+  performance: { label: '성능점검', headers: ['성능점검', '성능 점검'], type: 'select', options: buildPortalInspectionCountOptionsP280_(12) },
   vat: { label: '부가세', headers: ['부가세', 'VAT', '부가세 여부'], type: 'select', options: ['', '별도', '포함'] },
   discountRate: { label: '할인율', headers: ['할인율(%)', '할인률(%)', '할인율', '할인률', '할인율 %'], type: 'numberText' },
   specialTerms: { label: '용역신청서특약사항', headers: ['용역신청서특약사항', '용역신청서 특약사항', '특약사항', '계약기간\n(상세 작성 요구한 경우만)'], type: 'textarea', wide: true },
@@ -49,6 +49,20 @@ const PORTAL_MASTER_FIELD_SCHEMA = {
   serviceApplicationReceived: { label: '용역신청서', headers: ['용역신청서', '용역신청서 수취 여부', '용역신청서 수취여부', '용역신청서수취여부', '용역신청서요청', '용역신청서 요청'], type: 'booleanMark' },
   appointmentReportReceived: { label: '선임신고서', headers: ['선임신고서', '선임신고서 수취 여부', '선임신고서 수취여부', '선임신고서수취여부', '선임신고서 및 위임장 요청', '선임신고서 및 위임장', '선임신고서·위임장'], type: 'booleanMark' }
 };
+
+
+function buildPortalContractUnitOptionsP280_() {
+  const opts = [{ value: '', label: '-' }];
+  for (let i = 1; i <= 12; i++) opts.push({ value: String(i), label: i + '개월' });
+  return opts;
+}
+
+function buildPortalInspectionCountOptionsP280_(maxCount) {
+  maxCount = Number(maxCount) || 12;
+  const opts = [{ value: '', label: '-' }];
+  for (let i = 0; i <= maxCount; i++) opts.push({ value: String(i), label: i + '회' });
+  return opts;
+}
 
 function getMasterFieldSchema_() {
   return PORTAL_MASTER_FIELD_SCHEMA;
