@@ -4293,3 +4293,42 @@ button[disabled], .portal-btn-pending {
   min-width: 82px;
 }
 </style>
+
+
+/* STEP16/P270: 계약종합관리 드라이브 반영 버튼 */
+.contract-drive-sync-btn {
+  background: linear-gradient(135deg, #ff8a00, #ff5c35) !important;
+  color: #fff !important;
+  border: 0 !important;
+  font-weight: 800 !important;
+  box-shadow: 0 8px 18px rgba(255, 92, 53, 0.22) !important;
+  min-width: 112px !important;
+}
+.contract-drive-sync-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(255, 92, 53, 0.30) !important;
+}
+.contract-drive-sync-btn:disabled {
+  opacity: 0.72 !important;
+  cursor: wait !important;
+}
+.contract-drive-sync-notice {
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fed7aa;
+  font-size: 12px;
+  font-weight: 700;
+}
+.contract-drive-sync-notice.is-done {
+  background: #ecfdf3;
+  color: #067647;
+  border-color: #abefc6;
+}
+.contract-drive-sync-notice.is-error {
+  background: #fff1f3;
+  color: #b42318;
+  border-color: #fecdd3;
+}

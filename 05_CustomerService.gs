@@ -1060,13 +1060,16 @@ function getCustomerDetailsBatch(rowNos) {
   targets.forEach(function(r) { targetSet[r] = true; });
 
   const resultByRow = {};
+  const orderLookupP260 = (typeof getPortalCustomerOrderLookupP260_ === 'function')
+    ? getPortalCustomerOrderLookupP260_({ force: false })
+    : null;
 
   const addRowDetail = function(rowNo, rowValues) {
     try {
       const obj = buildMasterRowObjectFromValues_(headerMap, rowValues);
       obj.__rowNo = rowNo;
       if (!isPortalCustomerRowAllowedForPermission_(obj, perm)) return;
-      resultByRow[rowNo] = buildCustomerDetailFromObj_(obj, rowNo, { includeLogs: false, includeRaw: false, lite: true });
+      resultByRow[rowNo] = buildCustomerDetailFromObj_(obj, rowNo, { includeLogs: false, includeRaw: false, lite: true, includeOrderInfo: true, orderLookup: orderLookupP260 });
     } catch (err) {
       resultByRow[rowNo] = { rowNo: rowNo, error: String(err && err.message || err) };
     }
@@ -1260,9 +1263,9 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   const discountRate = getCustomerMasterHeaderValueK2_(obj, 'discountRate');
   const specialTerms = getCustomerMasterHeaderValueK2_(obj, 'specialTerms');
 
-  const orderInfoP250 = (options.lite || options.includeOrderInfo === false || typeof getPortalCustomerOrderInfoByTargetP250_ !== 'function')
+  const orderInfoP250 = (options.includeOrderInfo === false || typeof getPortalCustomerOrderInfoByTargetP250_ !== 'function')
     ? null
-    : getPortalCustomerOrderInfoByTargetP250_({ customerNo: customerNo, rowNo: rowNo, obj: obj });
+    : getPortalCustomerOrderInfoByTargetP250_({ customerNo: customerNo, rowNo: rowNo, obj: obj }, options.orderLookup || null);
 
   const detail = {
     rowNo: rowNo,

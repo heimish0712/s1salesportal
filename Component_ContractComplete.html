@@ -307,7 +307,7 @@ function renderContractCompleteExpandedContentV69_(row) {
   html += renderContractCompleteBlockV69_('서류 저장 여부', [
     [
       { key:'businessRegSaved', label:'사업자등록증 저장' },
-      { key:'orderMailSaved', label:'발주메일 저장' },
+      { key:'orderMailSaved', label:'선임신고서 저장' },
       { key:'contractSaved', label:'계약서 저장' }
     ]
   ], row, 'contract-complete-block-docs', editing);
@@ -487,4 +487,70 @@ function openCustomerSearchFromContractCompleteV69(rowNo) {
     if (typeof searchCustomerPage === 'function') searchCustomerPage(0);
   }, 80);
 }
+
+function syncContractCompleteDriveDocsV270() {
+  const p = getPortalPermissionClient_ ? getPortalPermissionClient_() : null;
+  if (!(p && p.active !== false && p.canUseAdminHome)) {
+    alert('드라이브 반영은 서무/admin 계정에서만 사용할 수 있습니다.');
+    return;
+  }
+  if (window.contractCompleteDriveSyncingV270) return;
+  const btn = document.getElementById('contractDriveSyncBtn');
+  window.contractCompleteDriveSyncingV270 = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '반영 중...';
+  }
+  const area = document.getElementById('contractCompleteArea');
+  const oldNoticeId = 'contractDriveSyncNoticeV270';
+  const oldNotice = document.getElementById(oldNoticeId);
+  if (oldNotice) oldNotice.remove();
+  if (area && area.parentNode) {
+    const notice = document.createElement('div');
+    notice.id = oldNoticeId;
+    notice.className = 'contract-drive-sync-notice';
+    notice.textContent = '공유 드라이브 서류를 확인해서 영업관리대장에 반영 중입니다. 폴더/파일 수에 따라 시간이 걸릴 수 있습니다.';
+    area.parentNode.insertBefore(notice, area);
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      window.contractCompleteDriveSyncingV270 = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '드라이브 반영';
+      }
+      const notice = document.getElementById(oldNoticeId);
+      if (notice) {
+        notice.className = 'contract-drive-sync-notice is-done';
+        notice.textContent = '드라이브 반영 완료 · 변경 행 ' + Number(res && res.changedRows || 0) + '건 · 변경 셀 ' + Number(res && res.changedCells || 0) + '개 · 매칭 파일 ' + Number(res && res.matchedFiles || 0) + '개';
+      }
+      if (res && Array.isArray(res.updatedRows) && res.updatedRows.length) {
+        const updatedMap = {};
+        res.updatedRows.forEach(function(row) { if (row && row.rowNo) updatedMap[Number(row.rowNo)] = row; });
+        contractCompleteRowsV69 = normalizeContractCompleteRowsV81_(contractCompleteRowsV69.map(function(row) {
+          return updatedMap[Number(row && row.rowNo)] || row;
+        }));
+        renderContractCompleteListV69_();
+      } else {
+        renderContractCompleteListV69_();
+      }
+      alert('드라이브 반영 완료\n변경 행: ' + Number(res && res.changedRows || 0) + '건\n변경 셀: ' + Number(res && res.changedCells || 0) + '개\n매칭 파일: ' + Number(res && res.matchedFiles || 0) + '개');
+    })
+    .withFailureHandler(function(err) {
+      window.contractCompleteDriveSyncingV270 = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '드라이브 반영';
+      }
+      const notice = document.getElementById(oldNoticeId);
+      if (notice) {
+        notice.className = 'contract-drive-sync-notice is-error';
+        notice.textContent = '드라이브 반영 실패: ' + getErrorMessage_(err);
+      }
+      alert('드라이브 반영 실패\n' + getErrorMessage_(err));
+    })
+    .syncContractCompleteDocsFromDriveP270({});
+}
+
 </script>

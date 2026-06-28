@@ -1,0 +1,57 @@
+{
+  "step": "STEP15_order_status_fast_cache",
+  "base": "STEP14_발주여부한줄표시수정",
+  "changed_core_files": [
+    "05_CustomerService.gs",
+    "16_ContractCompleteService.gs",
+    "Component_CustomerSearch.html"
+  ],
+  "syntax_errors": [],
+  "changed_file_duplicate_functions": {
+    "compareCustomerNoDigitsDescV67_": [
+      "05_CustomerService.gs",
+      "Component_CustomerSearch.html"
+    ],
+    "parseCustomerNoPartsV67_": [
+      "05_CustomerService.gs",
+      "Component_CustomerSearch.html"
+    ],
+    "parseCustomerNoNumberV67_": [
+      "05_CustomerService.gs",
+      "Component_CustomerSearch.html"
+    ],
+    "parseMoneyNumberV67_": [
+      "05_CustomerService.gs",
+      "Component_CustomerSearch.html"
+    ],
+    "compareNumberWithMissingLastV67_": [
+      "05_CustomerService.gs",
+      "Component_CustomerSearch.html"
+    ],
+    "parseLatestContactTimeV67_": [
+      "05_CustomerService.gs",
+      "Component_CustomerSearch.html"
+    ]
+  },
+  "important_functions_present": {
+    "getCustomerDetailsBatch": true,
+    "getCustomerDetail": true,
+    "getPortalCustomerOrderInfoByTargetP250_": true,
+    "getPortalCustomerOrderLookupP260_": true,
+    "createPortalCustomerOrderFromSearchP250": true,
+    "renderCustomerExpandOrderStatusHtmlP250_": true,
+    "renderCustomerOrderActionHtmlP260_": true,
+    "saveCustomerDetailFast": true,
+    "saveCustomerMemoFast": true,
+    "preparePortalMailFilesForReviewFromUi": true,
+    "sendPortalMailFromUi": true
+  },
+  "changed_file_duplicate_functions_note": "아래 항목은 기존부터 서버/클라이언트에 각각 있던 동명 helper mirror이며, STEP15에서 새로 만든 중복 함수는 아닙니다.",
+  "new_step15_functions": [
+    "getPortalCustomerOrderLookupP260_",
+    "normalizeCustomerOrderNoKeyP260_",
+    "getPortalCustomerOrderInfoFromLookupP260_",
+    "renderCustomerOrderActionHtmlP260_"
+  ],
+  "new_step15_function_duplicate_count": 0
+}

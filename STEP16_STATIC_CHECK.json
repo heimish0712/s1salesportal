@@ -1,0 +1,192 @@
+{
+  "syntax_errors": [],
+  "checks": [
+    {
+      "file": "00_Config.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "01_Schema.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "02_Utils.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "03_DbAccess.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "04_MasterRepository.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "05_CustomerService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "06_ContactHistoryService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "07_NoticeService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "08_TodayService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "09_SupportRequestService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "10_DashboardService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "11_MailBridgeService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "12_SetupDiagnostics.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "13_SettingsService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "14_FavoriteService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "15_PermissionService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "16_ContractCompleteService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "17_ActivityLogService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "18_ConcurrencySyncService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "19_RequestGuardService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "20_SystemHealthService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "21_ChangeQueueService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "22_ConcurrencyTestService.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "Client_Router.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Client_State.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Client_Utils.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Code.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_ActivityLog.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_ConcurrencyTest.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_ContractComplete.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_CustomerDetail.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_CustomerSearch.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_Favorites.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_Home.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_Modals.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_Notice.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_Send.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_Support.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_SystemHealth.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Component_Today.html",
+      "syntax": "ok"
+    },
+    {
+      "file": "Index.html",
+      "syntax": "skipped-no-script"
+    },
+    {
+      "file": "PortalMailWorkerFallbackConfig.gs",
+      "syntax": "ok"
+    },
+    {
+      "file": "Styles.html",
+      "syntax": "skipped-no-script"
+    }
+  ],
+  "required_functions": {
+    "syncContractCompleteDocsFromDriveP270": true,
+    "getPortalCustomerFileRootFolderP270_": true,
+    "scanContractDriveCustomerFolderP270_": true,
+    "detectContractDriveDocTypeP270_": true,
+    "syncContractCompleteDriveDocsV270": true
+  },
+  "changed_files": [
+    "16_ContractCompleteService.gs",
+    "Component_ContractComplete.html",
+    "Index.html",
+    "STEP16_CHANGED_DIFF.patch",
+    "STEP16_DRIVE_DOC_SYNC_REPORT.txt",
+    "Styles.html"
+  ]
+}
