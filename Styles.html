@@ -4595,4 +4595,35 @@ button[disabled], .portal-btn-pending {
   .focus-today-list-p290 { grid-template-columns: 1fr; }
 }
 
+
+/* STEP21/P300: 메모는 목록 셀에서만 요약 표시합니다.
+   메모 수정/상세팝업/펼침 패널에서는 검색인덱스의 잘린 메모를 쓰지 않고,
+   마스터 상세 메모가 도착할 때까지 로딩 상태로 둡니다. */
+.customer-inline-memo-loading-p300,
+.customer-expand-memo-loading-p300 {
+  padding: 10px 12px;
+  border: 1px solid #d8e6fb;
+  border-radius: 8px;
+  background: #f0f7ff;
+  color: #174ea6;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+  white-space: normal;
+}
+.customer-expand-memo-box-v58 .customer-expand-memo[readonly][data-memo-loading="Y"] {
+  color: #667085;
+  background: #f8fafc;
+  border-style: dashed;
+}
+.customer-inline-memo-editor,
+.customer-expand-memo-box-v58 .customer-expand-memo-main-v58 .customer-expand-memo,
+.master-memo-input,
+.detail-edit-input[data-key="memo"] {
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  text-overflow: clip !important;
+}
+
 </style>

@@ -10,14 +10,20 @@ let focusCustomerStateP290_ = {
   includeExcluded: false,
   sortMode: 'priority',
   loading: false,
-  data: null
+  data: null,
+  requestSeq: 0,
+  cache: {}
 };
 
 function loadFocusCustomerPageP290(forceRefresh) {
   const area = document.getElementById('focusCustomerArea');
   if (!area) return;
-  if (!focusCustomerStateP290_.data || forceRefresh) {
-    area.innerHTML = '<div class="loading">중점고객관리 데이터를 불러오는 중입니다.</div>';
+  if (!document.getElementById('focusListP290')) {
+    renderFocusCustomerShellP290_();
+  }
+  if (!focusCustomerStateP290_.data && !forceRefresh) {
+    const list = document.getElementById('focusListP290');
+    if (list) list.innerHTML = '<div class="loading">중점고객관리 데이터를 불러오는 중입니다.</div>';
   }
   requestFocusCustomerDataP290_(!!forceRefresh);
 }
@@ -39,10 +45,15 @@ function collectFocusCustomerFiltersP290_() {
   focusCustomerStateP290_.sortMode = sortMode ? sortMode.value || 'priority' : 'priority';
 }
 
+function makeFocusCustomerClientCacheKeyP300_(payload) {
+  try { return JSON.stringify(payload || {}); } catch (err) { return String(Date.now()); }
+}
+
 function requestFocusCustomerDataP290_(forceRefresh) {
   collectFocusCustomerFiltersP290_();
   const area = document.getElementById('focusCustomerArea');
   if (!area) return;
+  const requestSeq = ++focusCustomerStateP290_.requestSeq;
   focusCustomerStateP290_.loading = true;
   const btn = document.getElementById('focusRefreshBtnP290');
   if (btn) { btn.disabled = true; btn.textContent = forceRefresh ? '갱신 중' : '조회 중'; }
@@ -57,18 +68,31 @@ function requestFocusCustomerDataP290_(forceRefresh) {
     page: focusCustomerStateP290_.page,
     pageSize: focusCustomerStateP290_.pageSize
   };
+  const cacheKey = makeFocusCustomerClientCacheKeyP300_(payload);
+  if (!forceRefresh && focusCustomerStateP290_.cache && focusCustomerStateP290_.cache[cacheKey]) {
+    focusCustomerStateP290_.data = focusCustomerStateP290_.cache[cacheKey];
+    renderFocusCustomerDataP290_(focusCustomerStateP290_.data, { fromClientCache: true });
+    focusCustomerStateP290_.loading = false;
+    if (btn) { btn.disabled = false; btn.textContent = '새로고침'; }
+    return;
+  }
   google.script.run
     .withSuccessHandler(function(res) {
+      if (requestSeq !== focusCustomerStateP290_.requestSeq) return;
       focusCustomerStateP290_.loading = false;
       if (btn) { btn.disabled = false; btn.textContent = '새로고침'; }
       if (forceRefresh && typeof toast === 'function') toast('중점고객관리 데이터를 갱신했습니다.');
       focusCustomerStateP290_.data = res || {};
+      focusCustomerStateP290_.cache = focusCustomerStateP290_.cache || {};
+      focusCustomerStateP290_.cache[cacheKey] = focusCustomerStateP290_.data;
       renderFocusCustomerDataP290_(res || {});
     })
     .withFailureHandler(function(err) {
+      if (requestSeq !== focusCustomerStateP290_.requestSeq) return;
       focusCustomerStateP290_.loading = false;
       if (btn) { btn.disabled = false; btn.textContent = '새로고침'; }
-      area.innerHTML = '<div class="loading" style="color:#b42318;">중점고객관리 데이터를 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
+      const list = document.getElementById('focusListP290') || area;
+      list.innerHTML = '<div class="loading" style="color:#b42318;">중점고객관리 데이터를 불러오지 못했습니다.<br>' + esc(getErrorMessage_(err)) + '</div>';
     })
     .getFocusCustomerDashboardP290(payload);
 }
@@ -93,7 +117,7 @@ function renderFocusCustomerShellP290_() {
 }
 
 function renderFocusCustomerDataP290_(data) {
-  renderFocusCustomerShellP290_();
+  if (!document.getElementById('focusListP290')) renderFocusCustomerShellP290_();
   hydrateFocusFilterOptionsP290_(data || {});
   restoreFocusFilterValuesP290_();
   renderFocusStatsP290_(data || {});
@@ -222,6 +246,7 @@ function searchFocusCustomersP290() {
 
 function refreshFocusCustomersP290() {
   focusCustomerStateP290_.page = 0;
+  focusCustomerStateP290_.cache = {};
   google.script.run.withSuccessHandler(function(){ requestFocusCustomerDataP290_(true); }).withFailureHandler(function(){ requestFocusCustomerDataP290_(true); }).clearFocusCustomerCacheP290();
 }
 

@@ -1,0 +1,13 @@
+{
+  "baseline": "STEP20_중점고객관리리스트표시_20개페이징수정",
+  "changedFiles": [
+    "Component_CustomerSearch.html",
+    "Component_FocusCustomer.html",
+    "Styles.html"
+  ],
+  "styleTagCount": 1,
+  "styleCloseCount": 1,
+  "stylePostTextLength": 0,
+  "htmlScriptSyntaxErrors": 0,
+  "gsSyntaxErrors": 0
+}

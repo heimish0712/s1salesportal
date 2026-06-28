@@ -162,6 +162,17 @@ function isCustomerSearchRequestCurrentP230_(seq, snapshot) {
   return true;
 }
 
+function canServeCustomerSearchFastP300_(keyword, page) {
+  try {
+    if (customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length) return true;
+  } catch (err) {}
+  try {
+    return !!getCustomerPageFromCache_(keyword, page);
+  } catch (err) {
+    return false;
+  }
+}
+
 function searchCustomerPage(page) {
   ensureCustomerFilterUi_();
   renderCustomerScopeToggleP04_();
@@ -177,8 +188,11 @@ function searchCustomerPage(page) {
   const requestSeq = ++customerSearchRequestSeqP230;
   const requestSnapshot = makeCustomerSearchRequestSnapshotP230_(keywordValue, pageNo);
   updateCustomerFilterSummary_();
-  resultArea.innerHTML = '<div class="loading">고객 데이터를 불러오는 중입니다...<br><span class="cache-note">검색인덱스_DB를 먼저 조회하고 상세정보는 뒤에서 준비합니다.</span></div>';
-  initializeCustomerSearchIndex({ silent: true, useLocalFirst: true });
+  const canServeFast = canServeCustomerSearchFastP300_(keywordValue, pageNo);
+  if (!canServeFast) {
+    resultArea.innerHTML = '<div class="loading">고객 데이터를 불러오는 중입니다...<br><span class="cache-note">브라우저 캐시 또는 검색인덱스_DB를 확인합니다.</span></div>';
+  }
+  initializeCustomerSearchIndex({ silent: true, useLocalFirst: true, skipNetworkIfReady: true, renderAfterLoad: false });
 
   if (hasActiveCustomerFilterConditions_() && !(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows))) {
     waitCustomerFilterIndexThenSearch_(keywordValue, pageNo, requestSeq, requestSnapshot);
@@ -531,8 +545,35 @@ function startCustomerInlineEdit_(event, rowNo, key) {
 
   const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
   const detail = getCustomerDetailCache_(rowNo, rowSummary.customerNo) || null;
+
+  if (key === 'memo' && (!detail || detail.__summary || detail.__lite || !detail.__masterBacked)) {
+    cell.setAttribute('data-original-html', cell.innerHTML);
+    cell.classList.add('customer-inline-editing-cell');
+    cell.innerHTML = '<div class="customer-inline-memo-loading-p300">전체 메모를 불러오는 중입니다...</div>';
+    fetchCustomerDetailFromServer_(rowNo, function(fullDetail) {
+      if (!fullDetail || Number(fullDetail.rowNo) !== rowNo) return;
+      const currentCell = document.querySelector('td[data-row-no="' + rowNo + '"][data-key="memo"]') || cell;
+      const originalHtml = currentCell.getAttribute('data-original-html');
+      if (originalHtml != null) currentCell.innerHTML = originalHtml;
+      currentCell.removeAttribute('data-original-html');
+      currentCell.classList.remove('customer-inline-editing-cell');
+      const fakeEvent = {
+        __customerInlineCell: currentCell,
+        currentTarget: currentCell,
+        stopPropagation: function(){},
+        preventDefault: function(){}
+      };
+      startCustomerInlineEdit_(fakeEvent, rowNo, 'memo');
+    }, function(err) {
+      cell.innerHTML = cell.getAttribute('data-original-html') || '<div class="customer-cell-memo">전체 메모를 불러오지 못했습니다.</div>';
+      cell.classList.remove('customer-inline-editing-cell');
+      alert('전체 메모를 불러오지 못했습니다: ' + getErrorMessage_(err));
+    });
+    return;
+  }
+
   let currentValue = '';
-  if (key === 'memo') currentValue = detail && detail.memo != null ? detail.memo : rowSummary.memo;
+  if (key === 'memo') currentValue = detail && detail.memo != null ? detail.memo : '';
   else currentValue = detail && detail[key] != null ? detail[key] : rowSummary[key];
   currentValue = String(currentValue == null ? '' : currentValue);
 
@@ -1392,14 +1433,16 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
     ]
   ], detail, 'extra', 'customer-expand-block-biz');
 
-  const memoValue = getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || rowSummary.memo || '';
+  const isFullMemoReadyP300 = !!(detail && detail.__masterBacked && !detail.__summary && !detail.__lite);
+  const memoValue = isFullMemoReadyP300 ? (getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '') : '';
   const expandedMemoInputId = 'expandedMemo_' + rowNo;
   html += '<div class="customer-expand-form-block customer-expand-memo-box-v58" id="expandedMemoBox_' + rowNo + '">' +
     '<div class="customer-expand-memo-label-v58">마스터시트<br>메모</div>' +
     '<div class="customer-expand-memo-main-v58">' +
+      (!isFullMemoReadyP300 ? '<div class="customer-expand-memo-loading-p300">전체 메모를 불러오는 중입니다. 요약 메모는 저장/수정 화면에 사용하지 않습니다.</div>' : '') +
       '<div class="customer-expand-memo-edit-wrap-p15 customer-expand-memo-edit-wrap-fixed-tags">' +
         '<div class="customer-expand-memo-tag-row customer-expand-memo-tag-row-always">' + renderCustomerMemoTagPopover_(expandedMemoInputId, 'customer-expand-memo-tag-popover') + '</div>' +
-        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '">' + esc(memoValue) + '</textarea>' +
+        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '"' + (!isFullMemoReadyP300 ? ' readonly data-memo-loading="Y" placeholder="전체 메모 불러오는 중"' : '') + '>' + esc(memoValue) + '</textarea>' +
       '</div>' +
       '<div class="customer-expand-save-row">' +
         '<button type="button" class="secondary" onclick="event.stopPropagation(); resetExpandedCustomerMemo(' + rowNo + ')">되돌리기</button>' +
@@ -1804,6 +1847,10 @@ function saveExpandedCustomerMemo(rowNo) {
   const memoEl = document.getElementById('expandedMemo_' + rowNo);
   const btn = document.getElementById('expandedMemoSaveBtn_' + rowNo);
   if (!memoEl) return;
+  if (memoEl.getAttribute('data-memo-loading') === 'Y' || memoEl.readOnly) {
+    toast('전체 메모를 불러온 뒤 저장할 수 있습니다.');
+    return;
+  }
 
   const memoValue = memoEl.value || '';
   const prevRow = findCustomerRowSummaryByRowNo_(rowNo);
@@ -2003,6 +2050,14 @@ function initializeCustomerSearchIndex(options) {
     loadCustomerSearchIndexFromLocalStorage_();
   }
 
+  const readyRowsP300 = !!(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length);
+  const loadedAtP300 = Number(customerSearchIndexState && customerSearchIndexState.loadedAt || 0);
+  const ageP300 = loadedAtP300 ? (Date.now() - loadedAtP300) : Number.MAX_SAFE_INTEGER;
+  const maxAgeP300 = Number(options.maxAgeMs || CUSTOMER_INDEX_BACKGROUND_REFRESH_MS_P300);
+  if (!force && readyRowsP300 && (options.skipNetworkIfReady || ageP300 < maxAgeP300)) {
+    return;
+  }
+
   if (customerSearchIndexState.loading) {
     if (force) customerSearchIndexForceQueuedP230 = true;
     return;
@@ -2031,7 +2086,7 @@ function initializeCustomerSearchIndex(options) {
 
       setCustomerSearchIndexData_(data, 'server');
       if (!options.silent) toast('검색인덱스_DB를 새로 불러왔습니다.');
-      if (customerSearchState) {
+      if (options.renderAfterLoad === true && customerSearchState) {
         const current = buildCustomerPageFromIndex_(customerSearchState.keyword || '', customerSearchState.page || 0);
         if (current && document.getElementById('customerSearchSection') && document.getElementById('customerSearchSection').classList.contains('active')) {
           renderResults(current, true);
@@ -3089,7 +3144,11 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     customerRank: row.customerRank || '',
     statusOptions: [],
     customerRankOptions: ['', 'A급', 'B급', 'C급', '보류', '제외'],
-    memo: row.memo || '',
+    // 검색인덱스_DB의 메모는 목록 표시용 요약값일 수 있습니다.
+    // 상세/펼침/메모수정 화면에서는 잘린 메모를 보여주거나 저장하면 안 되므로,
+    // 마스터 상세 조회가 끝나기 전까지는 빈 값으로 두고 full detail 도착 후 채웁니다.
+    memo: '',
+    memoPreview: row.memo || '',
     lastSent: row.lastSent || '',
     sentAt: row.sentAt || '',
 
