@@ -1458,7 +1458,7 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
   html += '<div class="customer-expand-top customer-expand-top-v58">' +
     '<div class="customer-expand-title-wrap"><div class="customer-expand-title"><span class="customer-expand-title-label">[회사명]</span><span class="customer-expand-title-company">' + esc(company || '고객 상세') + '</span></div></div>' +
     '<div class="customer-expand-actions customer-expand-actions-v58">' +
-      '<button type="button" class="contact-add-btn" onclick="event.stopPropagation(); openContactHistoryModal(' + rowNo + ')">컨택이력추가</button>' +
+      '<button type="button" class="contact-add-btn" onclick="event.stopPropagation(); openContactHistoryModal(' + rowNo + ',\'' + escAttr((detail && detail.customerNo) || (rowSummary && rowSummary.customerNo) || '') + '\')">컨택이력추가</button>' +
       '<button type="button" onclick="event.stopPropagation(); openSupportRequestForCustomerExpand_(' + rowNo + ')">영업지원요청</button>' +
       '<button type="button" onclick="event.stopPropagation(); openSendForCustomer(' + rowNo + ')">메일자료발송</button>' +
       '<button type="button" onclick="event.stopPropagation(); openCustomerDetailEditFromExpand_(' + rowNo + ')">상세정보수정</button>' +

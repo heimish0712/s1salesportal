@@ -1204,13 +1204,40 @@ function goToSupportForCurrentDetailP19_() {
 function renderContactQuickPanel(d) {
   return '<div class="section-card"><div class="section-title" style="font-size:17px;margin-bottom:8px;">컨택 이력 추가</div>' +
     '<div class="section-sub">컨택내용을 저장하면 마스터시트 메모 하단과 컨택이력_DB에 동시에 반영됩니다.</div>' +
-    '<button type="button" onclick="openContactHistoryModal(' + Number(d.rowNo || 0) + ')">컨택이력 추가</button></div>';
+    '<button type="button" onclick="openContactHistoryModal(' + Number(d.rowNo || 0) + ',\'' + escAttr(d.customerNo || '') + '\')">컨택이력 추가</button></div>';
+}
+
+function resolveContactHistoryTargetCustomerNoP431_(rowNo, explicitCustomerNo) {
+  rowNo = Number(rowNo) || 0;
+  const explicit = normalizeCustomerNoForKey_(explicitCustomerNo);
+  if (explicit) return explicit;
+
+  // 고객검색 펼침의 rowNo 기준 고객번호를 최우선으로 사용합니다.
+  // currentDetail은 상세수정 모달/다른 행에서 남아 있을 수 있으므로 rowNo가 같은 경우에만 fallback으로 씁니다.
+  const summary = (typeof findCustomerRowSummaryByRowNo_ === 'function') ? (findCustomerRowSummaryByRowNo_(rowNo) || {}) : {};
+  const summaryNo = normalizeCustomerNoForKey_(summary.customerNo);
+  if (summaryNo) return summaryNo;
+
+  const cachedByRow = (typeof getCustomerDetailCache_ === 'function') ? getCustomerDetailCache_(rowNo, '') : null;
+  const cachedNo = normalizeCustomerNoForKey_(cachedByRow && cachedByRow.customerNo);
+  if (cachedNo) return cachedNo;
+
+  if (currentDetail && Number(currentDetail.rowNo || 0) === rowNo) {
+    return normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo);
+  }
+
+  return '';
+}
+
+function getContactHistoryTargetPayloadP431_() {
+  const rowNo = Number(contactHistoryTargetRowNo || 0);
+  const customerNo = normalizeCustomerNoForKey_(contactHistoryTargetCustomerNo || resolveContactHistoryTargetCustomerNoP431_(rowNo, ''));
+  return { rowNo: rowNo, customerNo: customerNo };
 }
 
 function openContactHistoryModal(rowNo, customerNo) {
   contactHistoryTargetRowNo = Number(rowNo || (currentDetail && currentDetail.rowNo) || 0);
-  const summary = findCustomerRowSummaryByRowNo_(contactHistoryTargetRowNo) || {};
-  currentDetailCustomerNo = normalizeCustomerNoForKey_(customerNo || (currentDetail && currentDetail.customerNo) || summary.customerNo || currentDetailCustomerNo);
+  contactHistoryTargetCustomerNo = resolveContactHistoryTargetCustomerNoP431_(contactHistoryTargetRowNo, customerNo);
   if (!contactHistoryTargetRowNo) return toast('고객 행 번호를 찾지 못했습니다.');
 
   const backdrop = document.getElementById('contactHistoryBackdrop');
@@ -1239,6 +1266,7 @@ function closeContactHistoryModal() {
   const backdrop = document.getElementById('contactHistoryBackdrop');
   if (backdrop) backdrop.style.display = 'none';
   contactHistoryTargetRowNo = 0;
+  contactHistoryTargetCustomerNo = '';
   contactSelectedTagsP11 = [];
   contactNextActionTagsP119 = [];
 }
@@ -1254,8 +1282,11 @@ function normalizeContactAtForSaveP12_() {
 }
 
 function saveContactHistoryFromModal() {
-  const rowNo = Number(contactHistoryTargetRowNo || 0);
+  const target = getContactHistoryTargetPayloadP431_();
+  const rowNo = Number(target.rowNo || 0);
+  const targetCustomerNo = normalizeCustomerNoForKey_(target.customerNo);
   if (!rowNo) return toast('고객 행 번호를 찾지 못했습니다.');
+  if (!targetCustomerNo) return toast('고객번호를 확인하지 못했습니다. 새로고침 후 다시 시도하세요.');
 
   const roundNo = document.getElementById('contactRoundSelect').value;
   const method = document.getElementById('contactMethodSelect').value;
@@ -1296,7 +1327,7 @@ function saveContactHistoryFromModal() {
       fetchCustomerDetailFromServer_(rowNo, function(detail){
         if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
         if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
-      }, function(){}, { customerNo: normalizeCustomerNoForKey_(((getCustomerDetailCache_(rowNo, currentDetailCustomerNo) || currentDetail || {}).customerNo) || currentDetailCustomerNo) });
+      }, function(){}, { customerNo: targetCustomerNo });
       setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
       if (document.getElementById('todaySection') && document.getElementById('todaySection').classList.contains('active')) loadTodayPage();
     })
@@ -1305,7 +1336,7 @@ function saveContactHistoryFromModal() {
       const msg = getErrorMessage_(err);
       alert('컨택이력 저장 실패: ' + (/LockService|lock|잠금|timeout|Timeout|Exception|ReferenceError|TypeError/i.test(msg) ? '저장하지 못했습니다. 입력 내용은 유지됩니다. 잠시 후 다시 시도해 주세요.' : msg));
     })
-    .addContactHistory({ rowNo: rowNo, customerNo: normalizeCustomerNoForKey_(((getCustomerDetailCache_(rowNo, currentDetailCustomerNo) || currentDetail || {}).customerNo) || currentDetailCustomerNo), roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, author: author, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText, clientRequestId: clientRequestId });
+    .addContactHistory({ rowNo: rowNo, customerNo: targetCustomerNo, roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, author: author, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText, clientRequestId: clientRequestId });
 }
 
 

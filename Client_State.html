@@ -394,6 +394,9 @@ const CUSTOMER_AUTHORITATIVE_PATCH_TTL_MS_K1 = 5 * 60 * 1000;
 let lastCustomerResultResponse = null;
 let lastCustomerResultFromCache = false;
 let contactHistoryTargetRowNo = 0;
+// P431: 컨택이력 모달은 고객상세 currentDetail과 별도로 저장 대상 고객번호를 고정합니다.
+// 고객검색 펼침에서 컨택이력을 열 때 다른 고객의 currentDetail/customerNo가 섞이면 서버 저장 대상 불일치가 발생합니다.
+let contactHistoryTargetCustomerNo = '';
 let todaySelectedDate = formatDateInput_(new Date());
 let todayCalendarCursor = new Date();
 let todayCurrentData = null;
