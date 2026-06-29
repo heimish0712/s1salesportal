@@ -11,6 +11,7 @@ function loadDashboard(options) {
   // 권한별 집계이므로 권한 확인 전의 낡은 공용 캐시는 렌더링하지 않습니다.
   if (!options.skipLocal) {
     renderHomeFromLocalCacheV77_();
+    renderHomeSalesStatusFromLocalP443_();
   }
 
   const now = Date.now();
@@ -25,6 +26,7 @@ function loadDashboard(options) {
       homeLoadInFlightV77 = false;
       applyHomeDataV77_(data, true);
       scheduleDashboardRefreshV77_(data && data.dashboard);
+      scheduleHomeSalesStatusLoadP443_();
     })
     .withFailureHandler(function(err) {
       homeLoadInFlightV77 = false;
@@ -191,4 +193,183 @@ function readHomeCacheV46_() { return readHomeCacheV77_(); }
 function saveHomeCacheV46_(data) { return saveHomeCacheV77_(data); }
 function scheduleDashboardRefreshV46_(dashboard) { return scheduleDashboardRefreshV77_(dashboard); }
 function renderHomeLoadSoftErrorV46_(err) { return renderHomeLoadSoftErrorV77_(err); }
+
+
+// P443: HOME 수주현황
+const HOME_SALES_STATUS_CACHE_KEY_P443_BASE = 'portalHomeSalesStatus:p443';
+let homeSalesStatusLoadInFlightP443 = false;
+let homeSalesStatusLastLoadAtP443 = 0;
+let homeSalesStatusScheduledP443 = false;
+
+function scheduleHomeSalesStatusLoadP443_() {
+  if (homeSalesStatusScheduledP443) return;
+  homeSalesStatusScheduledP443 = true;
+  setTimeout(function() {
+    homeSalesStatusScheduledP443 = false;
+    loadHomeSalesStatusP443({ silent: true });
+  }, 250);
+}
+
+function loadHomeSalesStatusP443(options) {
+  options = options || {};
+  if (!options.force && !options.skipLocal) renderHomeSalesStatusFromLocalP443_();
+  const now = Date.now();
+  if (homeSalesStatusLoadInFlightP443 || (!options.force && now - homeSalesStatusLastLoadAtP443 < 2500)) return;
+  homeSalesStatusLoadInFlightP443 = true;
+  homeSalesStatusLastLoadAtP443 = now;
+  const area = document.getElementById('homeSalesStatusAreaP443');
+  if (area && (options.force || !area.dataset.rendered)) {
+    area.innerHTML = '<div class="loading">수주현황을 불러오는 중입니다.</div>';
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      homeSalesStatusLoadInFlightP443 = false;
+      renderHomeSalesStatusP443_(res);
+      saveHomeSalesStatusCacheP443_(res);
+    })
+    .withFailureHandler(function(err) {
+      homeSalesStatusLoadInFlightP443 = false;
+      const hasCached = renderHomeSalesStatusFromLocalP443_();
+      if (!hasCached) renderHomeSalesStatusErrorP443_(err);
+    })
+    .getPortalHomeSalesStatus({ force: options.force === true });
+}
+
+function renderHomeSalesStatusP443_(res) {
+  const area = document.getElementById('homeSalesStatusAreaP443');
+  if (!area) return;
+  if (!res || res.ok === false) {
+    renderHomeSalesStatusErrorP443_(res && res.message ? res.message : '수주현황을 불러오지 못했습니다.');
+    return;
+  }
+  area.dataset.rendered = 'Y';
+  const sub = document.getElementById('homeSalesSubP443');
+  if (sub) {
+    sub.textContent = (res.title || '수주현황') + ' · ' + (res.generatedAt || '-') + (res.fromCache ? ' · 캐시' : '');
+  }
+
+  const kpis = [
+    { label: '이번주 수주', data: res.thisWeek || {} },
+    { label: '이번달 수주', data: res.thisMonth || {} },
+    { label: '최근 30일', data: res.last30 || {} },
+    { label: '누적 수주', data: res.total || {} }
+  ];
+
+  let html = '<div class="home-sales-wrap-p443">';
+  html += '<div class="home-sales-kpis-p443">';
+  kpis.forEach(function(k) {
+    html += '<div class="home-sales-kpi-p443">';
+    html += '<div class="home-sales-kpi-label-p443">' + esc(k.label) + '</div>';
+    html += '<div class="home-sales-kpi-value-p443">' + esc(String(k.data.count || 0)) + '건</div>';
+    html += '<div class="home-sales-kpi-money-p443">' + esc(k.data.amountText || '₩0') + '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+
+  html += '<div class="home-sales-content-p443">';
+  html += '<div class="home-sales-block-p443">';
+  html += '<div class="home-sales-block-title-p443">' + (res.allScope ? '담당자별 수주' : '기간별 나의 수주') + '</div>';
+  html += res.allScope ? renderHomeSalesRepTableP443_(res.repSummary || []) : renderHomeSalesPeriodTableP443_(res.periodBuckets || []);
+  html += '</div>';
+
+  html += '<div class="home-sales-block-p443">';
+  html += '<div class="home-sales-block-title-p443">이번주 수주 리스트</div>';
+  html += renderHomeSalesListTableP443_(res.thisWeekList || [], '이번주 수주가 없습니다.');
+  html += '</div>';
+  html += '</div>';
+
+  html += '<div class="home-sales-block-p443 home-sales-recent-p443">';
+  html += '<div class="home-sales-block-title-p443">최근 수주 리스트</div>';
+  html += renderHomeSalesListTableP443_(res.recentList || [], '수주 리스트가 없습니다.');
+  html += '</div>';
+  html += '</div>';
+
+  area.innerHTML = html;
+}
+
+function renderHomeSalesRepTableP443_(rows) {
+  if (!rows.length) return '<div class="home-sales-empty-p443">담당자별 수주 데이터가 없습니다.</div>';
+  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443"><thead><tr><th>담당자</th><th>누적</th><th>누적금액</th><th>이번달</th></tr></thead><tbody>';
+  rows.forEach(function(r) {
+    html += '<tr>';
+    html += '<td>' + esc(r.rep || '-') + '</td>';
+    html += '<td class="num">' + esc(String(r.count || 0)) + '건</td>';
+    html += '<td class="num">' + esc(r.amountText || '₩0') + '</td>';
+    html += '<td class="num">' + esc(String(r.monthCount || 0)) + '건</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function renderHomeSalesPeriodTableP443_(rows) {
+  if (!rows.length) return '<div class="home-sales-empty-p443">기간별 수주 데이터가 없습니다.</div>';
+  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443"><thead><tr><th>기간</th><th>건수</th><th>금액</th></tr></thead><tbody>';
+  rows.forEach(function(r) {
+    html += '<tr>';
+    html += '<td>' + esc(r.label || '-') + '</td>';
+    html += '<td class="num">' + esc(String(r.count || 0)) + '건</td>';
+    html += '<td class="num">' + esc(r.amountText || '₩0') + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function renderHomeSalesListTableP443_(rows, emptyMsg) {
+  if (!rows.length) return '<div class="home-sales-empty-p443">' + esc(emptyMsg || '데이터가 없습니다.') + '</div>';
+  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443 home-sales-list-table-p443"><thead><tr><th>계약일</th><th>고객사</th><th>담당</th><th>계약가</th><th>수행사</th></tr></thead><tbody>';
+  rows.forEach(function(r) {
+    html += '<tr>';
+    html += '<td>' + esc(r.contractDate || '-') + '</td>';
+    html += '<td><div class="home-sales-company-p443">' + esc(r.company || '-') + '</div><div class="home-sales-muted-p443">#' + esc(r.contractNo || '-') + ' · 고객 ' + esc(r.customerNo || '-') + '</div></td>';
+    html += '<td>' + esc(r.contractRep || '-') + '</td>';
+    html += '<td class="num">' + esc(r.amountText || '₩0') + '</td>';
+    html += '<td>' + esc(r.vendor || '-') + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function getHomeSalesStatusCacheKeyP443_() {
+  try {
+    const p = typeof getPortalPermission_ === 'function' ? getPortalPermission_() : null;
+    const scope = (p && p.canUseAdminHome) ? 'ALL_ADMIN' : ('OWN_' + ((p && (p.salesRepName || p.name || p.email)) || 'USER'));
+    return HOME_SALES_STATUS_CACHE_KEY_P443_BASE + ':' + String(scope).replace(/[^A-Za-z0-9가-힣_]+/g, '_');
+  } catch (err) {
+    return HOME_SALES_STATUS_CACHE_KEY_P443_BASE + ':UNKNOWN';
+  }
+}
+
+function renderHomeSalesStatusFromLocalP443_() {
+  try {
+    if (typeof portalPermissionLoadedV63 !== 'undefined' && !portalPermissionLoadedV63) return false;
+    const raw = localStorage.getItem(getHomeSalesStatusCacheKeyP443_());
+    if (!raw) return false;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.ok) return false;
+    obj.fromCache = true;
+    renderHomeSalesStatusP443_(obj);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+function saveHomeSalesStatusCacheP443_(res) {
+  try {
+    if (!res || !res.ok) return;
+    localStorage.setItem(getHomeSalesStatusCacheKeyP443_(), JSON.stringify(res));
+  } catch (err) {}
+}
+
+function renderHomeSalesStatusErrorP443_(err) {
+  const area = document.getElementById('homeSalesStatusAreaP443');
+  if (!area) return;
+  const msg = err && err.message ? err.message : String(err || '수주현황을 불러오지 못했습니다.');
+  area.innerHTML = '<div class="home-sales-error-p443">' + esc(msg) + '</div>';
+}
+
 </script>

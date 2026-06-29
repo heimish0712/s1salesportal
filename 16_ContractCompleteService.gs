@@ -18,7 +18,7 @@ const PORTAL_CONTRACT_DRIVE_DOC_SYNC_VALUE_P270 = '저장';
 const PORTAL_CONTRACT_COMPLETE_FIELDS_V69 = [
   { key: 'contractNo', label: '계약번호', headers: ['계약번호'] },
   { key: 'customerNo', label: '고객번호', headers: ['고객번호'] },
-  { key: 'contractDate', label: '계약일자', headers: ['계약일자'] },
+  { key: 'contractDate', label: '계약일자', headers: ['계약일자(발주번호 부여일)', '계약일자', '계약 일자', '발주번호 부여일'] },
   { key: 'vendorSentDate', label: '수행사발송일자', headers: ['수행사발송일자', '수행사 발송일자'] },
   { key: 'businessRegSaved', label: '사업자등록증 저장', headers: ['사업자등록증 저장', '사업자등록증저장'] },
   // key는 기존 호환성을 위해 orderMailSaved를 유지하되, 실제 영업관리대장 F열인 `선임신고서 저장`도 매칭합니다.
