@@ -2183,9 +2183,9 @@ function getNewCustomerTemplate() {
     email: '',
     salesRep: '',
     vendor: '',
-    status: '',
+    status: '견적제출완료',
     customerRank: '',
-    statusOptions: buildStatusOptions_(''),
+    statusOptions: buildStatusOptions_('견적제출완료'),
     customerRankOptions: buildCustomerRankOptions_(''),
     memo: '',
     lastSent: '',
@@ -2204,7 +2204,7 @@ function getNewCustomerTemplate() {
     arr.forEach(function(f) { if (f.key === key) f.value = value; });
   };
   setField('basic', 'firstRegisteredAt', todayText);
-  setField('basic', 'status', '');
+  setField('basic', 'status', '견적제출완료');
   setField('contract', 'contractUnit', '12');
   setField('contract', 'contractStartDate', formatPortalContractDateForDisplayP420_(getPortalDefaultContractStartDateP420_()));
   setField('contract', 'contractEndDate', formatPortalContractDateForDisplayP420_(calculatePortalContractEndDateP420_(getPortalDefaultContractStartDateP420_(), '12')));

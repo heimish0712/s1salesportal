@@ -4835,4 +4835,77 @@ button[disabled], .portal-btn-pending {
 .focus-expand-row-p380 > td { padding: 0 12px 14px 12px !important; background: #f8fbff; }
 .focus-expand-row-p380 .customer-expand-panel { margin-top: 0; }
 .focus-row-expand-btn-p380 { white-space: nowrap; }
+
+
+/* PATCH HOME-ALIGN-260629: HOME 수주현황/리스트 외관 줄맞춤 전용 - 기능 로직 수정 없음 */
+#homeSection .portal-panel,
+#homeSection .notice-table-wrap {
+  min-width: 0;
+}
+
+#homeSection .home-cards .metric-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+#homeSection .metric-label {
+  min-height: 14px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#homeSection .metric-value {
+  font-variant-numeric: tabular-nums;
+}
+
+#homeSection table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+#homeSection th,
+#homeSection td {
+  vertical-align: middle;
+  line-height: 1.45;
+}
+
+#homeSection th {
+  white-space: nowrap;
+}
+
+#homeSection td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#homeSection td:first-child,
+#homeSection th:first-child,
+#homeSection td:last-child,
+#homeSection th:last-child {
+  text-align: center;
+}
+
+#homeSection [class*="list-row"],
+#homeSection [class*="ListRow"],
+#homeSection [class*="sales-row"],
+#homeSection [class*="contract-row"],
+#homeSection [class*="won-row"] {
+  align-items: center;
+}
+
+#homeSection [class*="list-row"] > *,
+#homeSection [class*="ListRow"] > *,
+#homeSection [class*="sales-row"] > *,
+#homeSection [class*="contract-row"] > *,
+#homeSection [class*="won-row"] > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 </style>

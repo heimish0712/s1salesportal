@@ -793,6 +793,7 @@ function applyNewCustomerRegistrationDefaults_() {
     }
   }
 
+  setInputValueByKeyIfExists_('status', '견적제출완료', { onlyBlank: true });
   setInputValueByKeyIfExists_('contractUnit', '12', { onlyBlank: true });
   setInputValueByKeyIfExists_('contractStartDate', formatPortalContractDateClientP420_(getDefaultPortalContractStartDateClientP420_()), { onlyBlank: true });
   updatePortalContractEndDateClientP420_({ force: true });
