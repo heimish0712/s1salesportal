@@ -44,6 +44,8 @@ function applyHomeDataV77_(data, saveCache) {
     loadHomeNoticeList();
   }
 
+  scheduleHomeAlignmentFixP510_();
+
   if (saveCache) saveHomeCacheV77_(data);
 }
 
@@ -158,6 +160,7 @@ function scheduleDashboardRefreshV77_(dashboard) {
           cached.dashboard = freshDashboard;
           saveHomeCacheV77_(cached);
           renderDashboardStatsV77_(freshDashboard);
+          scheduleHomeAlignmentFixP510_();
         }
       })
       .withFailureHandler(function(err) {
@@ -191,4 +194,170 @@ function readHomeCacheV46_() { return readHomeCacheV77_(); }
 function saveHomeCacheV46_(data) { return saveHomeCacheV77_(data); }
 function scheduleDashboardRefreshV46_(dashboard) { return scheduleDashboardRefreshV77_(dashboard); }
 function renderHomeLoadSoftErrorV46_(err) { return renderHomeLoadSoftErrorV77_(err); }
+
+
+// PATCH HOME-ALIGN-P510: HOME 수주 관련 표/리스트 줄 맞춤 전용
+// - 데이터 조회, 저장, 서버 함수 호출 로직은 건드리지 않고 DOM 표시 정렬만 보정합니다.
+let homeAlignmentFixTimerP510_ = null;
+let homeAlignmentObserverP510_ = null;
+
+function scheduleHomeAlignmentFixP510_() {
+  if (homeAlignmentFixTimerP510_) clearTimeout(homeAlignmentFixTimerP510_);
+  homeAlignmentFixTimerP510_ = setTimeout(function() {
+    homeAlignmentFixTimerP510_ = null;
+    applyHomeAlignmentFixP510_();
+  }, 30);
+  setTimeout(applyHomeAlignmentFixP510_, 180);
+  setTimeout(applyHomeAlignmentFixP510_, 650);
+}
+
+function setupHomeAlignmentObserverP510_() {
+  const root = document.getElementById('homeSection');
+  if (!root || typeof MutationObserver === 'undefined' || homeAlignmentObserverP510_) return;
+  homeAlignmentObserverP510_ = new MutationObserver(function() {
+    scheduleHomeAlignmentFixP510_();
+  });
+  homeAlignmentObserverP510_.observe(root, { childList: true, subtree: true });
+  scheduleHomeAlignmentFixP510_();
+}
+
+function applyHomeAlignmentFixP510_() {
+  const root = document.getElementById('homeSection');
+  if (!root) return;
+
+  Array.from(root.querySelectorAll('table')).forEach(function(table) {
+    const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th')).map(function(th) {
+      return normalizeHomeAlignmentTextP510_(th.textContent);
+    });
+    const headerText = headers.join('|');
+    const panelText = normalizeHomeAlignmentTextP510_(getHomeAlignmentPanelTextP510_(table));
+    const colCount = Math.max(headers.length, getHomeAlignmentFirstBodyColumnCountP510_(table));
+
+    if (isHomeContractListTableP510_(headerText, panelText, colCount)) {
+      table.classList.add('home-contract-list-table-p510');
+      applyHomeColgroupP510_(table, ['16%', '44%', '11%', '18%', '11%']);
+      applyHomeTableAlignmentP510_(table, ['left', 'left', 'center', 'right', 'center']);
+      return;
+    }
+
+    if (isHomeSalesSummaryTableP510_(headerText, panelText, colCount)) {
+      table.classList.add('home-sales-summary-table-p510');
+      if (colCount === 3) {
+        applyHomeColgroupP510_(table, ['46%', '27%', '27%']);
+        applyHomeTableAlignmentP510_(table, ['left', 'right', 'right']);
+      } else if (colCount === 4) {
+        applyHomeColgroupP510_(table, ['40%', '20%', '20%', '20%']);
+        applyHomeTableAlignmentP510_(table, ['left', 'right', 'right', 'right']);
+      } else {
+        applyHomeTableAlignmentP510_(table, ['left']);
+      }
+    }
+  });
+
+  // 혹시 수주 리스트가 table이 아니라 div grid/flex로 렌더링되는 경우까지 외관만 보정합니다.
+  Array.from(root.querySelectorAll('.home-contract-list-p510, .home-sales-summary-p510')).forEach(function(box) {
+    alignHomeGridRowsP510_(box);
+  });
+}
+
+function isHomeContractListTableP510_(headerText, panelText, colCount) {
+  const target = headerText + '|' + panelText;
+  if (colCount !== 5) return false;
+  return /계약일|계약일자/.test(target) &&
+    /고객사|고객명|회사명/.test(target) &&
+    /담당/.test(target) &&
+    /계약가|계약금액|견적가|금액/.test(target) &&
+    /수행사/.test(target);
+}
+
+function isHomeSalesSummaryTableP510_(headerText, panelText, colCount) {
+  const target = headerText + '|' + panelText;
+  if (colCount < 2 || colCount > 4) return false;
+  return /담당자별|담당별|영업담당/.test(target) && /수주|계약/.test(target);
+}
+
+function getHomeAlignmentFirstBodyColumnCountP510_(table) {
+  const row = table.querySelector('tbody tr:not(.customer-expand-row), tr:nth-child(2)');
+  return row ? row.children.length : 0;
+}
+
+function getHomeAlignmentPanelTextP510_(el) {
+  let cur = el;
+  for (let i = 0; cur && i < 5; i++, cur = cur.parentElement) {
+    const t = cur.textContent || '';
+    if (/최근\s*수주|이번주\s*수주|담당자별\s*수주|수주\s*리스트|수주\s*현황/.test(t)) return t.slice(0, 800);
+  }
+  return '';
+}
+
+function applyHomeColgroupP510_(table, widths) {
+  widths = widths || [];
+  if (!widths.length) return;
+  const current = table.querySelector('colgroup[data-home-align-p510="Y"]');
+  if (current && current.children.length === widths.length) return;
+
+  const old = table.querySelector('colgroup');
+  if (old) old.remove();
+
+  const colgroup = document.createElement('colgroup');
+  colgroup.setAttribute('data-home-align-p510', 'Y');
+  widths.forEach(function(width) {
+    const col = document.createElement('col');
+    col.style.width = width;
+    colgroup.appendChild(col);
+  });
+  table.insertBefore(colgroup, table.firstChild);
+}
+
+function applyHomeTableAlignmentP510_(table, aligns) {
+  aligns = aligns || [];
+  table.style.width = '100%';
+  table.style.tableLayout = 'fixed';
+  table.style.borderCollapse = 'collapse';
+
+  Array.from(table.querySelectorAll('tr')).forEach(function(row) {
+    Array.from(row.children).forEach(function(cell, idx) {
+      const align = aligns[idx] || (idx === 0 ? 'left' : 'center');
+      cell.style.boxSizing = 'border-box';
+      cell.style.textAlign = align;
+      cell.style.verticalAlign = 'middle';
+      cell.style.whiteSpace = idx === 1 ? 'normal' : 'nowrap';
+      cell.style.overflow = 'hidden';
+      cell.style.textOverflow = 'ellipsis';
+      if (align === 'right' || /금액|계약가|견적가|건수|합계|총액/.test(cell.textContent || '')) {
+        cell.style.fontVariantNumeric = 'tabular-nums';
+      }
+    });
+  });
+}
+
+function alignHomeGridRowsP510_(box) {
+  const rows = Array.from(box.children || []).filter(function(el) { return el && el.children && el.children.length >= 2; });
+  rows.forEach(function(row) {
+    const count = row.children.length;
+    if (count === 5) row.style.gridTemplateColumns = '16% 44% 11% 18% 11%';
+    if (count === 4) row.style.gridTemplateColumns = '40% 20% 20% 20%';
+    if (count === 3) row.style.gridTemplateColumns = '46% 27% 27%';
+    row.style.alignItems = 'center';
+    Array.from(row.children).forEach(function(cell, idx) {
+      cell.style.minWidth = '0';
+      cell.style.overflow = 'hidden';
+      cell.style.textOverflow = 'ellipsis';
+      cell.style.whiteSpace = idx === 1 ? 'normal' : 'nowrap';
+      if (count === 5) cell.style.textAlign = ['left', 'left', 'center', 'right', 'center'][idx] || 'center';
+      else if (idx > 0) cell.style.textAlign = 'right';
+    });
+  });
+}
+
+function normalizeHomeAlignmentTextP510_(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setupHomeAlignmentObserverP510_);
+} else {
+  setupHomeAlignmentObserverP510_();
+}
+
 </script>

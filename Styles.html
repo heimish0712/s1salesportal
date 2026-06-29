@@ -4837,75 +4837,68 @@ button[disabled], .portal-btn-pending {
 .focus-row-expand-btn-p380 { white-space: nowrap; }
 
 
-/* PATCH HOME-ALIGN-260629: HOME 수주현황/리스트 외관 줄맞춤 전용 - 기능 로직 수정 없음 */
-#homeSection .portal-panel,
-#homeSection .notice-table-wrap {
-  min-width: 0;
+/* PATCH HOME-ALIGN-P510: HOME 담당자별/이번주/최근 수주 표 줄맞춤 전용 - 기능 로직 수정 없음 */
+#homeSection .home-contract-list-table-p510,
+#homeSection .home-sales-summary-table-p510 {
+  width: 100% !important;
+  table-layout: fixed !important;
+  border-collapse: collapse !important;
 }
 
-#homeSection .home-cards .metric-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+#homeSection .home-contract-list-table-p510 th,
+#homeSection .home-contract-list-table-p510 td,
+#homeSection .home-sales-summary-table-p510 th,
+#homeSection .home-sales-summary-table-p510 td {
+  box-sizing: border-box !important;
+  vertical-align: middle !important;
+  line-height: 1.42 !important;
+  padding-left: 16px !important;
+  padding-right: 16px !important;
 }
 
-#homeSection .metric-label {
-  min-height: 14px;
-  line-height: 1.25;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+#homeSection .home-contract-list-table-p510 th:nth-child(1),
+#homeSection .home-contract-list-table-p510 td:nth-child(1),
+#homeSection .home-contract-list-table-p510 th:nth-child(2),
+#homeSection .home-contract-list-table-p510 td:nth-child(2) {
+  text-align: left !important;
 }
 
-#homeSection .metric-value {
-  font-variant-numeric: tabular-nums;
+#homeSection .home-contract-list-table-p510 th:nth-child(3),
+#homeSection .home-contract-list-table-p510 td:nth-child(3),
+#homeSection .home-contract-list-table-p510 th:nth-child(5),
+#homeSection .home-contract-list-table-p510 td:nth-child(5) {
+  text-align: center !important;
 }
 
-#homeSection table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
+#homeSection .home-contract-list-table-p510 th:nth-child(4),
+#homeSection .home-contract-list-table-p510 td:nth-child(4) {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums !important;
 }
 
-#homeSection th,
-#homeSection td {
-  vertical-align: middle;
-  line-height: 1.45;
+#homeSection .home-contract-list-table-p510 td:nth-child(2) {
+  white-space: normal !important;
+  word-break: keep-all !important;
+  overflow-wrap: anywhere !important;
 }
 
-#homeSection th {
-  white-space: nowrap;
+#homeSection .home-contract-list-table-p510 td:not(:nth-child(2)),
+#homeSection .home-contract-list-table-p510 th {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
 }
 
-#homeSection td {
-  overflow: hidden;
-  text-overflow: ellipsis;
+#homeSection .home-sales-summary-table-p510 th:first-child,
+#homeSection .home-sales-summary-table-p510 td:first-child {
+  text-align: left !important;
 }
 
-#homeSection td:first-child,
-#homeSection th:first-child,
-#homeSection td:last-child,
-#homeSection th:last-child {
-  text-align: center;
-}
-
-#homeSection [class*="list-row"],
-#homeSection [class*="ListRow"],
-#homeSection [class*="sales-row"],
-#homeSection [class*="contract-row"],
-#homeSection [class*="won-row"] {
-  align-items: center;
-}
-
-#homeSection [class*="list-row"] > *,
-#homeSection [class*="ListRow"] > *,
-#homeSection [class*="sales-row"] > *,
-#homeSection [class*="contract-row"] > *,
-#homeSection [class*="won-row"] > * {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+#homeSection .home-sales-summary-table-p510 th:not(:first-child),
+#homeSection .home-sales-summary-table-p510 td:not(:first-child) {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums !important;
+  white-space: nowrap !important;
 }
 
 </style>
