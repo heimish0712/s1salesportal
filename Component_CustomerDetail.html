@@ -361,7 +361,7 @@ function renderDetailField(f, sectionKey, forceWide, extraClass) {
   } else {
     const isDateTextP420 = f.type === 'dateText' || key === 'contractStartDate' || key === 'contractEndDate';
     const inputType = f.type === 'email' ? 'email' : 'text';
-    const placeholderP420 = isDateTextP420 ? ' placeholder="26.07.01"' : '';
+    const placeholderP420 = isDateTextP420 ? ' placeholder="2026.07.01."' : '';
     const dateClsP420 = isDateTextP420 ? ' portal-contract-date-input' : '';
     html += '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(isDateTextP420 ? normalizePortalContractDateDisplayClientP420_(f.value || '') : (f.value || '')) + '"' + placeholderP420 + data + ' disabled>';
   }
@@ -614,7 +614,8 @@ function saveDetailFields() {
         clientSaveSource: 'detailModal',
         clientRequestId: detailSaveGuardIdP430,
         clientSavedAt: clientSavedAtP430,
-        requireAuditLog: true
+        requireAuditLog: false,
+        fastMode: true
       }))
       .then(function(res){
         try { applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res); } catch(e) {}
@@ -734,11 +735,11 @@ function setInputValueByKey(key, value) {
 
 // STEP42/P420: 계약시작일/계약종료일 클라이언트 표시·자동계산
 function parsePortalContractDateClientP420_(value) {
-  const text = String(value == null ? '' : value).trim();
+  const text = String(value == null ? '' : value).trim().replace(/\s*([.\/-])\s*/g, '$1');
   if (!text) return null;
-  let m = text.match(/^(\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  let m = text.match(/^(\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})\.?$/);
   if (m) return new Date(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  m = text.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  m = text.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})\.?$/);
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   const d = new Date(text);
   return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -746,10 +747,10 @@ function parsePortalContractDateClientP420_(value) {
 
 function formatPortalContractDateClientP420_(date) {
   if (!(date instanceof Date) || isNaN(date.getTime())) return '';
-  const yy = String(date.getFullYear() % 100).padStart(2, '0');
+  const yyyy = String(date.getFullYear());
   const mm = String(date.getMonth() + 1).padStart(2, '0');
   const dd = String(date.getDate()).padStart(2, '0');
-  return yy + '.' + mm + '.' + dd;
+  return yyyy + '.' + mm + '.' + dd + '.';
 }
 
 function normalizePortalContractDateDisplayClientP420_(value) {
@@ -843,6 +844,7 @@ function applyNewCustomerRegistrationDefaults_() {
     }
   }
 
+  setInputValueByKeyIfExists_('status', '견적제출완료', { onlyBlank: true });
   setInputValueByKeyIfExists_('contractUnit', '12', { onlyBlank: true });
   setInputValueByKeyIfExists_('contractStartDate', formatPortalContractDateClientP420_(getDefaultPortalContractStartDateClientP420_()), { onlyBlank: true });
   updatePortalContractEndDateClientP420_({ force: true });
@@ -1235,6 +1237,49 @@ function getContactHistoryTargetPayloadP431_() {
   return { rowNo: rowNo, customerNo: customerNo };
 }
 
+
+function getPortalCurrentUserNameForContactP432_() {
+  const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : (typeof portalCurrentPermissionV63 !== 'undefined' ? portalCurrentPermissionV63 : null);
+  return String((p && (p.displayName || p.name || p.salesRepName || p.email)) || '').trim();
+}
+
+function getContactAuthorOptionsP432_() {
+  const seen = {};
+  const out = [];
+  function add(v) {
+    v = String(v || '').trim();
+    if (!v) return;
+    const key = v.replace(/\s+/g, '').toLowerCase();
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    out.push(v);
+  }
+  const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : (typeof portalCurrentPermissionV63 !== 'undefined' ? portalCurrentPermissionV63 : null);
+  add(getPortalCurrentUserNameForContactP432_());
+  if (p) {
+    add(p.displayName);
+    add(p.name);
+    add(p.salesRepName);
+    if (Array.isArray(p.salesRepAliases)) p.salesRepAliases.forEach(add);
+  }
+  if (typeof todayLastLoadedAuthorOptionsP350_ !== 'undefined' && Array.isArray(todayLastLoadedAuthorOptionsP350_)) {
+    todayLastLoadedAuthorOptionsP350_.forEach(add);
+  }
+  ['문형진','방수원','박새봄','김경아','최보람','이옥희','유현희','박원경','김서하','라유화'].forEach(add);
+  return out;
+}
+
+function renderContactAuthorOptionsP432_(selected) {
+  const list = document.getElementById('contactAuthorOptionsList');
+  if (!list) return;
+  const opts = getContactAuthorOptionsP432_();
+  const selectedText = String(selected || '').trim();
+  if (selectedText && opts.indexOf(selectedText) < 0) opts.unshift(selectedText);
+  list.innerHTML = opts.map(function(name) {
+    return '<option value="' + escAttr(name) + '"></option>';
+  }).join('');
+}
+
 function openContactHistoryModal(rowNo, customerNo) {
   contactHistoryTargetRowNo = Number(rowNo || (currentDetail && currentDetail.rowNo) || 0);
   contactHistoryTargetCustomerNo = resolveContactHistoryTargetCustomerNoP431_(contactHistoryTargetRowNo, customerNo);
@@ -1244,18 +1289,23 @@ function openContactHistoryModal(rowNo, customerNo) {
   if (!backdrop) return;
 
   fillSelectOptions_(document.getElementById('contactRoundSelect'), ['', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'], function(v){ return v ? v + '차' : '몇 차인지 선택'; });
-  fillSelectOptions_(document.getElementById('contactMethodSelect'), ['', '전화', '문자', '메일', '방문', '팩스', '기타'], function(v){ return v || '연락수단 선택'; });
+  fillSelectOptions_(document.getElementById('contactMethodSelect'), ['전화', '문자', '메일', '방문', '팩스', '기타'], function(v){ return v || '연락수단 선택'; });
+  const methodEl = document.getElementById('contactMethodSelect');
+  if (methodEl) methodEl.value = '전화';
   fillSelectOptions_(document.getElementById('contactNextActionSelect'), ['', '전화하기', '자료 발송', '견적서 발송', '재확인', '방문/미팅', '계약서류 요청', '보류 확인', '기타'], function(v){ return v || '다음 액션 선택'; });
   contactSelectedTagsP11 = [];
   contactNextActionTagsP119 = [];
   renderContactQuickTagsP11_();
   renderContactNextActionTagsP119_();
 
+  const defaultUser = getPortalCurrentUserNameForContactP432_();
+  renderContactAuthorOptionsP432_(defaultUser);
+
   document.getElementById('contactAtInput').value = toLocalDateTimeInputValue(new Date());
   document.getElementById('contactNextAtInput').value = '';
   document.getElementById('contactContentInput').value = '';
   document.getElementById('contactNextMemoInput').value = '';
-  document.getElementById('contactAuthorInput').value = '';
+  document.getElementById('contactAuthorInput').value = defaultUser || '';
   const btn = document.getElementById('contactSaveBtn');
   if (btn) { btn.disabled = false; btn.textContent = '저장'; }
   backdrop.style.display = 'flex';
@@ -1289,23 +1339,28 @@ function saveContactHistoryFromModal() {
   if (!targetCustomerNo) return toast('고객번호를 확인하지 못했습니다. 새로고침 후 다시 시도하세요.');
 
   const roundNo = document.getElementById('contactRoundSelect').value;
-  const method = document.getElementById('contactMethodSelect').value;
+  const method = document.getElementById('contactMethodSelect').value || '전화';
   const contactAt = normalizeContactAtForSaveP12_();
   let content = document.getElementById('contactContentInput').value;
-  const author = document.getElementById('contactAuthorInput').value;
+  const nextActionAuthor = String((document.getElementById('contactAuthorInput') && document.getElementById('contactAuthorInput').value) || '').trim() || getPortalCurrentUserNameForContactP432_();
   const nextActionBase = document.getElementById('contactNextActionSelect').value;
   const nextMemo = document.getElementById('contactNextMemoInput').value;
-  const nextActionAt = document.getElementById('contactNextAtInput').value;
+  let nextActionAt = document.getElementById('contactNextAtInput').value;
   const selectedTags = (contactSelectedTagsP11 || []).filter(function(v){ return String(v || '').trim(); });
   const contactTagText = selectedTags.join(', ');
   const nextActionTags = normalizeTodayLikeTagsP119_(contactNextActionTagsP119 || []);
   const nextActionTagText = nextActionTags.join(', ');
   if (!String(content || '').trim() && contactTagText) content = contactTagText;
   const nextAction = [nextActionBase, nextMemo].filter(function(v){ return String(v || '').trim(); }).join(' - ');
+  if (nextAction && !String(nextActionAt || '').trim()) {
+    nextActionAt = toLocalDateTimeInputValue(new Date());
+    const nextAtInput = document.getElementById('contactNextAtInput');
+    if (nextAtInput) nextAtInput.value = nextActionAt;
+  }
 
   if (!roundNo) return toast('몇 차인지 선택하세요.');
   if (!method) return toast('연락수단을 선택하세요.');
-  if (!String(content || '').trim() && !contactTagText) return toast('컨택 내용을 입력하거나 태그를 선택하세요.');
+  if (!String(content || '').trim() && !contactTagText) return toast('컨택 내용을 입력하거나 템플릿을 선택하세요.');
 
   const btn = document.getElementById('contactSaveBtn');
   const clientRequestId = 'CH-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
@@ -1314,7 +1369,13 @@ function saveContactHistoryFromModal() {
   google.script.run
     .withSuccessHandler(function(res) {
       if (btn && btn.dataset.requestId && btn.dataset.requestId !== clientRequestId) return;
-      toast(res && res.duplicate ? '이미 저장된 컨택이력입니다.' : '컨택이력이 저장되었습니다.');
+      const savedNext = !!(res && res.nextActionSaved);
+      if (savedNext) {
+        try { if (typeof todayCacheByDateV57 !== 'undefined') todayCacheByDateV57 = {}; } catch (e) {}
+        try { if (typeof todayPreloadMemoryP360_ !== 'undefined') todayPreloadMemoryP360_ = {}; } catch (e) {}
+        try { if (typeof todayLastLoadAtByDateV57 !== 'undefined') todayLastLoadAtByDateV57 = {}; } catch (e) {}
+      }
+      toast(res && res.duplicate ? '이미 저장된 컨택이력입니다.' : (savedNext ? '컨택이력과 다음 액션이 저장되었습니다.' : '컨택이력이 저장되었습니다.'));
       if (btn) delete btn.dataset.requestId;
       closeContactHistoryModal();
       const updatedMemo = res && res.updatedMemo ? res.updatedMemo : '';
@@ -1329,15 +1390,16 @@ function saveContactHistoryFromModal() {
         if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
       }, function(){}, { customerNo: targetCustomerNo });
       setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
-      if (document.getElementById('todaySection') && document.getElementById('todaySection').classList.contains('active')) loadTodayPage();
+      if (document.getElementById('todaySection') && document.getElementById('todaySection').classList.contains('active')) loadTodayPage({ force: true });
     })
     .withFailureHandler(function(err) {
       if (btn) { btn.disabled = false; btn.textContent = '저장'; delete btn.dataset.requestId; }
       const msg = getErrorMessage_(err);
       alert('컨택이력 저장 실패: ' + (/LockService|lock|잠금|timeout|Timeout|Exception|ReferenceError|TypeError/i.test(msg) ? '저장하지 못했습니다. 입력 내용은 유지됩니다. 잠시 후 다시 시도해 주세요.' : msg));
     })
-    .addContactHistory({ rowNo: rowNo, customerNo: targetCustomerNo, roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, author: author, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText, clientRequestId: clientRequestId });
+    .addContactHistory({ rowNo: rowNo, customerNo: targetCustomerNo, roundNo: roundNo, method: method, contactAt: contactAt, content: content, tag: contactTagText, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText, nextActionAuthor: nextActionAuthor, clientRequestId: clientRequestId });
 }
+
 
 
 function getTodayDefaultTagListP119_() {

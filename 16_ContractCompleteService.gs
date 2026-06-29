@@ -1042,7 +1042,7 @@ function syncContractCompleteFromCustomerMasterP420_(payload) {
     const prevText = String(current[idx] == null ? '' : current[idx]).trim();
     if (prevText === nextText) return;
     const range = contractSheet.getRange(existing.rowNo, idx + 1);
-    if (nextValue instanceof Date) range.setNumberFormat('yy.mm.dd');
+    if (nextValue instanceof Date) range.setNumberFormat('yyyy.MM.dd.');
     range.setValue(nextValue);
     updated.push(key);
   });

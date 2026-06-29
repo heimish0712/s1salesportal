@@ -4836,3 +4836,123 @@ button[disabled], .portal-btn-pending {
 .focus-expand-row-p380 .customer-expand-panel { margin-top: 0; }
 .focus-row-expand-btn-p380 { white-space: nowrap; }
 </style>
+
+/* PATCH P432: 컨택 이력 + 다음 액션 통합 팝업 */
+.contact-modal-p432 {
+  width: 1120px;
+  max-width: 94vw;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 4px;
+}
+.contact-modal-body-p432 {
+  padding: 24px 18px 20px;
+  overflow: auto;
+  background: #fff;
+}
+.contact-section-card-p432 {
+  border: 2px solid #e2e8f0;
+  border-radius: 26px;
+  padding: 24px 26px 28px;
+  margin-bottom: 24px;
+  background: #fff;
+}
+.contact-section-card-p432:last-child {
+  margin-bottom: 0;
+}
+.contact-section-title-p432 {
+  font-size: 22px;
+  font-weight: 900;
+  color: #111827;
+  letter-spacing: -0.04em;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.contact-section-optional-p432 {
+  font-size: 16px;
+  font-weight: 900;
+}
+.contact-section-divider-p432 {
+  height: 2px;
+  background: #d9dde5;
+  margin: 16px 0 22px;
+}
+.contact-main-grid-p432,
+.contact-next-grid-p432 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 18px 18px;
+  align-items: start;
+}
+.contact-content-wrap-p432,
+.contact-next-memo-wrap-p432 {
+  grid-column: span 2;
+}
+.contact-template-wrap-p432,
+.contact-next-tag-wrap-p432 {
+  grid-column: span 1;
+}
+.contact-main-grid-p432 textarea,
+.contact-next-grid-p432 textarea {
+  min-height: 116px;
+  width: 100%;
+  resize: vertical;
+}
+.contact-main-grid-p432 input,
+.contact-main-grid-p432 select,
+.contact-main-grid-p432 textarea,
+.contact-next-grid-p432 input,
+.contact-next-grid-p432 select,
+.contact-next-grid-p432 textarea {
+  border-radius: 6px;
+  border: 1px solid #d6dde8;
+  font-size: 14px;
+  min-height: 42px;
+}
+.contact-help-text-p432 {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+}
+.contact-quick-tags-p432,
+.contact-next-tag-panel {
+  min-height: 116px;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  align-content: flex-start;
+}
+.contact-quick-tags-p432 {
+  gap: 8px;
+}
+.contact-quick-tags-p432 .contact-tag-btn,
+.contact-next-tag-panel .contact-next-tag,
+.contact-next-tag-panel .contact-next-options button {
+  height: 30px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  background: #fff;
+}
+.contact-next-selected,
+.contact-next-options {
+  gap: 7px;
+}
+.contact-modal-p432 .contact-modal-footer {
+  flex: 0 0 auto;
+}
+@media (max-width: 1000px) {
+  .contact-main-grid-p432,
+  .contact-next-grid-p432 {
+    grid-template-columns: 1fr;
+  }
+  .contact-content-wrap-p432,
+  .contact-next-memo-wrap-p432,
+  .contact-template-wrap-p432,
+  .contact-next-tag-wrap-p432 {
+    grid-column: span 1;
+  }
+}

@@ -15,7 +15,8 @@ function addContactHistory(payload) {
   const contactAt = String(payload.contactAt || '').trim() || new Date();
   const content = String(payload.content || payload.tag || payload.tags || '').trim();
   const nextAction = String(payload.nextAction || '').trim();
-  const nextActionAt = String(payload.nextActionAt || '').trim();
+  let nextActionAt = String(payload.nextActionAt || '').trim();
+  const nextActionAuthor = String(payload.nextActionAuthor || payload.nextAssignee || '').trim();
   const tag = String(payload.tag || payload.tags || '').trim();
   const nextActionTags = (typeof normalizePortalTodayTags_ === 'function') ? normalizePortalTodayTags_(payload.nextActionTags || payload.todoTags || '') : String(payload.nextActionTags || payload.todoTags || '').split(',').map(function(v){ return String(v || '').trim(); }).filter(Boolean);
   const nextActionTagText = nextActionTags.join(', ');
@@ -23,6 +24,8 @@ function addContactHistory(payload) {
   if (!roundNo) throw new Error('몇 차 컨택인지 선택하세요.');
   if (!method) throw new Error('연락수단을 선택하세요.');
   if (!content) throw new Error('컨택내용 또는 태그를 입력하세요.');
+  // P432: 다음 액션을 입력했는데 일시를 비워두면 오늘 할 일에 즉시 보이도록 현재 시각을 사용합니다.
+  if (nextAction && !nextActionAt) nextActionAt = new Date();
 
   const masterSheet = target.sheet;
   const masterObj = target.obj || readMasterRowObject_(masterSheet, rowNo);
@@ -32,13 +35,8 @@ function addContactHistory(payload) {
 
   const author = String(payload.author || '').trim() || getPortalCurrentUserName_();
   const contactAtText = formatMemoDateTime_(contactAt);
-  let masterLogText = '[컨택이력][' + roundNo + '차][' + method + '] ' + contactAtText + ' ' + content + '(' + author + ')';
-
-  if (nextAction) {
-    const nextActionText = nextActionAt ? (formatMemoDateTime_(nextActionAt) + ' ' + nextAction) : nextAction;
-    const nextActionTagPart = nextActionTagText ? (' [' + nextActionTagText + ']') : '';
-    masterLogText += '\n[다음액션] ' + nextActionText + nextActionTagPart + '(' + author + ')';
-  }
+  // P432: 마스터 메모에는 컨택 이력만 남깁니다. 다음 액션은 오늘 할 일 쪽에서만 노출합니다.
+  const masterLogText = '[컨택이력][' + roundNo + '차][' + method + '] ' + contactAtText + ' ' + content + '(' + author + ')';
 
   const updatedMemo = appendToMasterMemo_(masterSheet, rowNo, masterLogText);
 
@@ -57,7 +55,9 @@ function addContactHistory(payload) {
     nextAction,
     nextActionAt,
     nextActionTags: nextActionTagText,
-    masterApplied: 'Y'
+    nextActionAuthor: nextActionAuthor || author,
+    masterApplied: 'Y',
+    clientRequestId: payload.clientRequestId || ''
   });
 
   let indexUpdate = null;
@@ -69,6 +69,12 @@ function addContactHistory(payload) {
   }
   try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V27'); } catch (err) {}
   try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
+  if (nextAction) {
+    try {
+      const nextDateKey = (typeof normalizePortalTodoDate_ === 'function') ? normalizePortalTodoDate_(nextActionAt || new Date()) : '';
+      if (nextDateKey) CacheService.getScriptCache().remove('PORTAL_TODAY_NEXT_RAW_P370_' + nextDateKey);
+    } catch (err) {}
+  }
 
   try {
     appendPortalActivityLog_({
@@ -78,7 +84,7 @@ function addContactHistory(payload) {
       customerNo: customerNo,
       company: company,
       summary: '[' + roundNo + '차][' + method + '] ' + content,
-      detail: { tag: tag, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText, historyId: historyId }
+      detail: { tag: tag, nextAction: nextAction, nextActionAt: nextActionAt, nextActionTags: nextActionTagText, nextActionAuthor: nextActionAuthor || author, historyId: historyId }
     });
   } catch (err) {}
 
@@ -92,6 +98,9 @@ function addContactHistory(payload) {
     customerNo,
     company,
     updatedMemo,
+    nextActionSaved: !!nextAction,
+    nextActionAt: nextActionAt ? formatMemoDateTime_(nextActionAt) : '',
+    nextActionAuthor: nextActionAuthor || author,
     indexUpdate: indexUpdate
   };
 }
@@ -237,7 +246,9 @@ function appendHistoryRecord_(ss, record) {
     '다음액션': record.nextAction || '',
     '다음액션일시': record.nextActionAt ? formatMemoDateTime_(record.nextActionAt) : '',
     '다음액션태그': record.nextActionTags || '',
-    '마스터메모반영': record.masterApplied || 'N'
+    '다음액션담당자': record.nextActionAuthor || record.author || '',
+    '마스터메모반영': record.masterApplied || 'N',
+    '클라이언트요청ID': record.clientRequestId || ''
   };
 
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0].map(h => String(h || '').trim());
@@ -297,6 +308,7 @@ function getContactHistoryByCustomer_(customerNo, rowNo) {
         nextAction: cellByHeader_(row, map, '다음액션'),
         nextActionAt: cellByHeader_(row, map, '다음액션일시') || oldNextDate,
         nextActionTags: cellByHeader_(row, map, '다음액션태그'),
+        nextActionAuthor: cellByHeader_(row, map, '다음액션담당자'),
         masterApplied: cellByHeader_(row, map, '마스터메모반영')
       };
     })

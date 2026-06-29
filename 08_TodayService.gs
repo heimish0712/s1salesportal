@@ -230,6 +230,7 @@ function getContactNextActionsRawForDateP370_(selectedDate) {
       const customerNo = cellByHeader_(row, map, '고객번호');
       const rowNo = cellByHeader_(row, map, '마스터행');
       const nextAction = cellByHeader_(row, map, '다음액션');
+      const nextActionAuthor = cellByHeader_(row, map, '다음액션담당자') || cellByHeader_(row, map, '작성자');
       return {
         historyId: historyId,
         sourceId: historyId || [customerNo, rowNo, nextAt, nextAction].join('|'),
@@ -240,7 +241,8 @@ function getContactNextActionsRawForDateP370_(selectedDate) {
         nextActionAt: nextAt,
         nextDate: nextDate,
         content: cellByHeader_(row, map, '컨택내용'),
-        author: cellByHeader_(row, map, '작성자'),
+        author: nextActionAuthor,
+        nextActionAuthor: nextActionAuthor,
         nextActionTags: cellByHeader_(row, map, '다음액션태그')
       };
     })

@@ -263,49 +263,66 @@
   </div>
 
   <div class="contact-modal-backdrop" id="contactHistoryBackdrop">
-    <div class="contact-modal">
+    <div class="contact-modal contact-modal-p432">
       <div class="contact-modal-header">
-        <div class="contact-modal-title">컨택 이력 추가</div>
+        <div class="contact-modal-title">컨택 이력 및 다음 액션</div>
         <button class="contact-modal-close" onclick="closeContactHistoryModal()">X</button>
       </div>
-      <div class="contact-modal-body">
-        <div class="contact-form-grid">
-          <div class="contact-form-item">
-            <div class="contact-form-label">몇 차인지</div>
-            <select id="contactRoundSelect"></select>
+      <div class="contact-modal-body contact-modal-body-p432">
+        <section class="contact-section-card-p432">
+          <div class="contact-section-title-p432">컨택 이력 추가</div>
+          <div class="contact-section-divider-p432"></div>
+          <div class="contact-main-grid-p432">
+            <div class="contact-form-item">
+              <div class="contact-form-label">몇 차인지</div>
+              <select id="contactRoundSelect"></select>
+            </div>
+            <div class="contact-form-item">
+              <div class="contact-form-label">연락수단</div>
+              <select id="contactMethodSelect"></select>
+            </div>
+            <div class="contact-form-item">
+              <div class="contact-form-label">컨택 일시</div>
+              <input id="contactAtInput" type="datetime-local">
+            </div>
+            <div class="contact-content-wrap-p432">
+              <div class="contact-form-label">컨택 내용</div>
+              <textarea id="contactContentInput" placeholder="예: 견적서 보내달라고 함"></textarea>
+            </div>
+            <div class="contact-template-wrap-p432">
+              <div class="contact-form-label">템플릿 <span class="contact-help-text-p432">(버튼을 누르면 텍스트가 자동으로 입력됩니다.)</span></div>
+              <div class="contact-quick-tags contact-quick-tags-p432" id="contactQuickTagPanel"></div>
+            </div>
           </div>
-          <div class="contact-form-item">
-            <div class="contact-form-label">연락수단</div>
-            <select id="contactMethodSelect"></select>
+        </section>
+
+        <section class="contact-section-card-p432">
+          <div class="contact-section-title-p432">다음 액션 추가<span class="contact-section-optional-p432">(선택)</span></div>
+          <div class="contact-section-divider-p432"></div>
+          <div class="contact-next-grid-p432">
+            <div class="contact-form-item">
+              <div class="contact-form-label">컨택한 사람</div>
+              <input id="contactAuthorInput" list="contactAuthorOptionsList" placeholder="기본값: 현재 사용자">
+              <datalist id="contactAuthorOptionsList"></datalist>
+            </div>
+            <div class="contact-form-item">
+              <div class="contact-form-label">다음 액션</div>
+              <select id="contactNextActionSelect"></select>
+            </div>
+            <div class="contact-form-item">
+              <div class="contact-form-label">다음 액션 월일시간</div>
+              <input id="contactNextAtInput" type="datetime-local">
+            </div>
+            <div class="contact-next-memo-wrap-p432">
+              <div class="contact-form-label">다음 액션 내용 / 비고</div>
+              <textarea id="contactNextMemoInput" placeholder="예: 견적서 발송 후 전화하기"></textarea>
+            </div>
+            <div class="contact-next-tag-wrap-p432">
+              <div class="contact-form-label">태그 <span class="contact-help-text-p432">(다음 액션은 오늘 할 일에 등록됩니다.)</span></div>
+              <div class="contact-next-tag-panel" id="contactNextActionTagPanel"></div>
+            </div>
           </div>
-          <div class="contact-form-item">
-            <div class="contact-form-label">컨택 일시</div>
-            <input id="contactAtInput" type="datetime-local">
-            <div class="contact-auto-note">자동 기록됩니다. 비워두면 저장 시각으로 저장됩니다.</div>
-          </div>
-          <div class="contact-form-item">
-            <div class="contact-form-label">컨택한 사람</div>
-            <input id="contactAuthorInput" placeholder="기본값: 현재 사용자">
-          </div>
-          <div class="contact-form-item">
-            <div class="contact-form-label">다음 액션</div>
-            <select id="contactNextActionSelect"></select>
-            <div class="contact-next-tag-panel" id="contactNextActionTagPanel"></div>
-          </div>
-          <div class="contact-form-item">
-            <div class="contact-form-label">다음 액션 월일시간</div>
-            <input id="contactNextAtInput" type="datetime-local">
-          </div>
-          <div class="contact-form-item wide contact-content-item">
-            <div class="contact-form-label">컨택 내용</div>
-            <div class="contact-quick-tags" id="contactQuickTagPanel"></div>
-            <textarea id="contactContentInput" placeholder="예: 견적서 보내달라고 함"></textarea>
-          </div>
-          <div class="contact-form-item wide">
-            <div class="contact-form-label">다음 액션 내용 / 비고</div>
-            <textarea id="contactNextMemoInput" placeholder="예: 견적서 발송 후 전화하기"></textarea>
-          </div>
-        </div>
+        </section>
       </div>
       <div class="contact-modal-footer">
         <button class="secondary" onclick="closeContactHistoryModal()">닫기</button>

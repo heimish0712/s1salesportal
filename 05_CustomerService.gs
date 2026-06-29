@@ -1340,10 +1340,9 @@ function queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, change
 }
 
 function shouldUseDeferredCustomerSavePostProcessP400_(changedKeys) {
-  changedKeys = changedKeys || [];
-  // 계약조건은 수식/계산 파생값이 있을 수 있으므로 기존처럼 마스터 재조회가 필요할 수 있습니다.
-  // 진행현황/전화/메모 등 일반 빠른 저장은 즉시응답 우선입니다.
-  return !shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys);
+  // P433: 고객상세 저장은 0.5초급 응답을 목표로 항상 dirty 표시만 하고 반환합니다.
+  // 화면/목록은 클라이언트 optimistic patch로 즉시 반영하고, 검색인덱스 재생성은 후속 점검/큐 처리 대상입니다.
+  return true;
 }
 
 function addPortalCustomerMetaToDetailP202_(detail, obj, rowNo) {
@@ -1464,7 +1463,7 @@ function buildDetailFieldValues_(obj) {
   Object.keys(PORTAL_DETAIL_FIELDS).forEach(section => {
     result[section] = PORTAL_DETAIL_FIELDS[section].map(def => {
       let value = def.key === 'status' ? statusValue : getCustomerMasterHeaderValueK2_(obj, def.headers || []);
-      if (def.key === 'contractStartDate' || def.key === 'contractEndDate') value = formatPortalContractDateForDisplayP420_(value);
+      if (def.key === 'contractStartDate' || def.key === 'contractEndDate' || def.key === 'firstRegisteredAt') value = formatPortalContractDateForDisplayP420_(value);
       const field = Object.assign({}, def, { value: value || '' });
       if (def.optionsSource === 'statusOptions') field.options = buildStatusOptions_(statusValue);
       if (def.optionsSource === 'customerRankOptions') field.options = buildCustomerRankOptions_(value);
@@ -1532,8 +1531,7 @@ function saveCustomerDetailCoreP202_(payload) {
     const range = sheet.getRange(rowNo, col);
     const prevValue = String(range.getDisplayValue() || '').trim();
     if (prevValue !== nextValue) {
-      if (isPortalContractNumericKeyP340_(def.key)) range.setNumberFormat('0');
-      if (isPortalContractDateKeyP420_(def.key)) range.setNumberFormat('yy.mm.dd');
+      applyPortalMasterCellFormatP433_(sheet, rowNo, col, def.key);
       range.setValue(writeValue);
       changed.push(def.label);
     }
@@ -1656,7 +1654,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   changedTargets.forEach(function(t) { changedValues[t.key] = t.value; });
 
   if (changedTargets.length) {
-    changedTargets.forEach(function(t) { applyPortalContractCellNumberFormatP340_(sheet, rowNo, t.col, t.key); applyPortalContractDateCellFormatP420_(sheet, rowNo, t.col, t.key); });
+    changedTargets.forEach(function(t) { applyPortalMasterCellFormatP433_(sheet, rowNo, t.col, t.key); });
     changedTargets.sort(function(a, b) { return a.col - b.col; });
     let blockStart = changedTargets[0].col;
     let blockValues = [changedTargets[0].writeValue];
@@ -1679,8 +1677,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
       }
     }
     flushBlock();
-    SpreadsheetApp.flush();
-    verifyPortalCustomerFastSaveAppliedP430_(sheet, rowNo, changedTargets);
+    // P433: 속도 우선. Apps Script는 함수 종료 시 쓰기를 커밋하므로 저장 후 즉시 검증/flush는 생략합니다.
   }
 
   let indexUpdate = null;
@@ -1688,6 +1685,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   const shouldRefreshMaster = shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys);
   const deferPostProcessP400 = shouldUseDeferredCustomerSavePostProcessP400_(changedKeys);
   let refreshedDetail = null;
+  const ultraFastP433 = payload.fastMode === true;
   if (changedTargets.length) {
     masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-fast-save');
     if (deferPostProcessP400) {
@@ -1698,12 +1696,14 @@ function saveCustomerDetailFastCoreP202_(payload) {
       try { indexUpdate = updateCustomerSearchIndexRow_(rowNo); } catch (err) { Logger.log('검색인덱스 갱신 실패: ' + (err && err.stack || err)); }
       try { refreshedDetail = getCustomerDetail(rowNo); } catch (err) { Logger.log('계약조건 저장 후 상세 재조회 실패: ' + (err && err.stack || err)); }
     }
-    try { if (typeof syncContractCompleteFromCustomerMasterP420_ === 'function') syncContractCompleteFromCustomerMasterP420_({ sheet: sheet, rowNo: rowNo, customerNo: customerNo, changedKeys: changedKeys, source: 'customerFastSave' }); } catch (syncErrP420) { Logger.log('수주확정/계약완료 동기화 실패: ' + (syncErrP420 && syncErrP420.stack || syncErrP420)); }
+    if (!ultraFastP433) {
+      try { if (typeof syncContractCompleteFromCustomerMasterP420_ === 'function') syncContractCompleteFromCustomerMasterP420_({ sheet: sheet, rowNo: rowNo, customerNo: customerNo, changedKeys: changedKeys, source: 'customerFastSave' }); } catch (syncErrP420) { Logger.log('수주확정/계약완료 동기화 실패: ' + (syncErrP420 && syncErrP420.stack || syncErrP420)); }
+    }
     try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
   }
 
   let auditLoggedP430 = false;
-  if (changedTargets.length && payload.requireAuditLog !== false) {
+  if (changedTargets.length && payload.requireAuditLog !== false && !ultraFastP433) {
     try {
       auditLoggedP430 = appendPortalActivityLog_({
         actionType: '고객정보수정',
@@ -1827,11 +1827,11 @@ function updateCustomerSearchIndexMemoFast_(rowNo, memoValue, meta) {
 function parsePortalContractDateP420_(value) {
   if (!value) return null;
   if (value instanceof Date && !isNaN(value.getTime())) return new Date(value.getFullYear(), value.getMonth(), value.getDate());
-  const text = String(value || '').trim();
+  const text = String(value || '').trim().replace(/\s*([.\/-])\s*/g, '$1');
   if (!text) return null;
-  let m = text.match(/^(\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  let m = text.match(/^(\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})\.?$/);
   if (m) return new Date(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  m = text.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  m = text.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})\.?$/);
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   m = text.match(/^(\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일$/);
   if (m) return new Date(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3]));
@@ -1844,7 +1844,7 @@ function parsePortalContractDateP420_(value) {
 function formatPortalContractDateForDisplayP420_(value) {
   const d = parsePortalContractDateP420_(value);
   if (!d) return String(value == null ? '' : value).trim();
-  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yy.MM.dd');
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy.MM.dd.');
 }
 
 function getPortalDefaultContractStartDateP420_() {
@@ -1889,7 +1889,7 @@ function isPortalContractDateKeyP420_(key) {
 
 function applyPortalContractDateCellFormatP420_(sheet, rowNo, col, key) {
   if (!sheet || !rowNo || !col || !isPortalContractDateKeyP420_(key)) return;
-  try { sheet.getRange(rowNo, col).setNumberFormat('yy.mm.dd'); } catch (err) {}
+  try { sheet.getRange(rowNo, col).setNumberFormat('yyyy.MM.dd.'); } catch (err) {}
 }
 
 // PATCH P280: 계약조건 숫자형 저장 호환
@@ -1942,9 +1942,41 @@ function isPortalContractNumericKeyP340_(key) {
   return key === 'contractUnit' || key === 'maintenance' || key === 'performance';
 }
 
+function isPortalMasterDateKeyP433_(key) {
+  key = String(key || '').trim();
+  return key === 'contractStartDate' || key === 'contractEndDate' || key === 'firstRegisteredAt';
+}
+
+function isPortalMasterNumberFormatKeyP433_(key) {
+  key = String(key || '').trim();
+  return key === 'contractUnit' || key === 'maintenance' || key === 'performance' || key === 'area' || key === 'finalQuote' || key === 'discountRate';
+}
+
+function getPortalMasterNumberFormatP433_(key) {
+  key = String(key || '').trim();
+  if (key === 'contractUnit') return '0"개월"';
+  if (key === 'maintenance' || key === 'performance') return '0"회"';
+  if (key === 'area') return '#,##0.##';
+  if (key === 'finalQuote') return '₩#,##0';
+  if (key === 'discountRate') return '0.##';
+  return '';
+}
+
+function applyPortalMasterCellFormatP433_(sheet, rowNo, col, key) {
+  if (!sheet || !rowNo || !col) return;
+  const range = sheet.getRange(rowNo, col);
+  try {
+    if (isPortalMasterDateKeyP433_(key)) {
+      range.setNumberFormat('yyyy.MM.dd.');
+      return;
+    }
+    const fmt = getPortalMasterNumberFormatP433_(key);
+    if (fmt) range.setNumberFormat(fmt);
+  } catch (err) {}
+}
+
 function applyPortalContractCellNumberFormatP340_(sheet, rowNo, col, key) {
-  if (!sheet || !rowNo || !col || !isPortalContractNumericKeyP340_(key)) return;
-  try { sheet.getRange(rowNo, col).setNumberFormat('0'); } catch (err) {}
+  applyPortalMasterCellFormatP433_(sheet, rowNo, col, key);
 }
 
 function normalizePortalContractFieldForDbP280_(key, value) {
@@ -1970,6 +2002,40 @@ function normalizePortalContractPayloadFieldsP280_(values) {
   return values;
 }
 
+function parsePortalDecimalNumberP433_(value) {
+  if (value == null || value === '') return '';
+  if (value instanceof Date) return '';
+  const text = String(value).trim();
+  if (!text) return '';
+  const normalized = text.replace(/,/g, '').replace(/₩/g, '').replace(/원/g, '').replace(/%/g, '').trim();
+  const n = Number(normalized.replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? '' : n;
+}
+
+function roundPortalNumberP433_(num, decimals) {
+  num = Number(num);
+  if (!isFinite(num)) return '';
+  decimals = Number(decimals) || 0;
+  const factor = Math.pow(10, decimals);
+  return Math.round(num * factor) / factor;
+}
+
+function formatPortalNumberTextP433_(num, decimals, comma) {
+  num = Number(num);
+  if (!isFinite(num)) return '';
+  decimals = Number(decimals) || 0;
+  const rounded = roundPortalNumberP433_(num, decimals);
+  let text = String(rounded);
+  if (text.indexOf('e') >= 0 || text.indexOf('E') >= 0) text = rounded.toFixed(decimals);
+  if (text.indexOf('.') >= 0) text = text.replace(/0+$/g, '').replace(/\.$/, '');
+  if (comma) {
+    const parts = text.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    text = parts.join('.');
+  }
+  return text;
+}
+
 function getPortalMasterWriteValueP280_(key, value) {
   key = String(key || '').trim();
   if (key === 'contractUnit') {
@@ -1980,7 +2046,19 @@ function getPortalMasterWriteValueP280_(key, value) {
     const count = normalizePortalInspectionCountP280_(value);
     return count === '' ? '' : count;
   }
-  if (isPortalContractDateKeyP420_(key)) {
+  if (key === 'area') {
+    const n = parsePortalDecimalNumberP433_(value);
+    return n === '' ? '' : roundPortalNumberP433_(n, 2);
+  }
+  if (key === 'finalQuote') {
+    const n = parsePortalDecimalNumberP433_(value);
+    return n === '' ? '' : Math.round(n);
+  }
+  if (key === 'discountRate') {
+    const n = parsePortalDecimalNumberP433_(value);
+    return n === '' ? '' : roundPortalNumberP433_(n, 2);
+  }
+  if (isPortalMasterDateKeyP433_(key)) {
     const d = parsePortalContractDateP420_(value);
     return d || '';
   }
@@ -1988,9 +2066,16 @@ function getPortalMasterWriteValueP280_(key, value) {
 }
 
 function getPortalMasterCompareTextP280_(key, value) {
-  if (isPortalContractDateKeyP420_(key)) return formatPortalContractDateForDisplayP420_(value);
+  key = String(key || '').trim();
+  if (isPortalMasterDateKeyP433_(key)) return formatPortalContractDateForDisplayP420_(value);
   const writeValue = getPortalMasterWriteValueP280_(key, value);
-  return String(writeValue == null ? '' : writeValue).trim();
+  if (writeValue == null || writeValue === '') return '';
+  if (key === 'contractUnit') return String(writeValue) + '개월';
+  if (key === 'maintenance' || key === 'performance') return String(writeValue) + '회';
+  if (key === 'area') return formatPortalNumberTextP433_(writeValue, 2, true);
+  if (key === 'finalQuote') return '₩' + formatPortalNumberTextP433_(writeValue, 0, true);
+  if (key === 'discountRate') return formatPortalNumberTextP433_(writeValue, 2, false);
+  return String(writeValue).trim();
 }
 
 // PATCH P1-12: 계약조건 저장 검증 + 할인율 공란 0 보정
@@ -2214,7 +2299,7 @@ function getContractBasisForGrade_(grade) {
 
 function getNewCustomerTemplate() {
   const emptyObj = {};
-  const todayText = '';
+  const todayText = formatPortalContractDateForDisplayP420_(new Date());
   const detail = {
     rowNo: 0,
     isNew: true,
@@ -2227,7 +2312,7 @@ function getNewCustomerTemplate() {
     email: '',
     salesRep: '',
     vendor: '',
-    status: '',
+    status: '견적제출완료',
     customerRank: '',
     statusOptions: buildStatusOptions_(''),
     customerRankOptions: buildCustomerRankOptions_(''),
@@ -2248,7 +2333,7 @@ function getNewCustomerTemplate() {
     arr.forEach(function(f) { if (f.key === key) f.value = value; });
   };
   setField('basic', 'firstRegisteredAt', todayText);
-  setField('basic', 'status', '');
+  setField('basic', 'status', '견적제출완료');
   setField('contract', 'contractUnit', '12');
   setField('contract', 'contractStartDate', formatPortalContractDateForDisplayP420_(getPortalDefaultContractStartDateP420_()));
   setField('contract', 'contractEndDate', formatPortalContractDateForDisplayP420_(calculatePortalContractEndDateP420_(getPortalDefaultContractStartDateP420_(), '12')));
@@ -2314,13 +2399,14 @@ function saveRegistrationCustomer(payload) {
 
   const nextCustomerNo = isNew ? (existingCustomerNo || generateNextCustomerNo_(sheet)) : existingCustomerNo;
   const registeredAt = isNew
-    ? (existingRegisteredAt || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy.MM.dd'))
+    ? (parsePortalContractDateP420_(existingRegisteredAt) || new Date())
     : existingRegisteredAt;
 
   const merged = Object.assign({}, values);
   if (isNew) {
     merged.customerNo = nextCustomerNo;
     merged.firstRegisteredAt = registeredAt;
+    if (!String(merged.status || '').trim()) merged.status = '견적제출완료';
   }
   if (calc.grade) merged.grade = calc.grade;
   if (calc.finalQuote) merged.finalQuote = calc.finalQuote;
@@ -2341,8 +2427,7 @@ function saveRegistrationCustomer(payload) {
       headerMap = getHeaderMap_(sheet);
     }
     const writeRangeP340 = sheet.getRange(rowNo, col);
-    if (isPortalContractNumericKeyP340_(def.key)) writeRangeP340.setNumberFormat('0');
-    if (isPortalContractDateKeyP420_(def.key)) writeRangeP340.setNumberFormat('yy.mm.dd');
+    applyPortalMasterCellFormatP433_(sheet, rowNo, col, def.key);
     writeRangeP340.setValue(getPortalMasterWriteValueP280_(def.key, merged[def.key]));
   });
 
