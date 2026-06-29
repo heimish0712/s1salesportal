@@ -1379,6 +1379,15 @@ function updateMailProgressUi(progress, tabId) {
   renderSendWorkspaceTabsP211_();
 }
 
+function getMailProgressPollDelayP441_(state, failed) {
+  const startedAt = state && state.startedAt ? Number(state.startedAt) : Date.now();
+  const elapsedSec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  if (failed) return elapsedSec < 60 ? 3000 : 5000;
+  if (elapsedSec < 10) return 2000;
+  if (elapsedSec < 60) return 3000;
+  return 5000;
+}
+
 function pollMailProgress(runId, tabId) {
   const ws = getSendWorkspaceByIdP211_(tabId) || getActiveSendWorkspaceP211_();
   if (!ws) return;
@@ -1390,7 +1399,7 @@ function pollMailProgress(runId, tabId) {
       if (!targetWs || !targetWs.mailSendInFlight) return;
       withSendWorkspaceGlobalsP211_(targetWs, function(){
         if (mailProgressPollTimer) clearTimeout(mailProgressPollTimer);
-        mailProgressPollTimer = setTimeout(function(){ pollMailProgress(runId, ws.id); }, 1200);
+        mailProgressPollTimer = setTimeout(function(){ pollMailProgress(runId, ws.id); }, getMailProgressPollDelayP441_(mailProgressState, false));
       });
     })
     .withFailureHandler(function(err){
@@ -1408,7 +1417,7 @@ function pollMailProgress(runId, tabId) {
         });
         if (isActiveSendWorkspaceP211_(ws.id)) renderInlineMailProgress_();
         if (mailProgressPollTimer) clearTimeout(mailProgressPollTimer);
-        mailProgressPollTimer = setTimeout(function(){ pollMailProgress(runId, ws.id); }, 1800);
+        mailProgressPollTimer = setTimeout(function(){ pollMailProgress(runId, ws.id); }, getMailProgressPollDelayP441_(mailProgressState, true));
       });
       renderSendWorkspaceTabsP211_();
     })

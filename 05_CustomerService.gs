@@ -177,10 +177,11 @@ function getCustomerSearchIndexData(permForFilter) {
   const indexDirtyBefore = props.getProperty('CUSTOMER_SEARCH_INDEX_DIRTY') === 'Y';
   const schemaChangedP360 = props.getProperty('CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION') !== CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION_P360;
 
-  // v31 FIX 유지: 인덱스가 비어 있거나 구조가 맞지 않거나 dirty이면 첫 요청자가 짧게 rebuild합니다.
-  // STEP36: 메모 보관 길이/프리워밍 정책 변경 시 기존 350자 인덱스가 계속 쓰이지 않도록 스키마 버전도 봅니다.
-  if (needsK2Rebuild || !rows.length || indexDirtyBefore || schemaChangedP360) {
-    const reason = schemaChangedP360 ? 'P360_SCHEMA_MEMO_PREWARM' : (indexDirtyBefore ? 'DIRTY_MASTER_PRIORITY' : (needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX'));
+  // P441: 고객검색 조회 경로에서는 dirty 인덱스 재생성을 기다리지 않습니다.
+  // dirty는 "뒤에서 갱신 필요" 신호일 뿐이고, 기존 인덱스를 즉시 내려줘야 사용자가 멈춘 것처럼 느끼지 않습니다.
+  // 인덱스가 비었거나 구조 변경/K2 보정처럼 조회 자체가 불가능한 경우에만 짧게 rebuild를 시도합니다.
+  if (needsK2Rebuild || !rows.length || schemaChangedP360) {
+    const reason = schemaChangedP360 ? 'P360_SCHEMA_MEMO_PREWARM' : (needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX');
     rebuildInfo = rebuildCustomerSearchIndex({ auto: true, maxWaitMs: 700, reason: reason, skipFormat: true });
     if (rebuildInfo && rebuildInfo.ok) {
       rows = getCustomerSearchIndexRows_();

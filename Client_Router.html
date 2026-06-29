@@ -5,43 +5,35 @@ window.onload = function() {
   try { loadPortalCurrentPermission_({ silent: true }); } catch (err) { console.warn('권한_DB 로딩 시작 실패', err); }
   // v46: HOME은 즉시 표시합니다. 무거운 대시보드 갱신/공지 전체 조회는 화면을 막지 않습니다.
   switchPage('home', true);
+  // P441: 초기 접속 직후 서버 호출을 한꺼번에 쏟지 않습니다.
+  // HOME 표시와 권한 확인을 우선하고, 업무 화면 예열은 지연/순차 실행해 실제 버튼 클릭 작업을 방해하지 않게 합니다.
   setTimeout(function() {
     initializeCustomerSearchIndex({ silent: true, useLocalFirst: true });
-  }, 250);
-  // PATCH L: 사용자가 메뉴를 누르기 전에 가벼운 업무 화면 데이터를 백그라운드로 준비합니다.
-  // HOME 최초 표시를 막지 않도록 시간차를 두고 시작합니다.
-  // STEP36: HOME은 즉시 띄우고, 실제 업무 화면 데이터는 뒤에서 순차 예열합니다.
-  // 사용자가 메뉴를 눌렀을 때 다시 로딩 화면을 보지 않게 하기 위한 캐시 워밍입니다.
-  setTimeout(function() {
-    try { loadCustomerFavoriteMap_({ silent: true }); } catch (err) { console.warn('고객 즐겨찾기 프리로드 실패', err); }
-  }, 450);
-  setTimeout(function() {
-    try { preloadSupportPageV57_({ silent: true }); } catch (err) { console.warn('영업지원 요청 프리로드 실패', err); }
-  }, 650);
-  setTimeout(function() {
-    try { if (typeof preloadTodayPageV57_ === 'function') preloadTodayPageV57_({ silent: true, reason: 'home-prewarm' }); } catch (err) { console.warn('오늘 할 일 프리로드 실패', err); }
-  }, 900);
-  setTimeout(function() {
-    try { if (typeof prewarmCustomerSearchDefaultP360_ === 'function') prewarmCustomerSearchDefaultP360_({ silent: true }); } catch (err) { console.warn('고객검색 기본 데이터 예열 실패', err); }
-  }, 1250);
-  setTimeout(function() {
-    try { if (typeof preloadContractCompletePageP360_ === 'function') preloadContractCompletePageP360_({ silent: true }); } catch (err) { console.warn('계약종합관리 프리로드 실패', err); }
-  }, 2300);
+  }, 700);
   setTimeout(function() {
     try { startPortalDataVersionWatcherP201_(); } catch (err) { console.warn('데이터 버전 감시 시작 실패', err); }
-  }, 2600);
-  setTimeout(function() {
-    try {
-      if (typeof preloadFocusCustomerDefaultP330_ === 'function') {
-        preloadFocusCustomerDefaultP330_({ silent: true, reason: 'home-idle-prewarm' });
-      }
-    } catch (err) {
-      console.warn('중점고객관리 프리로드 실패', err);
-    }
-  }, 3600);
+  }, 4500);
+  schedulePortalIdlePrewarmQueueP441_();
   // v31 FIX 유지: 고객 상세 검색 메뉴 진입 시 searchCustomerPage(0)가 실행됩니다.
   // v46: notice 전체 목록은 공지사항 메뉴 진입 시에만 조회합니다.
 };
+
+function schedulePortalIdlePrewarmQueueP441_() {
+  const tasks = [
+    { delay: 3500, label: '고객 즐겨찾기', run: function() { loadCustomerFavoriteMap_({ silent: true }); } },
+    { delay: 5500, label: '영업지원 요청', run: function() { preloadSupportPageV57_({ silent: true }); } },
+    { delay: 7500, label: '오늘 할 일', run: function() { if (typeof preloadTodayPageV57_ === 'function') preloadTodayPageV57_({ silent: true, reason: 'home-prewarm-p441' }); } },
+    { delay: 9500, label: '고객검색 기본 데이터', run: function() { if (typeof prewarmCustomerSearchDefaultP360_ === 'function') prewarmCustomerSearchDefaultP360_({ silent: true, p441: true }); } },
+    { delay: 12500, label: '계약종합관리', run: function() { if (typeof preloadContractCompletePageP360_ === 'function') preloadContractCompletePageP360_({ silent: true }); } },
+    { delay: 15500, label: '중점고객관리', run: function() { if (typeof preloadFocusCustomerDefaultP330_ === 'function') preloadFocusCustomerDefaultP330_({ silent: true, reason: 'home-idle-prewarm-p441' }); } }
+  ];
+  tasks.forEach(function(task) {
+    setTimeout(function() {
+      try { task.run(); } catch (err) { console.warn(task.label + ' 프리로드 실패', err); }
+    }, task.delay);
+  });
+}
+
 const keywordInput = document.getElementById('keyword');
 if (keywordInput) keywordInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') search(); });
 
