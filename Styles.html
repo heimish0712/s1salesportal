@@ -5324,4 +5324,24 @@ button[disabled], .portal-btn-pending {
   font-variant-numeric: tabular-nums !important;
 }
 
+
+
+/* HOME-ALIGN-FIX-V5: 화면 표시 정렬만 보정. 기능/데이터 로직 수정 없음.
+   - 수주 리스트 계약가: 우측정렬 → 좌측정렬
+   - 담당자별 수주표 누적/누적금액/이번달: 우측정렬 → 좌측정렬 */
+#homeSection .home-sales-list-table-p443 th:nth-child(4),
+#homeSection .home-sales-list-table-p443 td:nth-child(4),
+#homeSection .home-contract-list-table-p510 th:nth-child(4),
+#homeSection .home-contract-list-table-p510 td:nth-child(4),
+#homeSection .home-sales-list-table-p443 td:nth-child(4).num,
+#homeSection .home-contract-list-table-p510 td:nth-child(4).num {
+  text-align: left !important;
+}
+
+#homeSection .home-sales-rep-table-p443 th,
+#homeSection .home-sales-rep-table-p443 td,
+#homeSection .home-sales-rep-table-p443 td.num {
+  text-align: left !important;
+}
+
 </style>
