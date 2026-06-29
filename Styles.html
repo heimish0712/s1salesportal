@@ -588,18 +588,19 @@
       grid-column: span 1;
     }
 
-    /* 상세 계약조건: 3행에서 할인율/최종견적가/특약사항 폭 정합성 유지 */
+    /* 상세 계약조건: 4열 고정 배열
+       1행: 연면적 / 관리등급 / 건물 유형 / 부가세
+       2행: 계약단위 / 관리자 선임 여부 / 유지점검 / 성능점검
+       3행: 할인율 / 최종 견적가 / 계약시작일 / 계약종료일
+       4행: 용역신청서특약사항 */
     .customer-expand-block-contract .customer-expand-form-row.row-0,
-    .customer-expand-block-contract .customer-expand-form-row.row-1 {
+    .customer-expand-block-contract .customer-expand-form-row.row-1,
+    .customer-expand-block-contract .customer-expand-form-row.row-2 {
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
-    .customer-expand-block-contract .customer-expand-form-row.row-2 {
-      grid-template-columns: 1fr 1fr 2fr;
-    }
-
-    .customer-expand-block-contract .customer-expand-form-row.row-2 .customer-expand-form-cell.key-specialTerms {
-      grid-column: auto;
+    .customer-expand-block-contract .customer-expand-form-row.row-3 {
+      grid-template-columns: 1fr;
     }
 
     .customer-expand-block-docs .customer-expand-form-row.row-0,

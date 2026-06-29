@@ -1424,27 +1424,28 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
       { key:'area', label:'연면적' },
       { key:'grade', label:'관리등급' },
       { key:'buildingType', label:'건물 유형' },
-      { key:'contractUnit', label:'계약단위' }
+      { key:'vat', label:'부가세' }
     ],
     [
-      { key:'contractStartDate', label:'계약시작일' },
-      { key:'contractEndDate', label:'계약종료일' },
+      { key:'contractUnit', label:'계약단위' },
       { key:'appointment', label:'관리자 선임 여부' },
-      { key:'maintenance', label:'유지점검' }
+      { key:'maintenance', label:'유지점검' },
+      { key:'performance', label:'성능점검' }
     ],
     [
-      { key:'performance', label:'성능점검' },
-      { key:'vat', label:'부가세' },
       { key:'discountRate', label:'할인율' },
-      { key:'finalQuote', label:'최종 견적가' }
+      { key:'finalQuote', label:'최종 견적가' },
+      { key:'contractStartDate', label:'계약시작일' },
+      { key:'contractEndDate', label:'계약종료일' }
     ],
     [
-      { key:'specialTerms', label:'용역신청서특약사항', span:4 }
+      { key:'specialTerms', label:'용역신청서특약사항' }
     ]
   ];
   contractRows[0]._columns = 4;
   contractRows[1]._columns = 4;
   contractRows[2]._columns = 4;
+  contractRows[3]._columns = 1;
 
   html += renderCustomerExpandFormBlock_('고객사 기본 정보', basicInfoRows, detail, 'basic', 'customer-expand-block-basic');
 
