@@ -609,7 +609,17 @@ function buildContractOrderBusinessTypeP250_(obj) {
 }
 
 function getContractOrderExplicitPeriodP250_(obj) {
-  return getValueByHeaderCandidates_(obj, ['계약기간', '계약 기간', '계약기간\n(상세 작성 요구한 경우만)']);
+  const explicit = getValueByHeaderCandidates_(obj, ['계약기간', '계약 기간', '계약기간\n(상세 작성 요구한 경우만)']);
+  if (explicit) return explicit;
+  const start = getMasterFieldValue_(obj, 'contractStartDate');
+  let end = getMasterFieldValue_(obj, 'contractEndDate');
+  const unit = getMasterFieldValue_(obj, 'contractUnit');
+  if (!end && start && unit && typeof calculatePortalContractEndDateP420_ === 'function') {
+    end = formatPortalContractDateForDisplayP420_(calculatePortalContractEndDateP420_(start, unit));
+  }
+  const startText = typeof formatPortalContractDateForDisplayP420_ === 'function' ? formatPortalContractDateForDisplayP420_(start) : String(start || '').trim();
+  const endText = typeof formatPortalContractDateForDisplayP420_ === 'function' ? formatPortalContractDateForDisplayP420_(end) : String(end || '').trim();
+  return startText && endText ? (startText + ' ~ ' + endText) : '';
 }
 
 function joinUniqueContractOrderValuesP250_(values, delimiter) {
@@ -993,3 +1003,83 @@ function getContractCompleteFieldColumnIndexV69_(headerMap, key) {
   return -1;
 }
 
+
+/**
+ * STEP42/P420: 포털 고객 상세정보 수정 시 수주확정/계약완료의 같은 고객 행도 동기화합니다.
+ * - 기준키: 고객번호 우선, 없으면 고객사명 정규화
+ * - 계약번호/계약일자/저장여부/처리완료여부 같은 계약관리 고유값은 건드리지 않습니다.
+ */
+function syncContractCompleteFromCustomerMasterP420_(payload) {
+  payload = payload || {};
+  const sheet = payload.sheet || (getMasterSpreadsheet_().getSheetByName(PORTAL_CONFIG.MASTER_SHEET_NAME));
+  const rowNo = Number(payload.rowNo || 0);
+  if (!sheet || !rowNo || rowNo < PORTAL_CONFIG.DATA_START_ROW) return { ok: false, reason: 'invalid target' };
+
+  const obj = readMasterRowObject_(sheet, rowNo);
+  const customerNo = String(payload.customerNo || getMasterFieldValue_(obj, 'customerNo') || '').trim();
+  const company = String(getCompanyValue_(obj) || '').trim();
+  if (!customerNo && !company) return { ok: false, reason: 'missing customer key' };
+
+  const ss = getMasterSpreadsheet_();
+  const contractSheet = getContractCompleteSheetV69_(ss);
+  if (!contractSheet) return { ok: false, reason: 'contract sheet missing' };
+
+  const lastCol = Math.max(contractSheet.getLastColumn(), PORTAL_CONTRACT_COMPLETE_FIELDS_V69.length);
+  const headers = contractSheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+  const headerMap = buildContractCompleteHeaderMapV69_(headers);
+  const existing = findContractCompleteExistingOrderP250_(contractSheet, headerMap, customerNo, company);
+  if (!existing || !existing.rowNo) return { ok: true, skipped: true, reason: 'no contract row', customerNo: customerNo, company: company };
+
+  const rowObject = buildContractCompleteSyncObjectFromCustomerP420_(obj);
+  const updated = [];
+  const current = contractSheet.getRange(existing.rowNo, 1, 1, lastCol).getDisplayValues()[0];
+
+  Object.keys(rowObject).forEach(function(key) {
+    const idx = getContractCompleteFieldColumnIndexV69_(headerMap, key);
+    if (idx < 0 || idx >= lastCol) return;
+    const nextValue = rowObject[key] == null ? '' : rowObject[key];
+    const nextText = String(nextValue instanceof Date ? formatPortalContractDateForDisplayP420_(nextValue) : nextValue).trim();
+    const prevText = String(current[idx] == null ? '' : current[idx]).trim();
+    if (prevText === nextText) return;
+    const range = contractSheet.getRange(existing.rowNo, idx + 1);
+    if (nextValue instanceof Date) range.setNumberFormat('yy.mm.dd');
+    range.setValue(nextValue);
+    updated.push(key);
+  });
+
+  if (updated.length) {
+    clearContractCompleteCacheV69_();
+    try { markPortalMasterDataChangedP201_('수주확정/계약완료 동기화 customerNo=' + customerNo + ', row=' + existing.rowNo); } catch (err) {}
+  }
+  return { ok: true, rowNo: existing.rowNo, customerNo: customerNo, company: company, updatedKeys: updated };
+}
+
+function buildContractCompleteSyncObjectFromCustomerP420_(obj) {
+  obj = obj || {};
+  const address = getMasterFieldValue_(obj, 'address');
+  const parsed = parseContractOrderRegionCityP250_(address, getMasterFieldValue_(obj, 'region'));
+  const appointment = getMasterFieldValue_(obj, 'appointment');
+  const contractUnit = getMasterFieldValue_(obj, 'contractUnit');
+  return {
+    region: parsed.region,
+    city: parsed.city,
+    contractRep: getMasterFieldValue_(obj, 'salesRep'),
+    company: getCompanyValue_(obj),
+    contactName: getMasterFieldValue_(obj, 'contact'),
+    phone: joinUniqueContractOrderValuesP250_([getMasterFieldValue_(obj, 'phone'), getMasterFieldValue_(obj, 'directPhone')], ' / '),
+    email: getMasterFieldValue_(obj, 'email'),
+    area: toContractOrderNumberOrTextP250_(getMasterFieldValue_(obj, 'area')),
+    grade: getMasterFieldValue_(obj, 'grade'),
+    contractPrice: toContractOrderNumberOrTextP250_(getMasterFieldValue_(obj, 'finalQuote')),
+    vat: getMasterFieldValue_(obj, 'vat'),
+    vendor: normalizeContractOrderVendorP250_(getMasterFieldValue_(obj, 'vendor')),
+    businessNo: getMasterFieldValue_(obj, 'businessNo'),
+    representativeName: getMasterFieldValue_(obj, 'representativeName'),
+    businessType: buildContractOrderBusinessTypeP250_(obj),
+    customerAddress: address,
+    contractPeriod: getContractOrderExplicitPeriodP250_(obj),
+    appointment: normalizeContractOrderAppointmentMonthsP250_(appointment, contractUnit),
+    maintenance: parseContractOrderCountP250_(getMasterFieldValue_(obj, 'maintenance')),
+    performance: parseContractOrderCountP250_(getMasterFieldValue_(obj, 'performance'))
+  };
+}

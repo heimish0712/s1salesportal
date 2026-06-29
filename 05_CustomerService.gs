@@ -18,6 +18,8 @@ function getCustomerSearchIndexHeadersK2_() {
     '관리등급',
     '건물 유형',
     '계약단위',
+    '계약시작일',
+    '계약종료일',
     '관리자 선임 여부',
     '유지점검',
     '성능점검',
@@ -385,6 +387,8 @@ function getCustomerSearchIndexConsistencyReport(options) {
     ['area', '연면적'],
     ['grade', '관리등급'],
     ['contractUnit', '계약단위'],
+    ['contractStartDate', '계약시작일'],
+    ['contractEndDate', '계약종료일'],
     ['appointment', '관리자 선임 여부'],
     ['maintenance', '유지점검'],
     ['performance', '성능점검'],
@@ -540,6 +544,8 @@ function getCustomerSearchIndexRows_() {
       grade: cellByIndexHeader_(row, map, '관리등급'),
       buildingType: cellByIndexHeader_(row, map, '건물 유형'),
       contractUnit: cellByIndexHeader_(row, map, '계약단위'),
+      contractStartDate: cellByIndexHeader_(row, map, '계약시작일'),
+      contractEndDate: cellByIndexHeader_(row, map, '계약종료일'),
       appointment: cellByIndexHeader_(row, map, '관리자 선임 여부'),
       maintenance: cellByIndexHeader_(row, map, '유지점검'),
       performance: cellByIndexHeader_(row, map, '성능점검'),
@@ -879,6 +885,8 @@ function buildCustomerSearchIndexRow_(obj, now) {
   const grade = getCustomerIndexObjectValueK2_(obj, 'grade');
   const buildingType = getCustomerIndexObjectValueK2_(obj, 'buildingType');
   const contractUnit = normalizePortalContractFieldForDbP280_('contractUnit', getCustomerIndexObjectValueK2_(obj, 'contractUnit'));
+  const contractStartDate = formatPortalContractDateForDisplayP420_(getCustomerIndexObjectValueK2_(obj, 'contractStartDate'));
+  const contractEndDate = formatPortalContractDateForDisplayP420_(getCustomerIndexObjectValueK2_(obj, 'contractEndDate'));
   const appointment = getCustomerIndexObjectValueK2_(obj, 'appointment');
   const maintenance = normalizePortalContractFieldForDbP280_('maintenance', getCustomerIndexObjectValueK2_(obj, 'maintenance'));
   const performance = normalizePortalContractFieldForDbP280_('performance', getCustomerIndexObjectValueK2_(obj, 'performance'));
@@ -895,7 +903,7 @@ function buildCustomerSearchIndexRow_(obj, now) {
   // PATCH K-2: 상세 lite 필드 중 검색에 실질적으로 필요한 값은 searchText에 포함합니다.
   const searchText = shortenTextForIndex_([
     customerNo, company, salesRep, status, customerRank, contact, phone, directPhone, email, vendor, finalQuote, address,
-    region, area, grade, buildingType, contractUnit, appointment, maintenance, performance, vat
+    region, area, grade, buildingType, contractUnit, contractStartDate, contractEndDate, appointment, maintenance, performance, vat
   ].join(' ').toLowerCase(), PORTAL_CONFIG.CUSTOMER_INDEX_SEARCH_TEXT_MAX_LENGTH || 1500);
   const ts = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
   const rowMap = {
@@ -922,6 +930,8 @@ function buildCustomerSearchIndexRow_(obj, now) {
     '관리등급': grade,
     '건물 유형': buildingType,
     '계약단위': contractUnit,
+    '계약시작일': contractStartDate,
+    '계약종료일': contractEndDate,
     '관리자 선임 여부': appointment,
     '유지점검': maintenance,
     '성능점검': performance,
@@ -1086,7 +1096,7 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
     getH('고객번호'), getH('회사명'), getH('영업담당자'), getH('진행현황'), getH('고객등급'), getH('담당자'),
     getH('전화번호'), getH('직통번호'), getH('담당자 이메일'), getH('수행사'), getH('최종 견적가'), getH('주소'),
     getH('지역구분'), getH('연면적'), getH('관리등급'), getH('건물 유형'), getH('계약단위'),
-    getH('관리자 선임 여부'), getH('유지점검'), getH('성능점검'), getH('부가세')
+    getH('계약시작일'), getH('계약종료일'), getH('관리자 선임 여부'), getH('유지점검'), getH('성능점검'), getH('부가세')
   ].join(' ').toLowerCase(), PORTAL_CONFIG.CUSTOMER_INDEX_SEARCH_TEXT_MAX_LENGTH || 1500);
   setByHeader('검색문자열', searchText);
 
@@ -1386,6 +1396,8 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   const buildingType = getCustomerMasterHeaderValueK2_(obj, 'buildingType');
   const finalQuote = getCustomerMasterHeaderValueK2_(obj, 'finalQuote');
   const contractUnit = normalizePortalContractFieldForDbP280_('contractUnit', getCustomerMasterHeaderValueK2_(obj, 'contractUnit'));
+  const contractStartDate = formatPortalContractDateForDisplayP420_(getCustomerMasterHeaderValueK2_(obj, 'contractStartDate'));
+  const contractEndDate = formatPortalContractDateForDisplayP420_(getCustomerMasterHeaderValueK2_(obj, 'contractEndDate'));
   const appointment = getCustomerMasterHeaderValueK2_(obj, 'appointment');
   const maintenance = normalizePortalContractFieldForDbP280_('maintenance', getCustomerMasterHeaderValueK2_(obj, 'maintenance'));
   const performance = normalizePortalContractFieldForDbP280_('performance', getCustomerMasterHeaderValueK2_(obj, 'performance'));
@@ -1409,6 +1421,8 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     buildingType: buildingType,
     finalQuote: finalQuote,
     contractUnit: contractUnit,
+    contractStartDate: contractStartDate,
+    contractEndDate: contractEndDate,
     appointment: appointment,
     maintenance: maintenance,
     performance: performance,
@@ -1450,6 +1464,7 @@ function buildDetailFieldValues_(obj) {
   Object.keys(PORTAL_DETAIL_FIELDS).forEach(section => {
     result[section] = PORTAL_DETAIL_FIELDS[section].map(def => {
       let value = def.key === 'status' ? statusValue : getCustomerMasterHeaderValueK2_(obj, def.headers || []);
+      if (def.key === 'contractStartDate' || def.key === 'contractEndDate') value = formatPortalContractDateForDisplayP420_(value);
       const field = Object.assign({}, def, { value: value || '' });
       if (def.optionsSource === 'statusOptions') field.options = buildStatusOptions_(statusValue);
       if (def.optionsSource === 'customerRankOptions') field.options = buildCustomerRankOptions_(value);
@@ -1518,6 +1533,7 @@ function saveCustomerDetailCoreP202_(payload) {
     const prevValue = String(range.getDisplayValue() || '').trim();
     if (prevValue !== nextValue) {
       if (isPortalContractNumericKeyP340_(def.key)) range.setNumberFormat('0');
+      if (isPortalContractDateKeyP420_(def.key)) range.setNumberFormat('yy.mm.dd');
       range.setValue(writeValue);
       changed.push(def.label);
     }
@@ -1528,6 +1544,7 @@ function saveCustomerDetailCoreP202_(payload) {
   if (changed.length) {
     masterMetaP202 = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-detail-save');
     indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, changed, masterMetaP202, 'WEBAPP_CUSTOMER_DETAIL_SAVE');
+    try { if (typeof syncContractCompleteFromCustomerMasterP420_ === 'function') syncContractCompleteFromCustomerMasterP420_({ sheet: sheet, rowNo: rowNo, customerNo: customerNo, changedKeys: changed, source: 'customerDetailSave' }); } catch (syncErrP420) { Logger.log('수주확정/계약완료 동기화 실패: ' + (syncErrP420 && syncErrP420.stack || syncErrP420)); }
     try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
   }
 
@@ -1618,7 +1635,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   changedTargets.forEach(function(t) { changedValues[t.key] = t.value; });
 
   if (changedTargets.length) {
-    changedTargets.forEach(function(t) { applyPortalContractCellNumberFormatP340_(sheet, rowNo, t.col, t.key); });
+    changedTargets.forEach(function(t) { applyPortalContractCellNumberFormatP340_(sheet, rowNo, t.col, t.key); applyPortalContractDateCellFormatP420_(sheet, rowNo, t.col, t.key); });
     changedTargets.sort(function(a, b) { return a.col - b.col; });
     let blockStart = changedTargets[0].col;
     let blockValues = [changedTargets[0].writeValue];
@@ -1658,6 +1675,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
       try { indexUpdate = updateCustomerSearchIndexRow_(rowNo); } catch (err) { Logger.log('검색인덱스 갱신 실패: ' + (err && err.stack || err)); }
       try { refreshedDetail = getCustomerDetail(rowNo); } catch (err) { Logger.log('계약조건 저장 후 상세 재조회 실패: ' + (err && err.stack || err)); }
     }
+    try { if (typeof syncContractCompleteFromCustomerMasterP420_ === 'function') syncContractCompleteFromCustomerMasterP420_({ sheet: sheet, rowNo: rowNo, customerNo: customerNo, changedKeys: changedKeys, source: 'customerFastSave' }); } catch (syncErrP420) { Logger.log('수주확정/계약완료 동기화 실패: ' + (syncErrP420 && syncErrP420.stack || syncErrP420)); }
     try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
   }
 
@@ -1760,6 +1778,76 @@ function updateCustomerSearchIndexMemoFast_(rowNo, memoValue, meta) {
 
 
 
+
+// STEP42/P420: 계약시작일/계약종료일 저장·표시 보정
+function parsePortalContractDateP420_(value) {
+  if (!value) return null;
+  if (value instanceof Date && !isNaN(value.getTime())) return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  const text = String(value || '').trim();
+  if (!text) return null;
+  let m = text.match(/^(\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  if (m) return new Date(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  m = text.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  m = text.match(/^(\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일$/);
+  if (m) return new Date(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  m = text.match(/^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(text);
+  return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function formatPortalContractDateForDisplayP420_(value) {
+  const d = parsePortalContractDateP420_(value);
+  if (!d) return String(value == null ? '' : value).trim();
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yy.MM.dd');
+}
+
+function getPortalDefaultContractStartDateP420_() {
+  return new Date(2026, 6, 1); // 2026-07-01
+}
+
+function calculatePortalContractEndDateP420_(startValue, contractUnitValue) {
+  const start = parsePortalContractDateP420_(startValue) || getPortalDefaultContractStartDateP420_();
+  const months = normalizePortalContractUnitMonthsP280_(contractUnitValue) || 12;
+  return new Date(start.getFullYear(), start.getMonth() + months, start.getDate() - 1);
+}
+
+function normalizePortalContractDatePayloadFieldsP420_(values, options) {
+  options = options || {};
+  values = Object.assign({}, values || {});
+  const hasStart = Object.prototype.hasOwnProperty.call(values, 'contractStartDate');
+  const hasEnd = Object.prototype.hasOwnProperty.call(values, 'contractEndDate');
+  const hasUnit = Object.prototype.hasOwnProperty.call(values, 'contractUnit');
+
+  if (options.requireFull && !hasStart && !String(values.contractStartDate || '').trim()) {
+    values.contractStartDate = formatPortalContractDateForDisplayP420_(getPortalDefaultContractStartDateP420_());
+  }
+
+  if ((options.requireFull || hasStart || hasUnit) && !hasEnd) {
+    const startText = values.contractStartDate || (options.current && options.current.contractStartDate) || formatPortalContractDateForDisplayP420_(getPortalDefaultContractStartDateP420_());
+    const unitText = values.contractUnit || (options.current && options.current.contractUnit) || '12';
+    values.contractEndDate = formatPortalContractDateForDisplayP420_(calculatePortalContractEndDateP420_(startText, unitText));
+  }
+
+  ['contractStartDate', 'contractEndDate'].forEach(function(key) {
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      values[key] = formatPortalContractDateForDisplayP420_(values[key]);
+    }
+  });
+  return values;
+}
+
+function isPortalContractDateKeyP420_(key) {
+  key = String(key || '').trim();
+  return key === 'contractStartDate' || key === 'contractEndDate';
+}
+
+function applyPortalContractDateCellFormatP420_(sheet, rowNo, col, key) {
+  if (!sheet || !rowNo || !col || !isPortalContractDateKeyP420_(key)) return;
+  try { sheet.getRange(rowNo, col).setNumberFormat('yy.mm.dd'); } catch (err) {}
+}
+
 // PATCH P280: 계약조건 숫자형 저장 호환
 // - 마스터시트 U/W/X(계약단위/유지점검/성능점검)는 숫자 셀을 기준으로 사용합니다.
 // - 화면에는 "12개월", "2회"처럼 보여도 저장 payload와 시트 write 값은 12, 2 같은 숫자로 정규화합니다.
@@ -1848,10 +1936,15 @@ function getPortalMasterWriteValueP280_(key, value) {
     const count = normalizePortalInspectionCountP280_(value);
     return count === '' ? '' : count;
   }
+  if (isPortalContractDateKeyP420_(key)) {
+    const d = parsePortalContractDateP420_(value);
+    return d || '';
+  }
   return String(value == null ? '' : value).trim();
 }
 
 function getPortalMasterCompareTextP280_(key, value) {
+  if (isPortalContractDateKeyP420_(key)) return formatPortalContractDateForDisplayP420_(value);
   const writeValue = getPortalMasterWriteValueP280_(key, value);
   return String(writeValue == null ? '' : writeValue).trim();
 }
@@ -1863,6 +1956,8 @@ const PORTAL_CONTRACT_REQUIRED_KEYS_P112 = ['area','contractUnit','appointment',
 const PORTAL_CONTRACT_REQUIRED_LABELS_P112 = {
   area: '연면적',
   contractUnit: '계약단위',
+  contractStartDate: '계약시작일',
+  contractEndDate: '계약종료일',
   appointment: '관리자 선임 여부',
   maintenance: '유지점검 횟수',
   performance: '성능점검 횟수',
@@ -1888,6 +1983,18 @@ function isPortalContractSaveTouchedP112_(values) {
 function preparePortalContractValuesForSaveP112_(values, options) {
   options = options || {};
   values = normalizePortalContractPayloadFieldsP280_(Object.assign({}, values || {}));
+  let currentForDatesP420 = null;
+  if (options && options.sheet && options.rowNo) {
+    try {
+      const curObjP420 = readMasterRowObject_(options.sheet, Number(options.rowNo));
+      currentForDatesP420 = {
+        contractStartDate: getCustomerMasterHeaderValueK2_(curObjP420, 'contractStartDate'),
+        contractEndDate: getCustomerMasterHeaderValueK2_(curObjP420, 'contractEndDate'),
+        contractUnit: getCustomerMasterHeaderValueK2_(curObjP420, 'contractUnit')
+      };
+    } catch (err) {}
+  }
+  values = normalizePortalContractDatePayloadFieldsP420_(values, { requireFull: !!(options && options.requireFull), current: currentForDatesP420 });
   const requireFull = !!options.requireFull;
   const shouldValidate = requireFull || isPortalContractSaveTouchedP112_(values);
   if (!shouldValidate) return values;
@@ -2099,6 +2206,8 @@ function getNewCustomerTemplate() {
   setField('basic', 'firstRegisteredAt', todayText);
   setField('basic', 'status', '');
   setField('contract', 'contractUnit', '12');
+  setField('contract', 'contractStartDate', formatPortalContractDateForDisplayP420_(getPortalDefaultContractStartDateP420_()));
+  setField('contract', 'contractEndDate', formatPortalContractDateForDisplayP420_(calculatePortalContractEndDateP420_(getPortalDefaultContractStartDateP420_(), '12')));
   setField('contract', 'vat', '별도');
   setField('contract', 'appointment', '선임');
   setField('contract', 'maintenance', '2');
@@ -2189,6 +2298,7 @@ function saveRegistrationCustomer(payload) {
     }
     const writeRangeP340 = sheet.getRange(rowNo, col);
     if (isPortalContractNumericKeyP340_(def.key)) writeRangeP340.setNumberFormat('0');
+    if (isPortalContractDateKeyP420_(def.key)) writeRangeP340.setNumberFormat('yy.mm.dd');
     writeRangeP340.setValue(getPortalMasterWriteValueP280_(def.key, merged[def.key]));
   });
 
@@ -2196,6 +2306,9 @@ function saveRegistrationCustomer(payload) {
 
   let indexUpdate = null;
   try { indexUpdate = updateCustomerSearchIndexRow_(rowNo); } catch (err) { Logger.log('검색인덱스 신규/수정 고객 갱신 실패: ' + (err && err.stack || err)); }
+  if (!isNew) {
+    try { if (typeof syncContractCompleteFromCustomerMasterP420_ === 'function') syncContractCompleteFromCustomerMasterP420_({ sheet: sheet, rowNo: rowNo, customerNo: nextCustomerNo, changedKeys: Object.keys(merged || {}), source: 'registrationEditSave' }); } catch (syncErrP420) { Logger.log('수주확정/계약완료 동기화 실패: ' + (syncErrP420 && syncErrP420.stack || syncErrP420)); }
+  }
   try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V27'); } catch (err) {}
   try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
 

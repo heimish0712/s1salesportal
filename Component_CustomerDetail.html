@@ -113,6 +113,7 @@ function renderDetail(d, options) {
     applyNewCustomerRegistrationDefaults_();
     applyContractDefaultsOnRender_({ onlyBlank: true });
     bindContractDefaultHandlers_();
+    bindPortalContractDateHandlersP420_();
     bindCustomerAddressAutoRegionVendor_();
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
@@ -123,6 +124,7 @@ function renderDetail(d, options) {
     toggleDetailEdit(preserveEditMode);
     applyContractDefaultsOnRender_({ onlyBlank: true });
     bindContractDefaultHandlers_();
+    bindPortalContractDateHandlersP420_();
     bindCustomerAddressAutoRegionVendor_();
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
@@ -253,6 +255,8 @@ function renderContractSection(d) {
   html += renderButtonCell('견적가 계산', 'calculateFinalQuoteFromCurrent()', 'soft');
   html += renderDetailField(f.finalQuote, 'contract');
   html += renderDetailField(f.contractUnit, 'contract');
+  html += renderDetailField(f.contractStartDate, 'contract');
+  html += renderDetailField(f.contractEndDate, 'contract');
   html += renderDetailField(f.appointment, 'contract');
   html += renderDetailField(f.maintenance, 'contract');
   html += renderDetailField(f.performance, 'contract');
@@ -316,8 +320,11 @@ function renderDetailField(f, sectionKey, forceWide, extraClass) {
       html += '<select class="detail-edit-input"' + data + ' disabled>' + renderGenericOptions(f.options || [], f.value || '', f.key) + '</select>';
     }
   } else {
+    const isDateTextP420 = f.type === 'dateText' || key === 'contractStartDate' || key === 'contractEndDate';
     const inputType = f.type === 'email' ? 'email' : 'text';
-    html += '<input class="detail-edit-input' + cls + '" type="' + inputType + '" value="' + escAttr(f.value || '') + '"' + data + ' disabled>';
+    const placeholderP420 = isDateTextP420 ? ' placeholder="26.07.01"' : '';
+    const dateClsP420 = isDateTextP420 ? ' portal-contract-date-input' : '';
+    html += '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(isDateTextP420 ? normalizePortalContractDateDisplayClientP420_(f.value || '') : (f.value || '')) + '"' + placeholderP420 + data + ' disabled>';
   }
   html += '</div>';
   return html;
@@ -446,6 +453,9 @@ function normalizeDetailContractValuesForDbP280_(values) {
   values = Object.assign({}, values || {});
   ['contractUnit', 'maintenance', 'performance'].forEach(function(key) {
     if (Object.prototype.hasOwnProperty.call(values, key)) values[key] = normalizeDetailContractFieldForDbP280_(key, values[key]);
+  });
+  ['contractStartDate', 'contractEndDate'].forEach(function(key) {
+    if (Object.prototype.hasOwnProperty.call(values, key)) values[key] = normalizePortalContractDateDisplayClientP420_(values[key]);
   });
   return values;
 }
@@ -671,6 +681,75 @@ function setInputValueByKey(key, value) {
 }
 
 
+
+// STEP42/P420: 계약시작일/계약종료일 클라이언트 표시·자동계산
+function parsePortalContractDateClientP420_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return null;
+  let m = text.match(/^(\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  if (m) return new Date(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  m = text.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(text);
+  return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function formatPortalContractDateClientP420_(date) {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+  const yy = String(date.getFullYear() % 100).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return yy + '.' + mm + '.' + dd;
+}
+
+function normalizePortalContractDateDisplayClientP420_(value) {
+  const d = parsePortalContractDateClientP420_(value);
+  return d ? formatPortalContractDateClientP420_(d) : String(value == null ? '' : value).trim();
+}
+
+function getDefaultPortalContractStartDateClientP420_() {
+  return new Date(2026, 6, 1);
+}
+
+function calculatePortalContractEndDateClientP420_(startValue, unitValue) {
+  const start = parsePortalContractDateClientP420_(startValue) || getDefaultPortalContractStartDateClientP420_();
+  const unit = Number(normalizeContractUnitValue_(unitValue) || 12) || 12;
+  return new Date(start.getFullYear(), start.getMonth() + unit, start.getDate() - 1);
+}
+
+function updatePortalContractEndDateClientP420_(options) {
+  options = options || {};
+  const startEl = getDetailInputByKey_('contractStartDate');
+  const endEl = getDetailInputByKey_('contractEndDate');
+  const unitEl = getDetailInputByKey_('contractUnit');
+  if (!endEl) return;
+  if (startEl && !String(startEl.value || '').trim()) startEl.value = formatPortalContractDateClientP420_(getDefaultPortalContractStartDateClientP420_());
+  if (!options.force && String(endEl.value || '').trim() && !(currentDetail && currentDetail.isNew)) return;
+  endEl.value = formatPortalContractDateClientP420_(calculatePortalContractEndDateClientP420_(startEl && startEl.value, unitEl && unitEl.value));
+}
+
+function bindPortalContractDateHandlersP420_() {
+  const startEl = getDetailInputByKey_('contractStartDate');
+  const endEl = getDetailInputByKey_('contractEndDate');
+  const unitEl = getDetailInputByKey_('contractUnit');
+  if (startEl && !startEl.__portalContractDateBoundP420) {
+    startEl.__portalContractDateBoundP420 = true;
+    startEl.addEventListener('change', function(){
+      startEl.value = normalizePortalContractDateDisplayClientP420_(startEl.value || formatPortalContractDateClientP420_(getDefaultPortalContractStartDateClientP420_()));
+      updatePortalContractEndDateClientP420_({ force: true });
+    });
+    startEl.addEventListener('blur', function(){ startEl.value = normalizePortalContractDateDisplayClientP420_(startEl.value); });
+  }
+  if (endEl && !endEl.__portalContractDateBoundP420) {
+    endEl.__portalContractDateBoundP420 = true;
+    endEl.addEventListener('blur', function(){ endEl.value = normalizePortalContractDateDisplayClientP420_(endEl.value); });
+  }
+  if (unitEl && !unitEl.__portalContractDateBoundP420) {
+    unitEl.__portalContractDateBoundP420 = true;
+    unitEl.addEventListener('change', function(){ updatePortalContractEndDateClientP420_({ force: true }); });
+  }
+}
+
 // PATCH P1-4B: 신규 고객 등록 기본값/주소 기반 지역·수행사 자동 입력
 // - 영업담당자: 현재 로그인 사용자명 자동 입력, 직접 수정 가능
 // - 지역구분: 주소 기반 자동 입력 전용으로 비활성화
@@ -715,6 +794,8 @@ function applyNewCustomerRegistrationDefaults_() {
   }
 
   setInputValueByKeyIfExists_('contractUnit', '12', { onlyBlank: true });
+  setInputValueByKeyIfExists_('contractStartDate', formatPortalContractDateClientP420_(getDefaultPortalContractStartDateClientP420_()), { onlyBlank: true });
+  updatePortalContractEndDateClientP420_({ force: true });
   updateRegionVendorFromAddress_({ onlyIfAddress: true, onlyBlankVendor: true, normalizeAddress: false });
   enforceRegionReadonly_();
 }
@@ -869,12 +950,16 @@ function applyContractDefaultsOnRender_(options) {
   options = options || {};
   setInputValueByKeyIfExists_('vat', '별도', { onlyBlank: true });
   const unitEl = getDetailInputByKey_('contractUnit');
+  if (currentDetail && currentDetail.isNew) {
+    setInputValueByKeyIfExists_('contractStartDate', formatPortalContractDateClientP420_(getDefaultPortalContractStartDateClientP420_()), { onlyBlank: true });
+  }
   if (currentDetail && currentDetail.isNew && unitEl && !String(unitEl.value || '').trim()) {
     unitEl.value = '12';
   }
   if (unitEl && String(unitEl.value || '').trim()) {
     applyContractUnitDefaults_(unitEl.value, { onlyBlank: true });
   }
+  updatePortalContractEndDateClientP420_({ force: false });
 }
 
 function bindContractDefaultHandlers_() {
@@ -883,7 +968,8 @@ function bindContractDefaultHandlers_() {
   unitEl.__portalContractDefaultBound = true;
   unitEl.addEventListener('change', function() {
     applyContractUnitDefaults_(unitEl.value, { onlyBlank: false });
-    toast('계약단위 기준 표준 조건을 자동 기입했습니다. 필요 시 직접 수정하세요.');
+    updatePortalContractEndDateClientP420_({ force: true });
+    toast('계약단위 기준 표준 조건과 계약종료일을 자동 기입했습니다. 필요 시 직접 수정하세요.');
   });
 }
 

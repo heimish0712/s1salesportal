@@ -123,6 +123,8 @@ const CUSTOMER_FILTER_DEFS_P = [
   { section:'상세 계약조건', key:'grade', label:'관리등급', type:'select' },
   { section:'상세 계약조건', key:'buildingType', label:'건물 유형', type:'select' },
   { section:'상세 계약조건', key:'contractUnit', label:'계약단위', type:'select' },
+  { section:'상세 계약조건', key:'contractStartDate', label:'계약시작일', type:'text' },
+  { section:'상세 계약조건', key:'contractEndDate', label:'계약종료일', type:'text' },
   { section:'상세 계약조건', key:'appointment', label:'관리자 선임 여부', type:'select' },
   { section:'상세 계약조건', key:'maintenance', label:'유지점검', type:'select' },
   { section:'상세 계약조건', key:'performance', label:'성능점검', type:'select' },
@@ -1425,15 +1427,19 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
       { key:'contractUnit', label:'계약단위' }
     ],
     [
+      { key:'contractStartDate', label:'계약시작일' },
+      { key:'contractEndDate', label:'계약종료일' },
       { key:'appointment', label:'관리자 선임 여부' },
-      { key:'maintenance', label:'유지점검' },
-      { key:'performance', label:'성능점검' },
-      { key:'vat', label:'부가세' }
+      { key:'maintenance', label:'유지점검' }
     ],
     [
+      { key:'performance', label:'성능점검' },
+      { key:'vat', label:'부가세' },
       { key:'discountRate', label:'할인율' },
-      { key:'finalQuote', label:'최종 견적가' },
-      { key:'specialTerms', label:'용역신청서특약사항', span:2 }
+      { key:'finalQuote', label:'최종 견적가' }
+    ],
+    [
+      { key:'specialTerms', label:'용역신청서특약사항', span:4 }
     ]
   ];
   contractRows[0]._columns = 4;
@@ -3262,6 +3268,8 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     buildingType: row.buildingType || '',
     finalQuote: row.finalQuote || '',
     contractUnit: normalizePortalContractDisplayValueClientP280_('contractUnit', row.contractUnit || ''),
+    contractStartDate: normalizePortalContractDateDisplayClientP420_(row.contractStartDate || ''),
+    contractEndDate: normalizePortalContractDateDisplayClientP420_(row.contractEndDate || ''),
     appointment: row.appointment || '',
     maintenance: normalizePortalContractDisplayValueClientP280_('maintenance', row.maintenance || ''),
     performance: normalizePortalContractDisplayValueClientP280_('performance', row.performance || ''),
@@ -3300,15 +3308,17 @@ function buildDetailFieldsFromFlatDetail_(detail) {
   ];
   const contractDefs = [
     ['area','연면적',true,'numberText'], ['buildingType','건물 유형',true,'select'], ['finalQuote','최종 견적가',false,'money'], ['contractUnit','계약단위',true,'select'],
-    ['appointment','관리자 선임 여부',true,'select'], ['maintenance','유지점검',true,'select'], ['performance','성능점검',true,'select'], ['vat','부가세',true,'select'],
+    ['contractStartDate','계약시작일',true,'dateText'], ['contractEndDate','계약종료일',true,'dateText'], ['appointment','관리자 선임 여부',true,'select'], ['maintenance','유지점검',true,'select'], ['performance','성능점검',true,'select'], ['vat','부가세',true,'select'],
     ['discountRate','할인율',true,'numberText'], ['specialTerms','용역신청서특약사항',true,'textarea',true]
   ];
   const make = function(def) {
     const key = def[0];
     const opts = getPortalContractFieldOptionsClientP280_(key);
-    const value = opts ? normalizePortalContractDisplayValueClientP280_(key, detail[key] || '') : (detail[key] || '');
+    let value = opts ? normalizePortalContractDisplayValueClientP280_(key, detail[key] || '') : (detail[key] || '');
+    if (key === 'contractStartDate' || key === 'contractEndDate') value = normalizePortalContractDateDisplayClientP420_(value);
     const field = { key:key, label:def[1], editable:def[2], type:def[3], wide:!!def[4], value: value };
     if (field.key === 'customerRank') field.options = ['', 'A급', 'B급', 'C급', '보류', '제외'];
+    if (field.key === 'vendor') field.options = ['', 'KJ', '일신', '삼구'];
     if (opts) field.options = opts;
     return field;
   };
