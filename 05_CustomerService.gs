@@ -2088,7 +2088,7 @@ function calculateQuoteDiscount(payload) {
   if (!basis) throw new Error('계약기준 시트에서 관리등급 [' + (grade || '-') + '] 기준단가를 찾지 못했습니다.');
 
   const months = normalizedContractMonthsP280 || 12;
-  const hasAppointment = appointmentText === '선임' || (appointmentText.indexOf('선임') >= 0 && appointmentText.indexOf('미선임') < 0 && appointmentText.indexOf('해당없음') < 0);
+  const hasAppointment = appointmentText === '선임' || (appointmentText.indexOf('선임') >= 0 && appointmentText.indexOf('비선임') < 0 && appointmentText.indexOf('해당없음') < 0);
   const maintenanceCount = normalizedMaintenanceCountP280 === '' ? 0 : normalizedMaintenanceCountP280;
   const performanceCount = normalizedPerformanceCountP280 === '' ? 0 : normalizedPerformanceCountP280;
 

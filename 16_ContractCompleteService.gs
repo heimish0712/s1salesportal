@@ -595,7 +595,7 @@ function parseContractOrderCountP250_(value) {
 
 function normalizeContractOrderAppointmentMonthsP250_(appointment, contractUnit) {
   const app = String(appointment || '').trim();
-  if (!app || app === '미선임' || app === '해당없음') return '';
+  if (!app || app === '비선임' || app === '해당없음') return '';
   const months = parseContractOrderCountP250_(contractUnit);
   return months || 12;
 }

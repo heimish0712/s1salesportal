@@ -34,7 +34,7 @@ const PORTAL_MASTER_FIELD_SCHEMA = {
   contractUnit: { label: '계약단위', headers: ['계약단위', '계약 단위'], type: 'select', options: buildPortalContractUnitOptionsP280_() },
   contractStartDate: { label: '계약시작일', headers: ['계약시작일', '계약 시작일'], type: 'dateText' },
   contractEndDate: { label: '계약종료일', headers: ['계약종료일', '계약 종료일'], type: 'dateText' },
-  appointment: { label: '관리자 선임 여부', headers: ['관리자\n선임 여부', '관리자 선임 여부', '관리자선임여부', '선임 여부', '관리자선임'], type: 'select', options: ['', '선임', '미선임', '해당없음'] },
+  appointment: { label: '관리자 선임 여부', headers: ['관리자\n선임 여부', '관리자 선임 여부', '관리자선임여부', '선임 여부', '관리자선임'], type: 'select', options: ['', '선임', '비선임', '해당없음'] },
   maintenance: { label: '유지점검', headers: ['유지점검', '유지 점검'], type: 'select', options: buildPortalInspectionCountOptionsP280_(12) },
   performance: { label: '성능점검', headers: ['성능점검', '성능 점검'], type: 'select', options: buildPortalInspectionCountOptionsP280_(12) },
   vat: { label: '부가세', headers: ['부가세', 'VAT', '부가세 여부'], type: 'select', options: ['', '별도', '포함'] },
