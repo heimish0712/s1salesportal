@@ -5344,4 +5344,55 @@ button[disabled], .portal-btn-pending {
   text-align: left !important;
 }
 
+
+
+/* HOME-ALIGN-FIX-V6: 담당자별 수주표 좌측정렬 강제 보정.
+   원인: V4의 th:not(:first-child), td:not(:first-child) 우측정렬 규칙이
+   V5보다 specificity가 높아서 일부 셀이 계속 덮어써졌습니다.
+   기능/데이터 로직 수정 없음. */
+#homeSection .home-sales-rep-table-p443,
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 {
+  table-layout: fixed !important;
+  width: 100% !important;
+}
+
+#homeSection .home-sales-rep-table-p443 colgroup col:nth-child(1),
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 colgroup col:nth-child(1) {
+  width: 34% !important;
+}
+#homeSection .home-sales-rep-table-p443 colgroup col:nth-child(2),
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 colgroup col:nth-child(2) {
+  width: 20% !important;
+}
+#homeSection .home-sales-rep-table-p443 colgroup col:nth-child(3),
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 colgroup col:nth-child(3) {
+  width: 26% !important;
+}
+#homeSection .home-sales-rep-table-p443 colgroup col:nth-child(4),
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 colgroup col:nth-child(4) {
+  width: 20% !important;
+}
+
+#homeSection .home-sales-rep-table-p443 th,
+#homeSection .home-sales-rep-table-p443 td,
+#homeSection .home-sales-rep-table-p443 th:first-child,
+#homeSection .home-sales-rep-table-p443 td:first-child,
+#homeSection .home-sales-rep-table-p443 th:not(:first-child),
+#homeSection .home-sales-rep-table-p443 td:not(:first-child),
+#homeSection .home-sales-rep-table-p443 td.num,
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 th,
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 td,
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 th:first-child,
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 td:first-child,
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 th:not(:first-child),
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 td:not(:first-child),
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 td.num {
+  text-align: left !important;
+}
+
+#homeSection .home-sales-rep-table-p443 td.num,
+#homeSection table.home-sales-rep-table-p443.home-sales-summary-table-p510 td.num {
+  font-variant-numeric: tabular-nums !important;
+}
+
 </style>
