@@ -320,7 +320,8 @@ function applyHomeTableAlignmentP510_(table, aligns) {
       const align = aligns[idx] || (idx === 0 ? 'left' : 'center');
       cell.style.boxSizing = 'border-box';
       cell.style.textAlign = align;
-      cell.style.verticalAlign = 'middle';
+      const isHeaderCellP510 = cell.tagName && cell.tagName.toUpperCase() === 'TH';
+      cell.style.verticalAlign = isHeaderCellP510 ? 'middle' : (table.classList.contains('home-contract-list-table-p510') ? 'top' : 'middle');
       cell.style.whiteSpace = idx === 1 ? 'normal' : 'nowrap';
       cell.style.overflow = 'hidden';
       cell.style.textOverflow = 'ellipsis';
@@ -338,9 +339,10 @@ function alignHomeGridRowsP510_(box) {
     if (count === 5) row.style.gridTemplateColumns = '16% 44% 11% 18% 11%';
     if (count === 4) row.style.gridTemplateColumns = '40% 20% 20% 20%';
     if (count === 3) row.style.gridTemplateColumns = '46% 27% 27%';
-    row.style.alignItems = 'center';
+    row.style.alignItems = count === 5 ? 'start' : 'center';
     Array.from(row.children).forEach(function(cell, idx) {
       cell.style.minWidth = '0';
+      cell.style.alignSelf = count === 5 ? 'start' : 'center';
       cell.style.overflow = 'hidden';
       cell.style.textOverflow = 'ellipsis';
       cell.style.whiteSpace = idx === 1 ? 'normal' : 'nowrap';
