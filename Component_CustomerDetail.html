@@ -205,6 +205,45 @@ function renderExistingFooter() {
     '<button class="secondary" onclick="closeModal()">닫기</button>';
 }
 
+
+function setCustomerDetailSaveUiP430_(pending, message, options) {
+  options = options || {};
+  const body = document.getElementById('modalBody');
+  let box = document.getElementById('customerDetailSaveStatusP430');
+  if (body && (pending || options.success)) {
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'customerDetailSaveStatusP430';
+      box.className = 'section-card';
+      box.style.marginBottom = '12px';
+      body.insertBefore(box, body.firstChild);
+    }
+    box.style.borderColor = pending ? '#fedf89' : '#abefc6';
+    box.style.background = pending ? '#fffaeb' : '#ecfdf3';
+    box.style.color = pending ? '#93370d' : '#067647';
+    box.style.fontWeight = '800';
+    box.textContent = message || (pending ? '마스터시트에 저장 중입니다.' : '마스터시트 저장 완료');
+  } else if (box && !pending) {
+    box.remove();
+  }
+
+  const editBtn = document.getElementById('footerEditDetail');
+  const saveBtn = document.getElementById('footerSaveDetail');
+  if (editBtn) editBtn.disabled = !!pending;
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = pending ? '마스터 저장 중...' : '저장';
+  }
+  if (!pending && options.success) {
+    setTimeout(function() {
+      const doneBox = document.getElementById('customerDetailSaveStatusP430');
+      if (doneBox && !hasCustomerDetailServerSavePendingP430_()) doneBox.remove();
+      const editBtn2 = document.getElementById('footerEditDetail');
+      if (editBtn2) editBtn2.disabled = false;
+    }, 3500);
+  }
+}
+
 function renderRegistrationFooter(mode) {
   if (mode === 'saved') {
     modalActionFooter.innerHTML = '' +
@@ -539,12 +578,14 @@ function saveDetailFields() {
 
   const prevDetail = currentDetail ? JSON.parse(JSON.stringify(currentDetail)) : null;
   const saveSeq = ++customerDetailSaveSeq;
+  const clientSavedAtP430 = new Date().toISOString();
   const optimisticDetail = applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(currentDetail)), values);
   optimisticDetail.__pendingSave = true;
   optimisticDetail.__pendingSaveSeq = saveSeq;
-  optimisticDetail.__optimisticSavedAt = new Date().toISOString();
+  optimisticDetail.__optimisticSavedAt = clientSavedAtP430;
 
   registerCustomerDetailPendingSave_(optimisticDetail, values, saveSeq);
+  const detailSaveGuardIdP430 = markCustomerDetailServerSaveStartedP430_(rowNo, targetCustomerNo, saveSeq, values);
 
   // PATCH K2-FIX1:
   // 상세 팝업 저장 직후 뒤쪽 고객검색 행도 즉시 바뀌어야 합니다.
@@ -565,10 +606,16 @@ function saveDetailFields() {
 
   renderDetail(optimisticDetail);
   toggleDetailEdit(false);
-  toast('수정사항을 화면과 리스트에 먼저 반영했습니다. 뒤에서 마스터시트에 저장 중입니다.');
+  setCustomerDetailSaveUiP430_(true, '화면에는 임시 반영했습니다. 아직 마스터시트 저장 완료 전입니다.');
+  toast('임시 반영 중입니다. 저장 완료 메시지가 뜰 때까지 닫거나 이동하지 마세요.', { force: true, duration: 3500 });
 
   enqueueCustomerSaveP220_(rowNo, targetCustomerNo, function() {
-    return runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, targetCustomerNo, values))
+    return runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, targetCustomerNo, values, {
+        clientSaveSource: 'detailModal',
+        clientRequestId: detailSaveGuardIdP430,
+        clientSavedAt: clientSavedAtP430,
+        requireAuditLog: true
+      }))
       .then(function(res){
         try { applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res); } catch(e) {}
         if (res && (res.masterVersion || res.masterUpdatedAt || res.masterEditor) && currentDetail && Number(currentDetail.rowNo) === rowNo) {
@@ -592,11 +639,14 @@ function saveDetailFields() {
           repaintCustomerResultsIfVisible_();
         }
         setTimeout(function(){ clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq); }, 20000);
-        toast((res && res.message) || '마스터시트 저장 완료');
+        markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, res || { message: '마스터시트 저장 완료' });
+        toast((res && res.message) || '마스터시트 저장 완료', { force: true, duration: 3200 });
         setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
         return res;
       }, function(err){
         clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq);
+        markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, null);
+        try { setCustomerDetailSaveUiP430_(false); } catch(e) {}
         if (typeof isCustomerStaleSaveErrorP202_ === 'function' && isCustomerStaleSaveErrorP202_(err)) {
           if (prevDetail) {
             setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });

@@ -740,13 +740,19 @@ function isCustomerStaleSaveErrorP202_(err) {
   return /PORTAL_STALE_CUSTOMER_VERSION|다른 사용자가.*먼저 수정|최신 내용을 다시 불러온 뒤 저장/i.test(msg);
 }
 
-function makeCustomerSavePayloadP202_(rowNo, customerNo, values) {
-  return {
+function makeCustomerSavePayloadP202_(rowNo, customerNo, values, options) {
+  options = options || {};
+  const payload = {
     rowNo: Number(rowNo) || 0,
     customerNo: normalizeCustomerNoForKey_(customerNo || ''),
     values: values || {},
     baseMasterVersion: getBaseMasterVersionForCustomerSaveP202_(rowNo, customerNo)
   };
+  if (options.clientSaveSource) payload.clientSaveSource = String(options.clientSaveSource || '');
+  if (options.clientRequestId) payload.clientRequestId = String(options.clientRequestId || '');
+  if (Object.prototype.hasOwnProperty.call(options, 'requireAuditLog')) payload.requireAuditLog = !!options.requireAuditLog;
+  if (options.clientSavedAt) payload.clientSavedAt = String(options.clientSavedAt || '');
+  return payload;
 }
 
 // STEP4/P220: 고객 단위 저장 큐
@@ -900,7 +906,7 @@ function commitCustomerInlineEdit_(inputId, options) {
     } else {
       const values = {};
       values[key] = nextValue;
-      request = runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, values));
+      request = runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, values, { clientSaveSource: 'inlineEdit', requireAuditLog: false }));
     }
     return request.then(function(res) {
       applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
@@ -1103,6 +1109,69 @@ function applyPendingSaveToIncomingDetail_(detail) {
   next.__optimisticSavedAt = new Date(pending.startedAt || Date.now()).toISOString();
   return next;
 }
+
+// PATCH P430: 고객상세 저장 중 닫기/메뉴이동/새로고침 방지
+function cleanupCustomerDetailServerSaveGuardsP430_() {
+  if (!customerDetailServerSaveGuardMapP430) customerDetailServerSaveGuardMapP430 = {};
+  const now = Date.now();
+  Object.keys(customerDetailServerSaveGuardMapP430).forEach(function(id) {
+    const item = customerDetailServerSaveGuardMapP430[id] || {};
+    if (now - Number(item.startedAt || 0) > 5 * 60 * 1000) delete customerDetailServerSaveGuardMapP430[id];
+  });
+}
+
+function hasCustomerDetailServerSavePendingP430_() {
+  cleanupCustomerDetailServerSaveGuardsP430_();
+  return !!Object.keys(customerDetailServerSaveGuardMapP430 || {}).length;
+}
+
+function markCustomerDetailServerSaveStartedP430_(rowNo, customerNo, saveSeq, values) {
+  if (!customerDetailServerSaveGuardMapP430) customerDetailServerSaveGuardMapP430 = {};
+  const id = 'DETAIL_SAVE_' + (Date.now()) + '_' + Math.floor(Math.random() * 1000000);
+  customerDetailServerSaveGuardMapP430[id] = {
+    id: id,
+    rowNo: Number(rowNo) || 0,
+    customerNo: normalizeCustomerNoForKey_(customerNo || ''),
+    saveSeq: Number(saveSeq) || 0,
+    values: Object.assign({}, values || {}),
+    startedAt: Date.now()
+  };
+  try { document.body.classList.add('customer-detail-save-pending-p430'); } catch (err) {}
+  try { if (typeof setCustomerDetailSaveUiP430_ === 'function') setCustomerDetailSaveUiP430_(true, '마스터시트에 저장 중입니다. 저장 완료 메시지가 뜰 때까지 닫거나 이동하지 마세요.'); } catch (err) {}
+  return id;
+}
+
+function markCustomerDetailServerSaveFinishedP430_(guardId, result) {
+  if (guardId && customerDetailServerSaveGuardMapP430) delete customerDetailServerSaveGuardMapP430[guardId];
+  cleanupCustomerDetailServerSaveGuardsP430_();
+  const stillPending = !!Object.keys(customerDetailServerSaveGuardMapP430 || {}).length;
+  const isSuccess = !!(result && result.ok !== false);
+  if (!stillPending) {
+    try { document.body.classList.remove('customer-detail-save-pending-p430'); } catch (err) {}
+  }
+  try {
+    if (typeof setCustomerDetailSaveUiP430_ === 'function') {
+      if (stillPending) setCustomerDetailSaveUiP430_(true, '아직 완료되지 않은 고객상세 저장이 있습니다.');
+      else if (isSuccess) setCustomerDetailSaveUiP430_(false, (result && result.message) || '마스터시트 저장 완료', { success: true });
+      else setCustomerDetailSaveUiP430_(false);
+    }
+  } catch (err) {}
+}
+
+function warnIfCustomerDetailSavePendingP430_(context) {
+  if (!hasCustomerDetailServerSavePendingP430_()) return true;
+  alert('고객상세 저장이 아직 마스터시트에 반영 중입니다. 저장 완료 메시지가 뜰 때까지 닫기, 메뉴 이동, 새로고침을 하지 마세요.');
+  return false;
+}
+
+try {
+  window.addEventListener('beforeunload', function(e) {
+    if (!hasCustomerDetailServerSavePendingP430_()) return;
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  });
+} catch (err) {}
 
 function repaintCustomerResultsIfVisible_() {
   // P2-5: 즐겨찾기 토글/비동기 응답으로 repaint할 때 오래된 ALL 응답을 다시 그리면

@@ -380,6 +380,8 @@ let detailEditBaselineValues = null;
 // PATCH D: 상세 저장 직후 서버/프리패치의 늦은 응답이 화면을 과거값으로 되돌리지 않도록 보류 중인 저장 draft를 추적합니다.
 let customerDetailPendingSaveMap = {};
 let customerDetailSaveSeq = 0;
+// PATCH P430: 고객상세 저장이 서버 완료 전 화면 이동/닫기/새로고침으로 씹히지 않도록 진행 중 저장을 추적합니다.
+let customerDetailServerSaveGuardMapP430 = {};
 // STEP4/P220: 같은 고객에 대한 상세/목록/확장메모 저장이 동시에 서버로 나가지 않도록
 // 고객번호(rowNo fallback) 단위 저장 큐를 둡니다. 서버 버전 체크와 함께 쓰여 저장 충돌 체감을 줄입니다.
 let customerSaveQueueMapP220 = {};

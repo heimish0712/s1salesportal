@@ -1,5 +1,10 @@
 <script>
-function closeModal(){ modalBackdrop.style.display='none'; modalActionFooter.style.display='none'; registrationMode=false; savedRegistrationMode=false; registrationApplied=false; registrationCalcResult=null; }
+function closeModal(options){
+  options = options || {};
+  if (!options.force && typeof warnIfCustomerDetailSavePendingP430_ === 'function' && !warnIfCustomerDetailSavePendingP430_('closeModal')) return false;
+  modalBackdrop.style.display='none'; modalActionFooter.style.display='none'; registrationMode=false; savedRegistrationMode=false; registrationApplied=false; registrationCalcResult=null;
+  return true;
+}
 function toast(msg, options){
   options = options || {};
   const text = String(msg == null ? '' : msg);

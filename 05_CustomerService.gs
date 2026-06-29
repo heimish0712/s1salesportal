@@ -1575,6 +1575,27 @@ function saveCustomerDetailCoreP202_(payload) {
   };
 }
 
+
+function verifyPortalCustomerFastSaveAppliedP430_(sheet, rowNo, changedTargets) {
+  if (!sheet || !rowNo || !changedTargets || !changedTargets.length) return true;
+  const failed = [];
+  changedTargets.forEach(function(t) {
+    try {
+      const actual = String(sheet.getRange(rowNo, t.col).getDisplayValue() || '').trim();
+      const expected = String(t.value == null ? '' : t.value).trim();
+      if (actual !== expected) {
+        failed.push(t.label + ' expected=[' + expected + '] actual=[' + actual + ']');
+      }
+    } catch (err) {
+      failed.push(t.label + ' 확인 실패: ' + (err && err.message || err));
+    }
+  });
+  if (failed.length) {
+    throw new Error('마스터시트 저장 확인 실패: ' + failed.join(' / '));
+  }
+  return true;
+}
+
 function saveCustomerDetailFastCoreP202_(payload) {
   // v45: 저장 후 상세 전체 재조회 금지. 변경된 필드만 쓰고 결과만 반환합니다.
   // v56 PATCH A: customerNo를 기준키로 우선 검증하고, rowNo는 보조 위치값으로만 사용합니다.
@@ -1658,6 +1679,8 @@ function saveCustomerDetailFastCoreP202_(payload) {
       }
     }
     flushBlock();
+    SpreadsheetApp.flush();
+    verifyPortalCustomerFastSaveAppliedP430_(sheet, rowNo, changedTargets);
   }
 
   let indexUpdate = null;
@@ -1679,9 +1702,28 @@ function saveCustomerDetailFastCoreP202_(payload) {
     try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (err) {}
   }
 
-  // STEP40/P400: 빠른 수정에서는 작업로그 append를 저장 응답 경로에서 제외합니다.
-  // 로그가 필요한 상세 저장은 saveCustomerDetail() 경로에서 처리하고,
-  // 빠른 저장은 사용자 체감속도와 마스터 반영을 우선합니다.
+  let auditLoggedP430 = false;
+  if (changedTargets.length && payload.requireAuditLog !== false) {
+    try {
+      auditLoggedP430 = appendPortalActivityLog_({
+        actionType: '고객정보수정',
+        screen: payload.clientSaveSource === 'inlineEdit' ? '고객 목록 즉시수정' : '고객 상세',
+        rowNo: rowNo,
+        customerNo: customerNo,
+        summary: '상세정보 빠른 저장: ' + changed.join(', '),
+        detail: {
+          changedFields: changed,
+          changedKeys: changedKeys,
+          values: changedValues,
+          clientSaveSource: payload.clientSaveSource || '',
+          clientRequestId: payload.clientRequestId || '',
+          clientSavedAt: payload.clientSavedAt || ''
+        }
+      }) === true;
+    } catch (auditErrP430) {
+      Logger.log('빠른 상세저장 작업로그 기록 실패: ' + (auditErrP430 && auditErrP430.stack || auditErrP430));
+    }
+  }
 
   return {
     ok: true,
@@ -1696,6 +1738,8 @@ function saveCustomerDetailFastCoreP202_(payload) {
     masterUpdatedAt: masterMetaP202 && masterMetaP202.updatedAt || '',
     masterEditor: masterMetaP202 && masterMetaP202.editor || '',
     savedAt: new Date().toISOString(),
+    verified: true,
+    auditLogged: auditLoggedP430,
     fastPatch: !shouldRefreshMaster,
     detail: refreshedDetail,
     refreshedFromMaster: !!refreshedDetail,

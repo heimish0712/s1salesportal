@@ -139,6 +139,7 @@ function forceMasterSearchIndexRefreshP310_() {
 function switchPage(page, skipSearch) {
   page = page || 'home';
   if (page === 'dashboard') page = 'home';
+  if (typeof warnIfCustomerDetailSavePendingP430_ === 'function' && !warnIfCustomerDetailSavePendingP430_('switchPage')) return;
   if (typeof confirmLeaveTodayPageP350_ === 'function' && !confirmLeaveTodayPageP350_(page)) return;
   try { applyPortalPermissionToUi_(); } catch (err) {}
   // STEP39/P390: 고객 상세검색에서 펼친 행은 메뉴 이동 후 복귀 시 닫힌 상태여야 합니다.
