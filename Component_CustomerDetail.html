@@ -1238,16 +1238,33 @@ function getContactHistoryTargetPayloadP431_() {
 }
 
 
+function normalizePersonNameOnlyP438_(value) {
+  let s = String(value || '').trim();
+  if (!s) return '';
+  s = s.replace(/\s*·.*$/, '').trim();
+  s = s.replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ').trim();
+  if (/@/.test(s)) s = s.split('@')[0].trim();
+  s = s.replace(/^(기획팀|영업팀|영업지원팀|관리팀|전산팀|서무팀|총무팀|수행사|ADMIN|관리자)\s+/i, '').trim();
+  s = s.replace(/\s+(대리|책임|차장|부장|과장|주임|사원|팀장|실장|이사|상무|전무|대표|대표이사|ADMIN|관리자)$/i, '').trim();
+  const parts = s.split(/\s+/).filter(Boolean);
+  const blocked = /^(기획팀|영업팀|영업지원팀|관리팀|전산팀|서무팀|총무팀|대리|책임|차장|부장|과장|주임|사원|팀장|실장|이사|상무|전무|대표|대표이사|ADMIN|관리자)$/i;
+  const koreanNames = parts.filter(function(part) {
+    return /^[가-힣]{2,4}$/.test(part) && !blocked.test(part) && !/팀$/.test(part);
+  });
+  if (koreanNames.length) return koreanNames[koreanNames.length - 1];
+  return s;
+}
+
 function getPortalCurrentUserNameForContactP432_() {
   const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : (typeof portalCurrentPermissionV63 !== 'undefined' ? portalCurrentPermissionV63 : null);
-  return String((p && (p.displayName || p.name || p.salesRepName || p.email)) || '').trim();
+  return normalizePersonNameOnlyP438_((p && (p.name || p.salesRepName || p.displayName || p.email)) || '');
 }
 
 function getContactAuthorOptionsP432_() {
   const seen = {};
   const out = [];
   function add(v) {
-    v = String(v || '').trim();
+    v = normalizePersonNameOnlyP438_(v);
     if (!v) return;
     const key = v.replace(/\s+/g, '').toLowerCase();
     if (!key || seen[key]) return;
@@ -1257,9 +1274,9 @@ function getContactAuthorOptionsP432_() {
   const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : (typeof portalCurrentPermissionV63 !== 'undefined' ? portalCurrentPermissionV63 : null);
   add(getPortalCurrentUserNameForContactP432_());
   if (p) {
-    add(p.displayName);
     add(p.name);
     add(p.salesRepName);
+    add(p.displayName);
     if (Array.isArray(p.salesRepAliases)) p.salesRepAliases.forEach(add);
   }
   if (typeof todayLastLoadedAuthorOptionsP350_ !== 'undefined' && Array.isArray(todayLastLoadedAuthorOptionsP350_)) {
@@ -1342,7 +1359,7 @@ function saveContactHistoryFromModal() {
   const method = document.getElementById('contactMethodSelect').value || '전화';
   const contactAt = normalizeContactAtForSaveP12_();
   let content = document.getElementById('contactContentInput').value;
-  const nextActionAuthor = String((document.getElementById('contactAuthorInput') && document.getElementById('contactAuthorInput').value) || '').trim() || getPortalCurrentUserNameForContactP432_();
+  const nextActionAuthor = normalizePersonNameOnlyP438_(String((document.getElementById('contactAuthorInput') && document.getElementById('contactAuthorInput').value) || '').trim()) || getPortalCurrentUserNameForContactP432_();
   const nextActionBase = document.getElementById('contactNextActionSelect').value;
   const nextMemo = document.getElementById('contactNextMemoInput').value;
   let nextActionAt = document.getElementById('contactNextAtInput').value;

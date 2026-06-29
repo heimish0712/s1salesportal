@@ -637,6 +637,14 @@
       grid-template-columns: 1fr;
     }
 
+
+    /* P438: 사업자등록증 정보 카드는 펼침 상세 보드의 가운데에 배치한다. */
+    .customer-expand-block-biz {
+      grid-column: 1 / -1;
+      width: min(820px, 100%);
+      justify-self: center;
+    }
+
     .customer-expand-form-cell {
       min-width: 0;
       min-height: 58px;
