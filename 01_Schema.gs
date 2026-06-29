@@ -47,6 +47,7 @@ const PORTAL_MASTER_FIELD_SCHEMA = {
   businessNo: { label: '사업자등록번호', headers: ['사업자등록번호', '사업자 등록 번호', '사업자번호', '등록번호'], type: 'text' },
   businessLegalName: { label: '법인명', headers: ['사업자등록증상 법인명', '계약 당사자(사업자등록증상 법인명)', '계약 당사자', '법인명', '상호', '업체명'], type: 'text' },
   representativeName: { label: '대표자명', headers: ['대표자명', '대표자', '대표', '대표자 성명'], type: 'text' },
+  businessAddress: { label: '사업자등록증상 법인 주소', headers: ['사업자등록증상 법인 주소', '사업자등록증상 법인주소', '사업자등록증 주소', '사업자등록증상 주소', '법인 주소', '법인주소'], type: 'text', wide: true },
   businessRegistrationReceived: { label: '사업자등록증', headers: ['사업자등록증', '사업자등록증 수취 여부', '사업자등록증 수취여부', '사업자등록증수취여부', '사업자등록증요청', '사업자등록증 요청'], type: 'booleanMark' },
   serviceApplicationReceived: { label: '용역신청서', headers: ['용역신청서', '용역신청서 수취 여부', '용역신청서 수취여부', '용역신청서수취여부', '용역신청서요청', '용역신청서 요청'], type: 'booleanMark' },
   appointmentReportReceived: { label: '선임신고서', headers: ['선임신고서', '선임신고서 수취 여부', '선임신고서 수취여부', '선임신고서수취여부', '선임신고서 및 위임장 요청', '선임신고서 및 위임장', '선임신고서·위임장'], type: 'booleanMark' }
@@ -162,6 +163,15 @@ const PORTAL_DETAIL_FIELDS = {
     portalFieldDef_('vat', { editable: true }),
     portalFieldDef_('discountRate', { editable: true }),
     portalFieldDef_('specialTerms', { editable: true, wide: true })
+  ],
+  extra: [
+    portalFieldDef_('businessRegistrationReceived', { editable: true }),
+    portalFieldDef_('serviceApplicationReceived', { editable: true }),
+    portalFieldDef_('appointmentReportReceived', { editable: true }),
+    portalFieldDef_('businessNo', { editable: true }),
+    portalFieldDef_('businessLegalName', { editable: true }),
+    portalFieldDef_('representativeName', { editable: true }),
+    portalFieldDef_('businessAddress', { editable: true, wide: true })
   ]
 };
 

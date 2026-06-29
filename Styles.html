@@ -542,6 +542,31 @@
       letter-spacing: -0.02em;
     }
 
+    .customer-expand-form-title.with-action {
+      justify-content: space-between;
+      padding: 0 10px;
+      box-sizing: border-box;
+    }
+
+    .customer-expand-title-mini-btn {
+      height: 25px;
+      min-width: 46px;
+      padding: 0 10px;
+      border: 1px solid rgba(255,255,255,.55);
+      border-radius: 999px;
+      background: rgba(255,255,255,.92);
+      color: #334155;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .customer-expand-title-mini-btn:hover {
+      background: #ffffff;
+      color: #1a73e8;
+    }
+
     .customer-expand-block-basic > .customer-expand-form-title {
       background:#efe8f8;
       color:#5d4b83;
@@ -579,13 +604,13 @@
       grid-template-columns: 1.15fr 2.05fr 1.45fr 1.75fr;
     }
 
-    /* 고객사 상세 주소: 이메일 + 주소(3열 병합) */
+    /* 고객사 기본정보 3행: 수행사 / 이메일 / 고객사 상세 주소(대표전화번호~직통번호 폭 병합) */
     .customer-expand-block-basic .customer-expand-form-row.row-2 {
-      grid-template-columns: 1.15fr 3.85fr;
+      grid-template-columns: 1.15fr 2.05fr 1.45fr 1.75fr;
     }
 
-    .customer-expand-block-basic .customer-expand-form-row.row-2 .customer-expand-form-cell.span-3 {
-      grid-column: span 1;
+    .customer-expand-block-basic .customer-expand-form-row.row-2 .customer-expand-form-cell.span-2 {
+      grid-column: span 2;
     }
 
     /* 상세 계약조건: 4열 고정 배열
@@ -606,6 +631,10 @@
     .customer-expand-block-docs .customer-expand-form-row.row-0,
     .customer-expand-block-biz .customer-expand-form-row.row-0 {
       grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .customer-expand-block-biz .customer-expand-form-row.row-1 {
+      grid-template-columns: 1fr;
     }
 
     .customer-expand-form-cell {
@@ -713,11 +742,13 @@
     }
 
     .customer-expand-form-cell.key-address,
+    .customer-expand-form-cell.key-businessAddress,
     .customer-expand-form-cell.key-specialTerms {
       min-height: 58px;
     }
 
     .customer-expand-form-cell.key-address .customer-expand-form-value,
+    .customer-expand-form-cell.key-businessAddress .customer-expand-form-value,
     .customer-expand-form-cell.key-specialTerms .customer-expand-form-value {
       white-space: pre-wrap;
       align-items: center;
@@ -857,6 +888,7 @@
     @media (max-width: 760px) {
       .customer-expand-block-basic .customer-expand-form-row.row-0,
       .customer-expand-block-basic .customer-expand-form-row.row-1,
+      .customer-expand-block-basic .customer-expand-form-row.row-2,
       .customer-expand-block-contract .customer-expand-form-row.row-0,
       .customer-expand-block-contract .customer-expand-form-row.row-1,
       .customer-expand-block-contract .customer-expand-form-row.row-2,
@@ -887,6 +919,144 @@
         min-height: 36px;
       }
     }
+
+    .business-registration-modal-overlay-p436 {
+      position: fixed;
+      inset: 0;
+      z-index: 9998;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(15, 23, 42, .45);
+      box-sizing: border-box;
+    }
+
+    .business-registration-modal-p436 {
+      width: min(680px, 96vw);
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      background: #ffffff;
+      border: 1px solid #d8dee8;
+      border-radius: 14px;
+      box-shadow: 0 22px 55px rgba(15, 23, 42, .24);
+      overflow: hidden;
+    }
+
+    .business-registration-modal-head-p436 {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid #e5eaf2;
+      background: #f8fafc;
+      box-sizing: border-box;
+    }
+
+    .business-registration-modal-title-p436 {
+      color: #111827;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+
+    .business-registration-modal-sub-p436 {
+      margin-top: 4px;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .business-registration-modal-x-p436 {
+      width: 34px;
+      height: 34px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #111827;
+      font-size: 24px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .business-registration-modal-x-p436:hover {
+      background: #eef2f7;
+    }
+
+    .business-registration-modal-body-p436 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      padding: 18px;
+      overflow: auto;
+    }
+
+    .business-registration-field-p436 {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .business-registration-field-p436.wide {
+      grid-column: 1 / -1;
+    }
+
+    .business-registration-field-p436 input,
+    .business-registration-field-p436 textarea {
+      width: 100%;
+      min-height: 38px;
+      padding: 9px 10px;
+      border: 1px solid #cfd8e6;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #111827;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      box-sizing: border-box;
+      outline: none;
+    }
+
+    .business-registration-field-p436 textarea {
+      min-height: 74px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    .business-registration-field-p436 input:focus,
+    .business-registration-field-p436 textarea:focus {
+      border-color: #1a73e8;
+      box-shadow: 0 0 0 3px rgba(26,115,232,.12);
+    }
+
+    .business-registration-modal-actions-p436 {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 14px 18px 16px;
+      border-top: 1px solid #e5eaf2;
+      background: #f8fafc;
+    }
+
+    .business-registration-modal-actions-p436 button {
+      min-width: 82px;
+      height: 38px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    @media (max-width: 760px) {
+      .business-registration-modal-body-p436 { grid-template-columns: 1fr; }
+    }
+
 
 
 
@@ -4835,7 +5005,7 @@ button[disabled], .portal-btn-pending {
 .focus-expand-row-p380 > td { padding: 0 12px 14px 12px !important; background: #f8fbff; }
 .focus-expand-row-p380 .customer-expand-panel { margin-top: 0; }
 .focus-row-expand-btn-p380 { white-space: nowrap; }
-
+</style>
 
 /* PATCH P432: 컨택 이력 + 다음 액션 통합 팝업 */
 .contact-modal-p432 {
@@ -4956,4 +5126,3 @@ button[disabled], .portal-btn-pending {
     grid-column: span 1;
   }
 }
-</style>

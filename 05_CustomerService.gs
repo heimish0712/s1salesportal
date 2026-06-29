@@ -1439,6 +1439,13 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     statusOptions: buildStatusOptions_(status),
     customerRankOptions: buildCustomerRankOptions_(customerRank),
     memo: getMemoValueFromObj_(obj),
+    businessRegistrationReceived: getCustomerMasterHeaderValueK2_(obj, 'businessRegistrationReceived'),
+    serviceApplicationReceived: getCustomerMasterHeaderValueK2_(obj, 'serviceApplicationReceived'),
+    appointmentReportReceived: getCustomerMasterHeaderValueK2_(obj, 'appointmentReportReceived'),
+    businessNo: getCustomerMasterHeaderValueK2_(obj, 'businessNo'),
+    businessLegalName: getCustomerMasterHeaderValueK2_(obj, 'businessLegalName'),
+    representativeName: getCustomerMasterHeaderValueK2_(obj, 'representativeName'),
+    businessAddress: getCustomerMasterHeaderValueK2_(obj, 'businessAddress'),
     lastSent: getCustomerMasterHeaderValueK2_(obj, 'lastSent') || obj['마지막발송'] || '',
     sentAt: getCustomerMasterHeaderValueK2_(obj, 'sentAt') || obj['발송일시'] || '',
     contactRounds: PORTAL_CONFIG.CONTACT_ROUNDS,
@@ -1479,6 +1486,15 @@ function buildQuoteCalcDefaults_(obj) {
   return vals;
 }
 
+function getPortalCustomerAllDetailDefsP436_() {
+  const result = [];
+  Object.keys(PORTAL_DETAIL_FIELDS || {}).forEach(function(section) {
+    const list = PORTAL_DETAIL_FIELDS[section] || [];
+    list.forEach(function(def) { if (def && def.key) result.push(def); });
+  });
+  return result;
+}
+
 
 function runPortalCustomerWriteLockedP202_(label, callback) {
   if (typeof withPortalScriptLockP201_ === 'function') {
@@ -1517,7 +1533,7 @@ function saveCustomerDetailCoreP202_(payload) {
   assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload);
   values = preparePortalContractValuesForSaveP112_(values, { sheet: sheet, rowNo: rowNo, requireFull: false });
 
-  const allDefs = [].concat(PORTAL_DETAIL_FIELDS.basic || [], PORTAL_DETAIL_FIELDS.contract || []);
+  const allDefs = getPortalCustomerAllDetailDefsP436_();
   let headerMap = getHeaderMap_(sheet);
   const changed = [];
 
@@ -1610,7 +1626,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload);
   values = preparePortalContractValuesForSaveP112_(values, { sheet: sheet, rowNo: rowNo, requireFull: false });
 
-  const allDefs = [].concat(PORTAL_DETAIL_FIELDS.basic || [], PORTAL_DETAIL_FIELDS.contract || []);
+  const allDefs = getPortalCustomerAllDetailDefsP436_();
   let headerMap = getHeaderMap_(sheet);
   const targets = [];
   const appliedValues = {};
@@ -2386,7 +2402,7 @@ function saveRegistrationCustomer(payload) {
   if (!sheet) throw new Error('마스터시트(신규)를 찾지 못했습니다.');
 
   let headerMap = getHeaderMap_(sheet);
-  const allDefs = [].concat(PORTAL_DETAIL_FIELDS.basic || [], PORTAL_DETAIL_FIELDS.contract || []);
+  const allDefs = getPortalCustomerAllDetailDefsP436_();
 
   const isNew = !rowNoInput;
   const rowNo = isNew ? findFirstAvailableMasterCustomerRow_(sheet, headerMap) : rowNoInput;

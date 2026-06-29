@@ -139,7 +139,8 @@ const CUSTOMER_FILTER_DEFS_P = [
 
   { section:'사업자등록증 정보', key:'businessNo', label:'사업자등록번호', type:'text' },
   { section:'사업자등록증 정보', key:'businessLegalName', label:'법인명', type:'text' },
-  { section:'사업자등록증 정보', key:'representativeName', label:'대표자명', type:'text' }
+  { section:'사업자등록증 정보', key:'representativeName', label:'대표자명', type:'text' },
+  { section:'사업자등록증 정보', key:'businessAddress', label:'사업자등록증상 법인 주소', type:'text' }
 ];
 
 function makeCustomerSearchRequestSnapshotP230_(keyword, page) {
@@ -751,6 +752,7 @@ function makeCustomerSavePayloadP202_(rowNo, customerNo, values, options) {
   if (options.clientSaveSource) payload.clientSaveSource = String(options.clientSaveSource || '');
   if (options.clientRequestId) payload.clientRequestId = String(options.clientRequestId || '');
   if (Object.prototype.hasOwnProperty.call(options, 'requireAuditLog')) payload.requireAuditLog = !!options.requireAuditLog;
+  if (Object.prototype.hasOwnProperty.call(options, 'fastMode')) payload.fastMode = !!options.fastMode;
   if (options.clientSavedAt) payload.clientSavedAt = String(options.clientSavedAt || '');
   return payload;
 }
@@ -1446,6 +1448,7 @@ const CUSTOMER_EXPAND_RAW_HEADER_CANDIDATES = {
   businessNo: ['사업자등록번호', '사업자 등록 번호', '사업자번호', '등록번호'],
   businessLegalName: ['사업자등록증상 법인명', '계약 당사자(사업자등록증상 법인명)', '계약 당사자', '법인명', '상호', '업체명'],
   representativeName: ['대표자명', '대표자', '대표', '대표자 성명'],
+  businessAddress: ['사업자등록증상 법인 주소', '사업자등록증상 법인주소', '사업자등록증 주소', '사업자등록증상 주소', '법인 주소', '법인주소'],
   grade: ['관리등급', '관리 등급', '등급', '연면적유형', '연면적 유형'],
   customerRank: ['고객등급', '고객 등급', '영업등급', '고객관리등급', '고객 관리 등급']
 };
@@ -1480,8 +1483,9 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
       { key:'directPhone', label:'직통번호' }
     ],
     [
+      { key:'vendor', label:'수행사' },
       { key:'email', label:'이메일 주소' },
-      { key:'address', label:'고객사 상세 주소', span:3 }
+      { key:'address', label:'고객사 상세 주소', span:2 }
     ]
   ];
   basicInfoRows[0]._columns = 4;
@@ -1520,6 +1524,19 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
 
   html += renderCustomerExpandFormBlock_('상세 계약조건', contractRows, detail, 'contract', 'customer-expand-block-contract');
 
+  html += renderCustomerExpandFormBlock_('사업자등록증 정보', [
+    [
+      { key:'businessNo', label:'사업자등록번호' },
+      { key:'businessLegalName', label:'법인명' },
+      { key:'representativeName', label:'대표자명' }
+    ],
+    [
+      { key:'businessAddress', label:'사업자등록증상 법인 주소', span:3 }
+    ]
+  ], detail, 'extra', 'customer-expand-block-biz', {
+    titleRightHtml: '<button type="button" class="customer-expand-title-mini-btn" onclick="event.stopPropagation(); openBusinessRegistrationModalP436_(' + rowNo + ',\'' + escAttr((detail && detail.customerNo) || (rowSummary && rowSummary.customerNo) || '') + '\')">등록</button>'
+  });
+
   html += renderCustomerExpandFormBlock_('서류 수취 여부', [
     [
       { key:'businessRegistrationReceived', label:'사업자등록증' },
@@ -1527,14 +1544,6 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
       { key:'appointmentReportReceived', label:'선임신고서' }
     ]
   ], detail, 'extra', 'customer-expand-block-docs');
-
-  html += renderCustomerExpandFormBlock_('사업자등록증 정보', [
-    [
-      { key:'businessNo', label:'사업자등록번호' },
-      { key:'businessLegalName', label:'법인명' },
-      { key:'representativeName', label:'대표자명' }
-    ]
-  ], detail, 'extra', 'customer-expand-block-biz');
 
   const hasImmediateMemoP360 = !!(detail && (detail.memo || detail.memoPreview));
   const isFullMemoReadyP300 = !!(detail && detail.__masterBacked && !detail.__summary && !detail.__lite);
@@ -1559,9 +1568,10 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
   return html;
 }
 
-function renderCustomerExpandFormBlock_(title, rowDefs, detail, sectionKey, extraClass) {
+function renderCustomerExpandFormBlock_(title, rowDefs, detail, sectionKey, extraClass, options) {
+  options = options || {};
   let html = '<div class="customer-expand-form-block ' + escAttr(extraClass || '') + '">';
-  html += '<div class="customer-expand-form-title">' + esc(title || '') + '</div>';
+  html += '<div class="customer-expand-form-title' + (options.titleRightHtml ? ' with-action' : '') + '"><span>' + esc(title || '') + '</span>' + (options.titleRightHtml || '') + '</div>';
   html += '<div class="customer-expand-form-body">';
   (rowDefs || []).forEach(function(row, rowIdx) {
     const columnCount = Math.max(1, Number(row && row._columns) || (row ? row.length : 1));
@@ -1760,6 +1770,212 @@ function applyCustomerOrderResultToCachesP250_(res) {
   } catch (err) {}
 }
 
+
+let businessRegistrationModalStateP436 = null;
+let businessRegistrationModalTouchedP436 = false;
+
+function getBusinessRegistrationDetailP436_(rowNo, customerNo) {
+  rowNo = Number(rowNo) || 0;
+  const cno = normalizeCustomerNoForKey_(customerNo || '');
+  const summary = findCustomerRowSummary_(rowNo, cno) || findCustomerRowSummaryByRowNo_(rowNo) || {};
+  return getCustomerDetailCache_(rowNo, cno || summary.customerNo) || buildCustomerDetailFromRowSummary_(summary, rowNo);
+}
+
+function getBusinessRegistrationValueP436_(detail, key) {
+  detail = detail || {};
+  const direct = detail[key];
+  if (String(direct == null ? '' : direct).trim()) return direct;
+  return getCustomerExpandFieldValue_(detail, 'extra', key).value || '';
+}
+
+function openBusinessRegistrationModalP436_(rowNo, customerNo) {
+  rowNo = Number(rowNo) || 0;
+  const detail = getBusinessRegistrationDetailP436_(rowNo, customerNo);
+  const cno = normalizeCustomerNoForKey_(customerNo || (detail && detail.customerNo) || '');
+  if (!rowNo || !cno) return alert('사업자등록증 정보를 저장할 고객을 찾지 못했습니다.');
+
+  businessRegistrationModalStateP436 = {
+    rowNo: rowNo,
+    customerNo: cno,
+    company: (detail && detail.company) || '',
+    original: {
+      businessNo: getBusinessRegistrationValueP436_(detail, 'businessNo'),
+      businessLegalName: getBusinessRegistrationValueP436_(detail, 'businessLegalName'),
+      representativeName: getBusinessRegistrationValueP436_(detail, 'representativeName'),
+      businessAddress: getBusinessRegistrationValueP436_(detail, 'businessAddress')
+    }
+  };
+  businessRegistrationModalTouchedP436 = false;
+  renderBusinessRegistrationModalP436_(businessRegistrationModalStateP436.original, false);
+
+  if (detail && (detail.__summary || detail.__lite || !detail.__masterBacked)) {
+    fetchCustomerDetailFromServer_(rowNo, function(fullDetail) {
+      if (!businessRegistrationModalStateP436 || Number(businessRegistrationModalStateP436.rowNo) !== rowNo) return;
+      if (businessRegistrationModalTouchedP436) return;
+      businessRegistrationModalStateP436.customerNo = normalizeCustomerNoForKey_(fullDetail.customerNo || cno);
+      businessRegistrationModalStateP436.company = fullDetail.company || businessRegistrationModalStateP436.company || '';
+      businessRegistrationModalStateP436.original = {
+        businessNo: getBusinessRegistrationValueP436_(fullDetail, 'businessNo'),
+        businessLegalName: getBusinessRegistrationValueP436_(fullDetail, 'businessLegalName'),
+        representativeName: getBusinessRegistrationValueP436_(fullDetail, 'representativeName'),
+        businessAddress: getBusinessRegistrationValueP436_(fullDetail, 'businessAddress')
+      };
+      renderBusinessRegistrationModalP436_(businessRegistrationModalStateP436.original, false);
+    }, function(){}, { customerNo: cno, forceFull: true });
+  }
+}
+
+function renderBusinessRegistrationModalP436_(values, saving) {
+  values = values || {};
+  let overlay = document.getElementById('businessRegistrationModalP436');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'businessRegistrationModalP436';
+    overlay.className = 'business-registration-modal-overlay-p436';
+    document.body.appendChild(overlay);
+  }
+  const state = businessRegistrationModalStateP436 || {};
+  const disabled = saving ? ' disabled' : '';
+  overlay.innerHTML = '' +
+    '<div class="business-registration-modal-p436" onclick="event.stopPropagation();">' +
+      '<div class="business-registration-modal-head-p436">' +
+        '<div><div class="business-registration-modal-title-p436">사업자등록증 정보 등록</div>' +
+        '<div class="business-registration-modal-sub-p436">' + esc(state.company || '-') + ' / 고객번호 ' + esc(state.customerNo || '-') + '</div></div>' +
+        '<button type="button" class="business-registration-modal-x-p436" onclick="closeBusinessRegistrationModalP436_()"' + disabled + '>×</button>' +
+      '</div>' +
+      '<div class="business-registration-modal-body-p436">' +
+        renderBusinessRegistrationInputP436_('businessNo', '사업자등록번호', values.businessNo || '', '000-00-00000', disabled) +
+        renderBusinessRegistrationInputP436_('businessLegalName', '법인명', values.businessLegalName || '', '사업자등록증상 법인명', disabled) +
+        renderBusinessRegistrationInputP436_('representativeName', '대표자명', values.representativeName || '', '대표자명', disabled) +
+        renderBusinessRegistrationInputP436_('businessAddress', '사업자등록증상 법인 주소', values.businessAddress || '', '사업자등록증에 기재된 법인 주소', disabled, true) +
+      '</div>' +
+      '<div class="business-registration-modal-actions-p436">' +
+        '<button type="button" class="secondary" onclick="closeBusinessRegistrationModalP436_()"' + disabled + '>닫기</button>' +
+        '<button type="button" class="primary" id="businessRegistrationSaveBtnP436" onclick="saveBusinessRegistrationModalP436_()"' + disabled + '>' + (saving ? '저장 중...' : '저장') + '</button>' +
+      '</div>' +
+    '</div>';
+  overlay.onclick = function() { if (!saving) closeBusinessRegistrationModalP436_(); };
+  Array.from(overlay.querySelectorAll('[data-biz-key]')).forEach(function(el) {
+    el.addEventListener('input', function() { businessRegistrationModalTouchedP436 = true; });
+  });
+}
+
+function renderBusinessRegistrationInputP436_(key, label, value, placeholder, disabled, wide) {
+  const common = ' data-biz-key="' + escAttr(key) + '"' + disabled + ' placeholder="' + escAttr(placeholder || '') + '"';
+  if (wide) {
+    return '<label class="business-registration-field-p436 wide"><span>' + esc(label) + '</span><textarea' + common + '>' + esc(value || '') + '</textarea></label>';
+  }
+  return '<label class="business-registration-field-p436"><span>' + esc(label) + '</span><input type="text" value="' + escAttr(value || '') + '"' + common + '></label>';
+}
+
+function closeBusinessRegistrationModalP436_() {
+  const overlay = document.getElementById('businessRegistrationModalP436');
+  if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+  businessRegistrationModalStateP436 = null;
+  businessRegistrationModalTouchedP436 = false;
+}
+
+function collectBusinessRegistrationModalValuesP436_() {
+  const values = {};
+  const overlay = document.getElementById('businessRegistrationModalP436');
+  if (!overlay) return values;
+  Array.from(overlay.querySelectorAll('[data-biz-key]')).forEach(function(el) {
+    const key = el.getAttribute('data-biz-key');
+    if (key) values[key] = el.value || '';
+  });
+  return values;
+}
+
+function applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, values) {
+  rowNo = Number(rowNo) || 0;
+  const cno = normalizeCustomerNoForKey_(customerNo || '');
+  const detail = getBusinessRegistrationDetailP436_(rowNo, cno);
+  Object.keys(values || {}).forEach(function(key) {
+    detail[key] = values[key] || '';
+    if (detail.raw) {
+      if (key === 'businessNo') detail.raw['사업자등록번호'] = values[key] || '';
+      if (key === 'businessLegalName') detail.raw['사업자등록증상 법인명'] = values[key] || '';
+      if (key === 'representativeName') detail.raw['대표자명'] = values[key] || '';
+      if (key === 'businessAddress') detail.raw['사업자등록증상 법인 주소'] = values[key] || '';
+    }
+  });
+  if (!detail.detailFields) detail.detailFields = buildDetailFieldsFromFlatDetail_(detail);
+  if (!detail.detailFields.extra) detail.detailFields.extra = [];
+  Object.keys(values || {}).forEach(function(key) {
+    let found = false;
+    Object.keys(detail.detailFields || {}).forEach(function(section) {
+      (detail.detailFields[section] || []).forEach(function(f) {
+        if (f && f.key === key) { f.value = values[key] || ''; found = true; }
+      });
+    });
+    if (!found) {
+      const labels = { businessNo:'사업자등록번호', businessLegalName:'법인명', representativeName:'대표자명', businessAddress:'사업자등록증상 법인 주소' };
+      detail.detailFields.extra.push({ key:key, label:labels[key] || key, value:values[key] || '', editable:true, type:'text', wide:key === 'businessAddress' });
+    }
+  });
+  setCustomerDetailCache_(detail, { force: true, skipPendingMerge: true, source: 'businessRegistrationSave', allowIndexPatch: false, skipStorage: false });
+  if (currentDetail && Number(currentDetail.rowNo) === rowNo) {
+    Object.keys(values || {}).forEach(function(key) { currentDetail[key] = values[key] || ''; });
+  }
+  if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+}
+
+function getBusinessRegistrationDirtyValuesP436_(nextValues) {
+  const state = businessRegistrationModalStateP436 || {};
+  const base = state.original || {};
+  const dirty = {};
+  ['businessNo','businessLegalName','representativeName','businessAddress'].forEach(function(key) {
+    const next = String(nextValues[key] == null ? '' : nextValues[key]).trim();
+    const prev = String(base[key] == null ? '' : base[key]).trim();
+    if (next !== prev) dirty[key] = next;
+  });
+  return dirty;
+}
+
+function saveBusinessRegistrationModalP436_() {
+  const state = businessRegistrationModalStateP436 || {};
+  const rowNo = Number(state.rowNo) || 0;
+  const customerNo = normalizeCustomerNoForKey_(state.customerNo || '');
+  if (!rowNo || !customerNo) return alert('사업자등록증 정보를 저장할 고객을 찾지 못했습니다.');
+  const allValues = collectBusinessRegistrationModalValuesP436_();
+  const dirty = getBusinessRegistrationDirtyValuesP436_(allValues);
+  if (!Object.keys(dirty).length) {
+    toast('변경된 사업자등록증 정보가 없습니다.');
+    closeBusinessRegistrationModalP436_();
+    return;
+  }
+
+  renderBusinessRegistrationModalP436_(allValues, true);
+  applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, dirty);
+
+  enqueueCustomerSaveP220_(rowNo, customerNo, function() {
+    return runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, dirty, {
+      clientSaveSource: 'businessRegistrationModal',
+      requireAuditLog: false,
+      fastMode: true,
+      clientSavedAt: new Date().toISOString()
+    })).then(function(res) {
+      applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
+      if (res && res.values) applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, res.values);
+      toast((res && res.message) || '사업자등록증 정보 저장 완료');
+      closeBusinessRegistrationModalP436_();
+      return res;
+    }, function(err) {
+      if (isCustomerStaleSaveErrorP202_(err)) {
+        toast('다른 사용자가 먼저 수정했습니다. 최신 내용을 다시 불러옵니다.');
+        fetchCustomerDetailFromServer_(rowNo, function(detail) {
+          setCustomerDetailCache_(detail, { force:true, source:'master', allowIndexPatch:true, allowStorageWrite:true });
+          if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+        }, function(){}, { customerNo: customerNo, forceFull: true });
+      }
+      try { applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, (state && state.original) || {}); } catch (rollbackErr) {}
+      renderBusinessRegistrationModalP436_(allValues, false);
+      alert('사업자등록증 정보 저장 실패: ' + getErrorMessage_(err));
+      throw err;
+    });
+  }, { source: 'businessRegistrationModal' });
+}
+
 function splitCustomerExpandPhoneLines_(value) {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -1833,6 +2049,13 @@ function getCustomerExpandFieldValue_(detail, sectionKey, key) {
     vendor: detail.vendor,
     status: detail.status,
     memo: detail.memo,
+    businessRegistrationReceived: detail.businessRegistrationReceived,
+    serviceApplicationReceived: detail.serviceApplicationReceived,
+    appointmentReportReceived: detail.appointmentReportReceived,
+    businessNo: detail.businessNo,
+    businessLegalName: detail.businessLegalName,
+    representativeName: detail.representativeName,
+    businessAddress: detail.businessAddress,
     firstRegisteredAt: detail.firstRegisteredAt,
     region: detail.region,
     area: detail.area,
@@ -3346,6 +3569,13 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     vat: row.vat || '',
     discountRate: row.discountRate || '',
     specialTerms: row.specialTerms || '',
+    businessRegistrationReceived: row.businessRegistrationReceived || '',
+    serviceApplicationReceived: row.serviceApplicationReceived || '',
+    appointmentReportReceived: row.appointmentReportReceived || '',
+    businessNo: row.businessNo || '',
+    businessLegalName: row.businessLegalName || '',
+    representativeName: row.representativeName || '',
+    businessAddress: row.businessAddress || '',
 
     contactRounds: [],
     contactMethods: [],
@@ -3381,6 +3611,11 @@ function buildDetailFieldsFromFlatDetail_(detail) {
     ['contractStartDate','계약시작일',true,'dateText'], ['contractEndDate','계약종료일',true,'dateText'], ['appointment','관리자 선임 여부',true,'select'], ['maintenance','유지점검',true,'select'], ['performance','성능점검',true,'select'], ['vat','부가세',true,'select'],
     ['discountRate','할인율',true,'numberText'], ['specialTerms','용역신청서특약사항',true,'textarea',true]
   ];
+  const extraDefs = [
+    ['businessRegistrationReceived','사업자등록증',true,'text'], ['serviceApplicationReceived','용역신청서',true,'text'], ['appointmentReportReceived','선임신고서',true,'text'],
+    ['businessNo','사업자등록번호',true,'text'], ['businessLegalName','법인명',true,'text'], ['representativeName','대표자명',true,'text'],
+    ['businessAddress','사업자등록증상 법인 주소',true,'text',true]
+  ];
   const make = function(def) {
     const key = def[0];
     const opts = getPortalContractFieldOptionsClientP280_(key);
@@ -3392,7 +3627,7 @@ function buildDetailFieldsFromFlatDetail_(detail) {
     if (opts) field.options = opts;
     return field;
   };
-  return { basic: basicDefs.map(make), contract: contractDefs.map(make) };
+  return { basic: basicDefs.map(make), contract: contractDefs.map(make), extra: extraDefs.map(make) };
 }
 
 function saveCustomerDetailToLocalStorage_(detail) {
