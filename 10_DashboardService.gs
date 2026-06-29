@@ -414,3 +414,268 @@ function isPortalDashboardNameMatchV77_(value, perm) {
     return a && (text === a || text.indexOf(a) >= 0 || a.indexOf(text) >= 0);
   });
 }
+
+
+/***************************************
+ * P443: HOME 수주현황 위젯
+ * - 원천: 수주확정/계약완료 시트(listContractCompleteRowsV69)
+ * - ADMIN/서무: 전체 수주 현황
+ * - SALES: 본인 계약담당자 수주 현황
+ ***************************************/
+const PORTAL_HOME_SALES_STATUS_CACHE_PREFIX_P443 = 'PORTAL_HOME_SALES_STATUS_P443_';
+const PORTAL_HOME_SALES_STATUS_CACHE_SECONDS_P443 = 180;
+
+function getPortalHomeSalesStatus(options) {
+  options = options || {};
+  const perm = getPortalCurrentPermission_();
+  const isAllScope = isPortalDashboardAllScopeV78_(perm);
+  const cacheKey = makePortalHomeSalesStatusCacheKeyP443_(perm);
+  const cache = CacheService.getScriptCache();
+
+  if (!options.force) {
+    try {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        parsed.fromCache = true;
+        return parsed;
+      }
+    } catch (err) {}
+  }
+
+  let list;
+  try {
+    list = (typeof listContractCompleteRowsV69 === 'function')
+      ? listContractCompleteRowsV69({ force: true })
+      : { rows: getPortalDashboardContractRowsV77_() };
+  } catch (err) {
+    return {
+      ok: false,
+      message: '수주현황 데이터를 불러오지 못했습니다: ' + String(err && err.message || err),
+      scope: isAllScope ? 'ALL' : 'OWN',
+      allScope: isAllScope,
+      permissionName: perm && (perm.salesRepName || perm.name || '') || '',
+      generatedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss')
+    };
+  }
+
+  const rawRows = Array.isArray(list && list.rows) ? list.rows : [];
+  const scopedRows = rawRows.filter(function(item) {
+    if (!item || !String(item.company || item.customerNo || item.contractNo || '').trim()) return false;
+    if (isAllScope) return true;
+    return isPortalDashboardNameMatchV77_(item.contractRep, perm);
+  }).map(function(item) {
+    return normalizePortalHomeSalesRowP443_(item);
+  }).filter(function(item) { return !!item.company; });
+
+  scopedRows.sort(comparePortalHomeSalesRowsP443_);
+
+  const today = stripPortalHomeSalesTimeP443_(new Date());
+  const weekStart = getPortalHomeSalesWeekStartP443_(today);
+  const weekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  const last30Start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
+
+  const thisWeekRows = filterPortalHomeSalesByDateRangeP443_(scopedRows, weekStart, weekEnd);
+  const thisMonthRows = filterPortalHomeSalesByDateRangeP443_(scopedRows, monthStart, nextMonth);
+  const last30Rows = filterPortalHomeSalesByDateRangeP443_(scopedRows, last30Start, new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1));
+
+  const repSummary = buildPortalHomeSalesRepSummaryP443_(scopedRows, monthStart, nextMonth);
+  const periodBuckets = buildPortalHomeSalesPeriodBucketsP443_(scopedRows, today);
+
+  const result = {
+    ok: true,
+    scope: isAllScope ? 'ALL' : 'OWN',
+    allScope: isAllScope,
+    permissionName: perm && (perm.salesRepName || perm.name || '') || '',
+    title: isAllScope ? '전체 수주현황' : '나의 수주현황',
+    generatedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
+    sourceTotal: rawRows.length,
+    total: summarizePortalHomeSalesRowsP443_(scopedRows),
+    thisWeek: summarizePortalHomeSalesRowsP443_(thisWeekRows),
+    thisMonth: summarizePortalHomeSalesRowsP443_(thisMonthRows),
+    last30: summarizePortalHomeSalesRowsP443_(last30Rows),
+    repSummary: repSummary.slice(0, 12),
+    periodBuckets: periodBuckets,
+    thisWeekList: thisWeekRows.slice(0, 8),
+    recentList: scopedRows.slice(0, 10),
+    fromCache: false
+  };
+
+  try {
+    const json = JSON.stringify(result);
+    if (json.length < 90000) cache.put(cacheKey, json, PORTAL_HOME_SALES_STATUS_CACHE_SECONDS_P443);
+  } catch (err) {}
+
+  return result;
+}
+
+function makePortalHomeSalesStatusCacheKeyP443_(perm) {
+  const dashKeys = getPortalDashboardCacheKeysV77_(perm || getPortalCurrentPermission_());
+  return (PORTAL_HOME_SALES_STATUS_CACHE_PREFIX_P443 + dashKeys.scopeKey).slice(0, 240);
+}
+
+function normalizePortalHomeSalesRowP443_(item) {
+  item = item || {};
+  const contractDateRaw = item.contractDate || item.contractDateText || item['계약일자(발주번호 부여일)'] || '';
+  const dateObj = parsePortalHomeSalesDateP443_(contractDateRaw);
+  const amount = parsePortalHomeSalesAmountP443_(item.contractPrice || item.contractAmount || item.price || item['계약가'] || '');
+  const contractNo = cleanPortalHomeNumberTextP443_(item.contractNo);
+  const customerNo = cleanPortalHomeNumberTextP443_(item.customerNo);
+  return {
+    contractNo: contractNo,
+    customerNo: customerNo,
+    company: String(item.company || '').trim(),
+    contractRep: normalizePortalHomeSalesPersonNameP443_(item.contractRep || ''),
+    contractDate: dateObj ? Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy.MM.dd.') : String(contractDateRaw || '').trim(),
+    contractDateIso: dateObj ? Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy-MM-dd') : '',
+    contractDateTime: dateObj ? dateObj.getTime() : 0,
+    amount: amount,
+    amountText: formatPortalHomeSalesCurrencyP443_(amount),
+    vendor: String(item.vendor || '').trim(),
+    region: String(item.region || item.regionCity || '').trim(),
+    grade: String(item.grade || '').trim(),
+    contractPeriod: String(item.contractPeriod || '').trim()
+  };
+}
+
+function comparePortalHomeSalesRowsP443_(a, b) {
+  const ad = Number(a && a.contractDateTime || 0);
+  const bd = Number(b && b.contractDateTime || 0);
+  if (ad !== bd) return bd - ad;
+  const an = Number(String(a && a.contractNo || '').replace(/[^0-9.\-]/g, ''));
+  const bn = Number(String(b && b.contractNo || '').replace(/[^0-9.\-]/g, ''));
+  if (!isNaN(an) && !isNaN(bn) && an !== bn) return bn - an;
+  return String(b && b.company || '').localeCompare(String(a && a.company || ''), 'ko', { numeric: true, sensitivity: 'base' });
+}
+
+function parsePortalHomeSalesDateP443_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) return stripPortalHomeSalesTimeP443_(value);
+  let text = String(value == null ? '' : value).trim();
+  if (!text) return null;
+
+  const serialText = text.replace(/,/g, '');
+  if (/^\d{5}(?:\.0+)?$/.test(serialText)) {
+    const serial = Number(serialText);
+    if (!isNaN(serial) && serial > 30000) {
+      return stripPortalHomeSalesTimeP443_(new Date(Math.round((serial - 25569) * 86400 * 1000)));
+    }
+  }
+
+  text = text.replace(/년|월/g, '.').replace(/일/g, '.').replace(/\s+/g, ' ');
+  let m = text.match(/(20\d{2}|\d{2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})/);
+  if (m) {
+    let y = Number(m[1]);
+    if (y < 100) y += 2000;
+    const d = new Date(y, Number(m[2]) - 1, Number(m[3]));
+    return isNaN(d.getTime()) ? null : stripPortalHomeSalesTimeP443_(d);
+  }
+  const fallback = new Date(value);
+  return isNaN(fallback.getTime()) ? null : stripPortalHomeSalesTimeP443_(fallback);
+}
+
+function stripPortalHomeSalesTimeP443_(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function getPortalHomeSalesWeekStartP443_(date) {
+  const d = stripPortalHomeSalesTimeP443_(date || new Date());
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+}
+
+function filterPortalHomeSalesByDateRangeP443_(rows, start, endExclusive) {
+  const startMs = start.getTime();
+  const endMs = endExclusive.getTime();
+  return (rows || []).filter(function(row) {
+    const t = Number(row && row.contractDateTime || 0);
+    return t && t >= startMs && t < endMs;
+  });
+}
+
+function summarizePortalHomeSalesRowsP443_(rows) {
+  rows = Array.isArray(rows) ? rows : [];
+  const amount = rows.reduce(function(sum, row) { return sum + Number(row.amount || 0); }, 0);
+  return {
+    count: rows.length,
+    amount: amount,
+    amountText: formatPortalHomeSalesCurrencyP443_(amount)
+  };
+}
+
+function buildPortalHomeSalesRepSummaryP443_(rows, monthStart, nextMonth) {
+  const map = {};
+  (rows || []).forEach(function(row) {
+    const rep = normalizePortalHomeSalesPersonNameP443_(row.contractRep || '') || '미지정';
+    if (!map[rep]) map[rep] = { rep: rep, count: 0, amount: 0, monthCount: 0, monthAmount: 0, recentDateTime: 0 };
+    map[rep].count += 1;
+    map[rep].amount += Number(row.amount || 0);
+    map[rep].recentDateTime = Math.max(map[rep].recentDateTime, Number(row.contractDateTime || 0));
+    if (row.contractDateTime >= monthStart.getTime() && row.contractDateTime < nextMonth.getTime()) {
+      map[rep].monthCount += 1;
+      map[rep].monthAmount += Number(row.amount || 0);
+    }
+  });
+  return Object.keys(map).map(function(k) {
+    const item = map[k];
+    item.amountText = formatPortalHomeSalesCurrencyP443_(item.amount);
+    item.monthAmountText = formatPortalHomeSalesCurrencyP443_(item.monthAmount);
+    return item;
+  }).sort(function(a, b) {
+    if (b.count !== a.count) return b.count - a.count;
+    if (b.amount !== a.amount) return b.amount - a.amount;
+    return b.recentDateTime - a.recentDateTime;
+  });
+}
+
+function buildPortalHomeSalesPeriodBucketsP443_(rows, today) {
+  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const buckets = [];
+  for (let i = 0; i < 4; i++) {
+    const start = new Date(thisMonthStart.getFullYear(), thisMonthStart.getMonth() - i, 1);
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    const periodRows = filterPortalHomeSalesByDateRangeP443_(rows, start, end);
+    const summary = summarizePortalHomeSalesRowsP443_(periodRows);
+    buckets.push({
+      label: Utilities.formatDate(start, Session.getScriptTimeZone(), 'yyyy.MM'),
+      count: summary.count,
+      amount: summary.amount,
+      amountText: summary.amountText
+    });
+  }
+  return buckets;
+}
+
+function parsePortalHomeSalesAmountP443_(value) {
+  if (typeof value === 'number') return isNaN(value) ? 0 : value;
+  const text = String(value == null ? '' : value).replace(/[^0-9.\-]/g, '');
+  const n = Number(text);
+  return isNaN(n) ? 0 : n;
+}
+
+function formatPortalHomeSalesCurrencyP443_(amount) {
+  const n = Number(amount || 0);
+  if (!n) return '₩0';
+  return '₩' + Math.round(n).toLocaleString('ko-KR');
+}
+
+function normalizePortalHomeSalesPersonNameP443_(value) {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  text = text.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').trim();
+  text = text.replace(/\s+/g, ' ');
+  const tokens = text.split(' ').filter(Boolean);
+  // 팀/직급이 섞여 들어와도 실제 이름만 남기는 약식 보정입니다.
+  const ranks = ['대표', '책임', '차장', '과장', '대리', '주임', '팀장', '실장', '부장', '사원'];
+  const cleaned = tokens.filter(function(t) { return ranks.indexOf(t) < 0 && !/팀$|부$|실$/.test(t); });
+  return cleaned.length ? cleaned[cleaned.length - 1] : tokens[0];
+}
+
+function cleanPortalHomeNumberTextP443_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return '';
+  if (/^\d+(?:\.0+)?$/.test(text)) return String(Math.round(Number(text)));
+  return text;
+}

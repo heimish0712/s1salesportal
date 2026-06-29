@@ -58,14 +58,26 @@
           <div class="metric-card"><div class="metric-label">계약 완료</div><div class="metric-value" id="statCompleted">-</div></div>
           <div class="metric-card"><div class="metric-label">재확인 필요</div><div class="metric-value" id="statNeedCheck">-</div></div>
         </div>
-        <div class="portal-grid">
+        <div class="portal-grid home-main-grid-p443">
           <div class="portal-panel">
             <div class="portal-panel-header">
               <div><div class="portal-panel-title">공지사항</div><div class="portal-panel-sub">최신 공지 3개가 표시됩니다. 제목을 누르면 세부 내용으로 들어갑니다.</div></div>
               <button class="secondary" onclick="switchPage('notices')">전체보기</button>
             </div>
             <div class="notice-table-wrap" id="homeNoticeArea"><div class="loading">공지사항을 불러오는 중입니다.</div></div>
-            <div class="home-tabs"><div class="home-tab active" onclick="switchPage('notices')">공지사항</div><div class="home-tab">수주현황</div></div>
+          </div>
+          <div class="portal-panel home-sales-panel-p443">
+            <div class="portal-panel-header home-sales-header-p443">
+              <div>
+                <div class="portal-panel-title">수주현황</div>
+                <div class="portal-panel-sub" id="homeSalesSubP443">수주확정/계약완료 기준으로 집계합니다.</div>
+              </div>
+              <div class="home-sales-actions-p443">
+                <button class="secondary" onclick="loadHomeSalesStatusP443({ force: true })">새로고침</button>
+                <button class="secondary" onclick="switchPage('contracts')">계약종합관리</button>
+              </div>
+            </div>
+            <div id="homeSalesStatusAreaP443" class="home-sales-status-area-p443"><div class="loading">수주현황을 불러오는 중입니다.</div></div>
           </div>
         </div>
       </section>

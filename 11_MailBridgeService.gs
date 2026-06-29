@@ -141,17 +141,42 @@ function sendPortalSingleMail(payload) {
     throw err;
   }
 
-  // P441: 메일은 Worker가 성공 응답을 준 순간 핵심 업무가 끝난 것입니다.
-  // 컨택이력/작업로그/검색인덱스 동기화는 사용자를 기다리게 하지 않고 백그라운드 큐로 넘깁니다.
-  const postProcessQueued = enqueuePortalMailSendPostProcessP441_({
-    rowNo: rowNo,
+  appendContactHistory_({
     customerNo: targetCustomerNo || getMasterFieldValue_(rowObj, 'customerNo') || rowObj['고객번호'] || '',
     company: company,
-    mode: mode,
-    selectedKeys: selectedKeys,
-    runId: sendPayload.runId,
-    result: result || null
+    rowNo: rowNo,
+    type: '자료발송',
+    contactRound: '',
+    method: mode === 'TEST' ? '테스트발송' : '고객발송',
+    status: '',
+    contactText: '웹앱에서 자료발송 완료: ' + selectedKeys.map(k => getPortalSendFileLabel_(k)).join(', '),
+    note: '',
+    nextAction: '',
+    nextActionAt: '',
+    reflectToMasterMemo: false
   });
+
+  // PATCH R: 메일 Worker가 마스터시트의 마지막발송/발송일시/메모 등을 갱신할 수 있으므로
+  // 발송 성공 후 해당 고객의 검색인덱스_DB row를 마스터 기준으로 다시 동기화합니다.
+  let indexUpdate = null;
+  try {
+    indexUpdate = updateCustomerSearchIndexFullAfterMutation_({ rowNo: rowNo, customerNo: targetCustomerNo }, 'MAIL_SEND_RESULT');
+  } catch (err) {
+    Logger.log('검색인덱스 자료발송 후 갱신 실패: ' + (err && err.stack || err));
+    try { indexUpdate = markCustomerSearchIndexDirty_('MAIL_SEND_RESULT', err && err.message ? err.message : String(err)); } catch (e) {}
+  }
+
+  try {
+    appendPortalActivityLog_({
+      actionType: '자료발송',
+      screen: '견적/자료 발송',
+      rowNo: rowNo,
+      customerNo: targetCustomerNo || getMasterFieldValue_(rowObj, 'customerNo') || rowObj['고객번호'] || '',
+      company: company,
+      summary: (mode === 'TEST' ? '테스트 발송: ' : '고객 발송: ') + selectedKeys.map(function(k) { return getPortalSendFileLabel_(k); }).join(', '),
+      detail: { mode: mode, selectedKeys: selectedKeys, runId: sendPayload.runId }
+    });
+  } catch (err) {}
 
   return {
     ok: true,
@@ -160,8 +185,7 @@ function sendPortalSingleMail(payload) {
     selectedFiles: selectedKeys.map(k => getPortalSendFileLabel_(k)),
     message: (mode === 'TEST' ? '테스트 발송 완료' : '고객 발송 완료'),
     result: result || null,
-    indexUpdate: null,
-    postProcessQueued: !!postProcessQueued
+    indexUpdate: indexUpdate
   };
 }
 
@@ -620,172 +644,6 @@ function isExistingMailFileKeySupported_(key) {
 function getPortalSendFileLabel_(key) {
   const hit = PORTAL_SEND_FILE_DEFINITIONS.find(def => def.key === key);
   return hit ? hit.label : key;
-}
-
-
-const PORTAL_MAIL_POSTPROCESS_QUEUE_SHEET_P441 = '메일발송후처리큐';
-const PORTAL_MAIL_POSTPROCESS_QUEUE_HEADERS_P441 = [
-  '큐ID', '상태', '생성일시', '처리일시', '시도수', 'runId', 'rowNo', '고객번호', '회사명', '발송모드', '선택자료JSON', '오류', '결과JSON'
-];
-const PORTAL_MAIL_POSTPROCESS_HANDLER_P441 = 'processPortalMailSendPostProcessQueueP441';
-
-function getPortalMailPostProcessQueueSheetP441_() {
-  const ss = getWebAppDbSpreadsheet_();
-  let sheet = ss.getSheetByName(PORTAL_MAIL_POSTPROCESS_QUEUE_SHEET_P441);
-  if (!sheet) {
-    sheet = ss.insertSheet(PORTAL_MAIL_POSTPROCESS_QUEUE_SHEET_P441);
-    sheet.getRange(1, 1, 1, PORTAL_MAIL_POSTPROCESS_QUEUE_HEADERS_P441.length).setValues([PORTAL_MAIL_POSTPROCESS_QUEUE_HEADERS_P441]);
-    try { sheet.hideSheet(); } catch (err) {}
-  } else {
-    const width = Math.max(sheet.getLastColumn(), PORTAL_MAIL_POSTPROCESS_QUEUE_HEADERS_P441.length);
-    const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
-    const needsReset = PORTAL_MAIL_POSTPROCESS_QUEUE_HEADERS_P441.some(function(h, i) { return headers[i] !== h; });
-    if (needsReset) sheet.getRange(1, 1, 1, PORTAL_MAIL_POSTPROCESS_QUEUE_HEADERS_P441.length).setValues([PORTAL_MAIL_POSTPROCESS_QUEUE_HEADERS_P441]);
-  }
-  return sheet;
-}
-
-function createPortalMailPostProcessTriggerP441_() {
-  ScriptApp.newTrigger(PORTAL_MAIL_POSTPROCESS_HANDLER_P441).timeBased().after(60 * 1000).create();
-  return true;
-}
-
-function ensurePortalMailPostProcessTriggerP441_() {
-  try {
-    const triggers = ScriptApp.getProjectTriggers();
-    const exists = triggers.some(function(t) { return t && t.getHandlerFunction && t.getHandlerFunction() === PORTAL_MAIL_POSTPROCESS_HANDLER_P441; });
-    if (!exists) createPortalMailPostProcessTriggerP441_();
-    return true;
-  } catch (err) {
-    Logger.log('메일 발송 후처리 트리거 생성 실패: ' + (err && err.stack || err));
-    return false;
-  }
-}
-
-function enqueuePortalMailSendPostProcessP441_(payload) {
-  payload = payload || {};
-  try {
-    const sheet = getPortalMailPostProcessQueueSheetP441_();
-    const now = new Date();
-    const nowText = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-    const queueId = 'MAILPOST-' + Utilities.getUuid();
-    sheet.appendRow([
-      queueId,
-      'PENDING',
-      nowText,
-      '',
-      0,
-      String(payload.runId || ''),
-      Number(payload.rowNo || 0) || '',
-      String(payload.customerNo || ''),
-      String(payload.company || ''),
-      String(payload.mode || ''),
-      JSON.stringify(payload.selectedKeys || []),
-      '',
-      JSON.stringify(payload.result || {}).slice(0, 20000)
-    ]);
-    ensurePortalMailPostProcessTriggerP441_();
-    return true;
-  } catch (err) {
-    Logger.log('메일 발송 후처리 큐 등록 실패: ' + (err && err.stack || err));
-    // 큐 등록 실패가 실제 메일 발송 성공을 실패로 보이게 하면 안 됩니다.
-    return false;
-  }
-}
-
-function processPortalMailSendPostProcessQueueP441() {
-  return withPortalScriptLockP201_('mail-send-postprocess-queue', function() {
-    const sheet = getPortalMailPostProcessQueueSheetP441_();
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return { ok: true, processed: 0, remaining: 0 };
-
-    const width = PORTAL_MAIL_POSTPROCESS_QUEUE_HEADERS_P441.length;
-    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
-    const nowText = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-    let processed = 0;
-    let remaining = 0;
-
-    for (let i = 0; i < values.length; i++) {
-      const row = values[i];
-      const status = String(row[1] || '').trim();
-      if (status && status !== 'PENDING' && status !== 'RETRY') continue;
-      const sheetRow = i + 2;
-      const attempts = Number(row[4] || 0) || 0;
-      if (attempts >= 3) continue;
-      try {
-        const runId = String(row[5] || '').trim();
-        const rowNo = Number(row[6] || 0) || 0;
-        const customerNo = String(row[7] || '').trim();
-        const company = String(row[8] || '').trim();
-        const mode = String(row[9] || '').trim().toUpperCase();
-        let selectedKeys = [];
-        try { selectedKeys = JSON.parse(String(row[10] || '[]')); } catch (e) { selectedKeys = []; }
-        if (!Array.isArray(selectedKeys)) selectedKeys = [];
-        const labels = selectedKeys.map(function(k) { return getPortalSendFileLabel_(k); });
-
-        try {
-          appendContactHistory_({
-            customerNo: customerNo,
-            company: company,
-            rowNo: rowNo,
-            type: '자료발송',
-            contactRound: '',
-            method: mode === 'TEST' ? '테스트발송' : '고객발송',
-            status: '',
-            contactText: '웹앱에서 자료발송 완료: ' + labels.join(', '),
-            note: '',
-            nextAction: '',
-            nextActionAt: '',
-            reflectToMasterMemo: false
-          });
-        } catch (historyErr) {
-          Logger.log('메일 발송 후처리 컨택이력 기록 실패: ' + (historyErr && historyErr.stack || historyErr));
-        }
-
-        try {
-          updateCustomerSearchIndexFullAfterMutation_({ rowNo: rowNo, customerNo: customerNo }, 'MAIL_SEND_RESULT_DEFERRED');
-        } catch (indexErr) {
-          Logger.log('메일 발송 후처리 검색인덱스 갱신 실패: ' + (indexErr && indexErr.stack || indexErr));
-          try { markCustomerSearchIndexDirty_('MAIL_SEND_RESULT_DEFERRED', indexErr && indexErr.message ? indexErr.message : String(indexErr)); } catch (e) {}
-        }
-
-        try {
-          appendPortalActivityLog_({
-            actionType: '자료발송',
-            screen: '견적/자료 발송',
-            rowNo: rowNo,
-            customerNo: customerNo,
-            company: company,
-            summary: (mode === 'TEST' ? '테스트 발송: ' : '고객 발송: ') + labels.join(', '),
-            detail: { mode: mode, selectedKeys: selectedKeys, runId: runId, deferred: true }
-          });
-        } catch (logErr) {
-          Logger.log('메일 발송 후처리 작업로그 기록 실패: ' + (logErr && logErr.stack || logErr));
-        }
-
-        try { CacheService.getScriptCache().remove('PORTAL_DASHBOARD_V46_FAST_HOME'); } catch (cacheErr) {}
-        sheet.getRange(sheetRow, 2).setValue('DONE');
-        sheet.getRange(sheetRow, 4).setValue(nowText);
-        sheet.getRange(sheetRow, 5).setValue(attempts + 1);
-        sheet.getRange(sheetRow, 12).setValue('');
-        processed++;
-      } catch (err) {
-        const nextStatus = attempts + 1 >= 3 ? 'FAIL' : 'RETRY';
-        sheet.getRange(sheetRow, 2).setValue(nextStatus);
-        sheet.getRange(sheetRow, 4).setValue(nowText);
-        sheet.getRange(sheetRow, 5).setValue(attempts + 1);
-        sheet.getRange(sheetRow, 12).setValue(String(err && err.message || err).slice(0, 1000));
-        if (nextStatus !== 'FAIL') remaining++;
-      }
-    }
-
-    try {
-      const finalValues = sheet.getRange(2, 2, lastRow - 1, 1).getDisplayValues();
-      remaining += finalValues.filter(function(r) { const st = String(r[0] || '').trim(); return st === 'PENDING' || st === 'RETRY'; }).length;
-      if (remaining > 0) { try { createPortalMailPostProcessTriggerP441_(); } catch (triggerErr) { Logger.log('메일 발송 후처리 재트리거 생성 실패: ' + (triggerErr && triggerErr.stack || triggerErr)); } }
-    } catch (err) {}
-    return { ok: true, processed: processed, remaining: remaining };
-  }, { attempts: 2, waitMs: 400, sleepBaseMs: 120 });
 }
 
 function appendContactHistory_(payload) {
