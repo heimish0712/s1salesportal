@@ -46,6 +46,8 @@ function applyHomeDataV77_(data, saveCache) {
     loadHomeNoticeList();
   }
 
+  scheduleHomeAlignmentFixP510_();
+
   if (saveCache) saveHomeCacheV77_(data);
 }
 
@@ -160,6 +162,7 @@ function scheduleDashboardRefreshV77_(dashboard) {
           cached.dashboard = freshDashboard;
           saveHomeCacheV77_(cached);
           renderDashboardStatsV77_(freshDashboard);
+          scheduleHomeAlignmentFixP510_();
         }
       })
       .withFailureHandler(function(err) {
@@ -290,7 +293,7 @@ function renderHomeSalesStatusP443_(res) {
 
 function renderHomeSalesRepTableP443_(rows) {
   if (!rows.length) return '<div class="home-sales-empty-p443">담당자별 수주 데이터가 없습니다.</div>';
-  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443"><thead><tr><th>담당자</th><th>누적</th><th>누적금액</th><th>이번달</th></tr></thead><tbody>';
+  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443 home-sales-rep-table-p443"><thead><tr><th>담당자</th><th>누적</th><th>누적금액</th><th>이번달</th></tr></thead><tbody>';
   rows.forEach(function(r) {
     html += '<tr>';
     html += '<td>' + esc(r.rep || '-') + '</td>';
@@ -305,7 +308,7 @@ function renderHomeSalesRepTableP443_(rows) {
 
 function renderHomeSalesPeriodTableP443_(rows) {
   if (!rows.length) return '<div class="home-sales-empty-p443">기간별 수주 데이터가 없습니다.</div>';
-  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443"><thead><tr><th>기간</th><th>건수</th><th>금액</th></tr></thead><tbody>';
+  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443 home-sales-period-table-p443"><thead><tr><th>기간</th><th>건수</th><th>금액</th></tr></thead><tbody>';
   rows.forEach(function(r) {
     html += '<tr>';
     html += '<td>' + esc(r.label || '-') + '</td>';
@@ -319,7 +322,7 @@ function renderHomeSalesPeriodTableP443_(rows) {
 
 function renderHomeSalesListTableP443_(rows, emptyMsg) {
   if (!rows.length) return '<div class="home-sales-empty-p443">' + esc(emptyMsg || '데이터가 없습니다.') + '</div>';
-  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443 home-sales-list-table-p443"><thead><tr><th>계약일</th><th>고객사</th><th>담당</th><th>계약가</th><th>수행사</th></tr></thead><tbody>';
+  let html = '<div class="home-sales-table-wrap-p443"><table class="home-sales-table-p443 home-sales-list-table-p443 home-contract-list-table-p510"><thead><tr><th>계약일</th><th>고객사</th><th>담당</th><th>계약가</th><th>수행사</th></tr></thead><tbody>';
   rows.forEach(function(r) {
     html += '<tr>';
     html += '<td>' + esc(r.contractDate || '-') + '</td>';
@@ -370,6 +373,74 @@ function renderHomeSalesStatusErrorP443_(err) {
   if (!area) return;
   const msg = err && err.message ? err.message : String(err || '수주현황을 불러오지 못했습니다.');
   area.innerHTML = '<div class="home-sales-error-p443">' + esc(msg) + '</div>';
+}
+
+// HOME 수주 표 외관 보정 전용입니다. 데이터 조회/저장/시트 연동은 건드리지 않습니다.
+let homeAlignmentFixTimerP510_ = null;
+let homeAlignmentObserverP510_ = null;
+
+function scheduleHomeAlignmentFixP510_() {
+  if (homeAlignmentFixTimerP510_) clearTimeout(homeAlignmentFixTimerP510_);
+  homeAlignmentFixTimerP510_ = setTimeout(function() {
+    homeAlignmentFixTimerP510_ = null;
+    applyHomeAlignmentFixP510_();
+  }, 30);
+  setTimeout(applyHomeAlignmentFixP510_, 180);
+}
+
+function setupHomeAlignmentObserverP510_() {
+  const root = document.getElementById('homeSection');
+  if (!root || typeof MutationObserver === 'undefined' || homeAlignmentObserverP510_) return;
+  homeAlignmentObserverP510_ = new MutationObserver(function() {
+    scheduleHomeAlignmentFixP510_();
+  });
+  homeAlignmentObserverP510_.observe(root, { childList: true, subtree: true });
+  scheduleHomeAlignmentFixP510_();
+}
+
+function applyHomeAlignmentFixP510_() {
+  const root = document.getElementById('homeSection');
+  if (!root) return;
+
+  Array.from(root.querySelectorAll('.home-sales-list-table-p443')).forEach(function(table) {
+    table.classList.add('home-contract-list-table-p510');
+    applyHomeColgroupP510_(table, ['16%', '44%', '11%', '18%', '11%']);
+  });
+
+  Array.from(root.querySelectorAll('.home-sales-rep-table-p443, .home-sales-period-table-p443')).forEach(function(table) {
+    table.classList.add('home-sales-summary-table-p510');
+    const colCount = getHomeAlignmentFirstBodyColumnCountP510_(table);
+    if (colCount === 4) applyHomeColgroupP510_(table, ['40%', '20%', '20%', '20%']);
+    else if (colCount === 3) applyHomeColgroupP510_(table, ['46%', '27%', '27%']);
+  });
+}
+
+function getHomeAlignmentFirstBodyColumnCountP510_(table) {
+  const row = table.querySelector('tbody tr');
+  return row ? row.children.length : 0;
+}
+
+function applyHomeColgroupP510_(table, widths) {
+  widths = widths || [];
+  if (!widths.length) return;
+  const current = table.querySelector('colgroup[data-home-align-p510="Y"]');
+  if (current && current.children.length === widths.length) return;
+  const old = table.querySelector('colgroup');
+  if (old) old.remove();
+  const colgroup = document.createElement('colgroup');
+  colgroup.setAttribute('data-home-align-p510', 'Y');
+  widths.forEach(function(width) {
+    const col = document.createElement('col');
+    col.style.width = width;
+    colgroup.appendChild(col);
+  });
+  table.insertBefore(colgroup, table.firstChild);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setupHomeAlignmentObserverP510_);
+} else {
+  setupHomeAlignmentObserverP510_();
 }
 
 </script>

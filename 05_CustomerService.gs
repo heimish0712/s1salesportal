@@ -2330,7 +2330,7 @@ function getNewCustomerTemplate() {
     vendor: '',
     status: '견적제출완료',
     customerRank: '',
-    statusOptions: buildStatusOptions_(''),
+    statusOptions: buildStatusOptions_('견적제출완료'),
     customerRankOptions: buildCustomerRankOptions_(''),
     memo: '',
     lastSent: '',

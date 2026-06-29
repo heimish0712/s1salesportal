@@ -5035,6 +5035,7 @@ button[disabled], .portal-btn-pending {
 .focus-row-expand-btn-p380 { white-space: nowrap; }
 
 
+
 /* PATCH P432: 컨택 이력 + 다음 액션 통합 팝업 */
 .contact-modal-p432 {
   width: 1120px;
@@ -5188,6 +5189,139 @@ button[disabled], .portal-btn-pending {
 @media (max-width: 700px) {
   .home-sales-kpis-p443 { grid-template-columns: 1fr; }
   .home-sales-actions-p443 { width: 100%; }
+}
+
+/* HOME-ALIGN-FIX-V4: 메인 수주현황 표 줄맞춤 전용. 기능/데이터 로직 수정 없음. */
+#homeSection .home-sales-table-p443 {
+  width: 100% !important;
+  border-collapse: collapse !important;
+  border-spacing: 0 !important;
+  table-layout: fixed !important;
+}
+
+#homeSection .home-sales-table-p443 th,
+#homeSection .home-sales-table-p443 td {
+  box-sizing: border-box !important;
+  border-bottom: 1px solid #eef2f6 !important;
+  font-size: 12px !important;
+  line-height: 1.28 !important;
+}
+
+#homeSection .home-sales-table-p443 th {
+  height: 40px !important;
+  padding: 0 12px !important;
+  vertical-align: middle !important;
+  background: #f2f4f7 !important;
+  color: #475467 !important;
+  font-size: 11px !important;
+  font-weight: 950 !important;
+}
+
+#homeSection .home-sales-list-table-p443 td,
+#homeSection .home-contract-list-table-p510 td {
+  height: 64px !important;
+  padding: 12px 12px 10px !important;
+  vertical-align: top !important;
+}
+
+#homeSection .home-sales-list-table-p443 th:nth-child(1),
+#homeSection .home-sales-list-table-p443 td:nth-child(1),
+#homeSection .home-contract-list-table-p510 th:nth-child(1),
+#homeSection .home-contract-list-table-p510 td:nth-child(1) {
+  width: 16% !important;
+  text-align: left !important;
+}
+
+#homeSection .home-sales-list-table-p443 th:nth-child(2),
+#homeSection .home-sales-list-table-p443 td:nth-child(2),
+#homeSection .home-contract-list-table-p510 th:nth-child(2),
+#homeSection .home-contract-list-table-p510 td:nth-child(2) {
+  width: 44% !important;
+  text-align: left !important;
+  white-space: normal !important;
+  word-break: keep-all !important;
+  overflow-wrap: anywhere !important;
+}
+
+#homeSection .home-sales-list-table-p443 th:nth-child(3),
+#homeSection .home-sales-list-table-p443 td:nth-child(3),
+#homeSection .home-contract-list-table-p510 th:nth-child(3),
+#homeSection .home-contract-list-table-p510 td:nth-child(3) {
+  width: 11% !important;
+  text-align: center !important;
+}
+
+#homeSection .home-sales-list-table-p443 th:nth-child(4),
+#homeSection .home-sales-list-table-p443 td:nth-child(4),
+#homeSection .home-contract-list-table-p510 th:nth-child(4),
+#homeSection .home-contract-list-table-p510 td:nth-child(4) {
+  width: 18% !important;
+  text-align: right !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+#homeSection .home-sales-list-table-p443 th:nth-child(5),
+#homeSection .home-sales-list-table-p443 td:nth-child(5),
+#homeSection .home-contract-list-table-p510 th:nth-child(5),
+#homeSection .home-contract-list-table-p510 td:nth-child(5) {
+  width: 11% !important;
+  text-align: center !important;
+}
+
+#homeSection .home-sales-list-table-p443 td:not(:nth-child(2)),
+#homeSection .home-contract-list-table-p510 td:not(:nth-child(2)) {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#homeSection .home-sales-company-p443 {
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.28 !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  color: #111827 !important;
+}
+
+#homeSection .home-sales-muted-p443 {
+  display: block !important;
+  margin: 4px 0 0 !important;
+  padding: 0 !important;
+  line-height: 1.25 !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  color: #667085 !important;
+}
+
+#homeSection .home-sales-rep-table-p443 td,
+#homeSection .home-sales-period-table-p443 td,
+#homeSection .home-sales-summary-table-p510 td {
+  height: 42px !important;
+  padding: 0 12px !important;
+  vertical-align: middle !important;
+  line-height: 1.28 !important;
+}
+
+#homeSection .home-sales-rep-table-p443 th:first-child,
+#homeSection .home-sales-rep-table-p443 td:first-child,
+#homeSection .home-sales-period-table-p443 th:first-child,
+#homeSection .home-sales-period-table-p443 td:first-child,
+#homeSection .home-sales-summary-table-p510 th:first-child,
+#homeSection .home-sales-summary-table-p510 td:first-child {
+  text-align: left !important;
+}
+
+#homeSection .home-sales-rep-table-p443 th:not(:first-child),
+#homeSection .home-sales-rep-table-p443 td:not(:first-child),
+#homeSection .home-sales-period-table-p443 th:not(:first-child),
+#homeSection .home-sales-period-table-p443 td:not(:first-child),
+#homeSection .home-sales-summary-table-p510 th:not(:first-child),
+#homeSection .home-sales-summary-table-p510 td:not(:first-child) {
+  text-align: right !important;
+  white-space: nowrap !important;
+  font-variant-numeric: tabular-nums !important;
 }
 
 </style>
