@@ -2024,17 +2024,21 @@ function saveBusinessRegistrationModalP436_() {
       closeBusinessRegistrationModalP436_();
       return res;
     }, function(err) {
-      if (isCustomerStaleSaveErrorP202_(err)) {
-        toast('다른 사용자가 먼저 수정했습니다. 최신 내용을 다시 불러옵니다.');
-        fetchCustomerDetailFromServer_(rowNo, function(detail) {
-          setCustomerDetailCache_(detail, { force:true, source:'master', allowIndexPatch:true, allowStorageWrite:true });
-          if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-        }, function(){}, { customerNo: customerNo, forceFull: true });
-      }
-      try { applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, (state && state.original) || {}); } catch (rollbackErr) {}
+      // P464: 사업자등록증 입력값은 유저가 다시 치면 안 되는 데이터입니다.
+      // 서버 저장 실패/동시작업/일시 오류가 나도 화면값을 롤백하지 않고 모달에 그대로 보존합니다.
+      // 중앙 alert도 입력 흐름을 끊으므로 금지하고, 사용자가 그대로 다시 저장할 수 있게 합니다.
+      businessRegistrationModalTouchedP436 = true;
+      try { applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, dirty); } catch (patchErr) {}
       renderBusinessRegistrationModalP436_(allValues, false);
-      alert('사업자등록증 정보 저장 실패: ' + getErrorMessage_(err));
-      throw err;
+      const msg = getErrorMessage_(err);
+      if (isCustomerStaleSaveErrorP202_(err)) {
+        toast('저장 보류: 다른 저장과 충돌했습니다. 입력값은 유지됩니다. 그대로 다시 저장하거나 최신정보 확인 후 저장하세요.');
+      } else if (typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err)) {
+        toast('저장 지연: 서버가 바쁩니다. 입력값은 유지됩니다. 잠시 뒤 다시 저장하세요.');
+      } else {
+        toast('사업자등록증 저장 실패: 입력값은 유지됩니다. ' + msg);
+      }
+      return Promise.reject(err);
     });
   }, { source: 'businessRegistrationModal' });
 }

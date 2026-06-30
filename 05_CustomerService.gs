@@ -1694,7 +1694,7 @@ function saveCustomerDetailThinCoreP462_(payload) {
   const customerNo = target.customerNo;
   const sheet = target.sheet;
   let values = normalizePortalCustomerLocationValues_(Object.assign({}, payload.values || {}));
-  values = normalizePortalContractValuesForSaveP112_(values || {});
+  values = preparePortalContractValuesForSaveP112_(values || {}, { sheet: sheet, rowNo: rowNo, requireFull: false });
   values = applyPortalAutoGradeByAreaForSaveP451_(values);
 
   const keys = Object.keys(values || {});
@@ -2587,8 +2587,25 @@ function makePortalQuoteBasisObjectP463_(row, map, grade) {
     grade: String(grade || '').trim(),
     appointmentUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_선임', '선임단가', '관리자선임단가'])),
     maintenanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_유지', '유지단가', '유지점검단가'])),
-    performanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_성능', '성능단가', '성능점검단가']))
+    performanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_성능', '성능단가', '성능점검단가'])),
+    areaAddUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_연면적가산', '연면적가산', '연면적 가산', '면적가산단가', '단가_면적가산']))
   };
+}
+
+function calculatePortalSpecialAreaSurchargeP464_(area, basis) {
+  area = Number(area) || 0;
+  basis = basis || {};
+  const addUnit = Number(basis.areaAddUnit) || 0;
+  if (!(area > 90000) || !(addUnit > 0)) {
+    return { areaAddUnit: addUnit, flooredArea: Math.floor(Math.max(area, 0) / 10000) * 10000, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
+  }
+  // P464: 특급은 90,000㎡까지 기본단가 적용, 초과분은 10,000㎡ 미만 절삭 후 10,000㎡당 단가_연면적가산을 더합니다.
+  // 예: 197,200㎡ → 190,000㎡로 보고, (190,000-90,000)/10,000=10단위 × 200,000 = 2,000,000원 가산.
+  const flooredArea = Math.floor(area / 10000) * 10000;
+  const surchargeArea = Math.max(0, flooredArea - 90000);
+  const surchargeUnits = Math.floor(surchargeArea / 10000);
+  const surchargeAmount = surchargeUnits * addUnit;
+  return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: surchargeArea, surchargeUnits: surchargeUnits, surchargeAmount: surchargeAmount };
 }
 
 function getPortalQuoteBasisMapP462() {
@@ -2662,18 +2679,7 @@ function calculateQuoteDiscount(payload) {
     throw new Error('변수 입력 부족: ' + missing.join(', ') + '을(를) 입력해야 합니다. 할인율은 공란이면 0%로 계산합니다.');
   }
 
-  if (normalizeGrade_(grade).indexOf('특급') >= 0) {
-    return {
-      ok: true,
-      special: true,
-      grade: grade,
-      finalPrice: '',
-      finalPriceText: '특급 별도 문의',
-      message: '특급 별도 문의'
-    };
-  }
-
-  const basis = getContractBasisForGrade_(grade, contractUnitText || String(months));
+  const basis = getContractBasisForGrade_(grade, contractUnitText || String(normalizedContractMonthsP280 || 12));
   if (!basis) throw new Error('계약기준 시트에서 관리등급 [' + (grade || '-') + '] 기준단가를 찾지 못했습니다.');
 
   const months = normalizedContractMonthsP280 || 12;
@@ -2684,7 +2690,9 @@ function calculateQuoteDiscount(payload) {
   const appointmentAmount = hasAppointment ? basis.appointmentUnit * months : 0;
   const maintenanceAmount = basis.maintenanceUnit * maintenanceCount;
   const performanceAmount = basis.performanceUnit * performanceCount;
-  const subtotal = appointmentAmount + maintenanceAmount + performanceAmount;
+  const specialAreaSurcharge = normalizeGrade_(grade).indexOf('특급') >= 0 ? calculatePortalSpecialAreaSurchargeP464_(area, basis) : { areaAddUnit: Number(basis.areaAddUnit) || 0, flooredArea: Math.floor(Math.max(area, 0) / 10000) * 10000, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
+  const areaSurchargeAmount = Number(specialAreaSurcharge.surchargeAmount) || 0;
+  const subtotal = appointmentAmount + maintenanceAmount + performanceAmount + areaSurchargeAmount;
 
   const vatMultiplier = vatText.indexOf('포함') >= 0 ? 1.1 : 1;
   const originPrice = subtotal * vatMultiplier;
@@ -2716,9 +2724,12 @@ function calculateQuoteDiscount(payload) {
     appointmentUnit: basis.appointmentUnit,
     maintenanceUnit: basis.maintenanceUnit,
     performanceUnit: basis.performanceUnit,
+    areaAddUnit: Number(basis.areaAddUnit) || 0,
     appointmentAmount: appointmentAmount,
     maintenanceAmount: maintenanceAmount,
     performanceAmount: performanceAmount,
+    areaSurchargeAmount: areaSurchargeAmount,
+    specialAreaSurcharge: specialAreaSurcharge,
     subtotal: subtotal,
     vatMultiplier: vatMultiplier,
     originPrice: originPrice,

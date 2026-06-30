@@ -1461,6 +1461,19 @@ function normalizeInspectionCountClientP462_(value) {
   const n = Number(m[0]);
   return n >= 0 && n <= 12 ? n : '';
 }
+function calculatePortalSpecialAreaSurchargeClientP464_(area, basis) {
+  area = Number(area) || 0;
+  basis = basis || {};
+  const addUnit = Number(basis.areaAddUnit) || 0;
+  const flooredArea = Math.floor(Math.max(area, 0) / 10000) * 10000;
+  if (!(area > 90000) || !(addUnit > 0)) {
+    return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
+  }
+  const surchargeArea = Math.max(0, flooredArea - 90000);
+  const surchargeUnits = Math.floor(surchargeArea / 10000);
+  return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: surchargeArea, surchargeUnits: surchargeUnits, surchargeAmount: surchargeUnits * addUnit };
+}
+
 function getPortalQuoteBasisClientP462_(grade, months) {
   const rawMap = portalQuoteBasisMapP462 || null;
   if (!rawMap) return null;
@@ -1503,7 +1516,6 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
   const area = Number(values.area || parseDetailAreaNumberP451_(values.area)) || 0;
   const grade = values.grade || calculateDetailGradeByAreaP451_(area);
   if (!area || !grade) return { ok: false, reason: 'missing' };
-  if (normalizeGradeClientP462_(grade) === '특급') return { ok: true, special: true, grade: grade, finalPriceText: '특급 별도 문의', discountRate: values.discountRate || '' };
   const months = normalizeContractMonthsClientP462_(values.contractUnit);
   const basis = getPortalQuoteBasisClientP462_(grade, months);
   if (!basis) return { ok: false, reason: 'basisMissing', grade: grade, months: months };
@@ -1516,7 +1528,9 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
   const appointmentAmount = hasAppointment ? (Number(basis.appointmentUnit) || 0) * Number(months) : 0;
   const maintenanceAmount = (Number(basis.maintenanceUnit) || 0) * Number(maintenanceCount);
   const performanceAmount = (Number(basis.performanceUnit) || 0) * Number(performanceCount);
-  const subtotal = appointmentAmount + maintenanceAmount + performanceAmount;
+  const specialAreaSurcharge = normalizeGradeClientP462_(grade) === '특급' ? calculatePortalSpecialAreaSurchargeClientP464_(area, basis) : { areaAddUnit: Number(basis.areaAddUnit) || 0, flooredArea: Math.floor(Math.max(area, 0) / 10000) * 10000, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
+  const areaSurchargeAmount = Number(specialAreaSurcharge.surchargeAmount) || 0;
+  const subtotal = appointmentAmount + maintenanceAmount + performanceAmount + areaSurchargeAmount;
   const vatMultiplier = vatText.indexOf('포함') >= 0 ? 1.1 : 1;
   const originPrice = subtotal * vatMultiplier;
   const targetFinal = parsePortalClientMoneyP462_(targetFinalValue || '');
@@ -1538,7 +1552,10 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
     discountRate: Math.round(discountRate * 100) / 100,
     finalPrice: finalPrice,
     finalPriceText: formatPortalClientWonP462_(finalPrice),
-    originPrice: originPrice
+    originPrice: originPrice,
+    areaAddUnit: Number(basis.areaAddUnit) || 0,
+    areaSurchargeAmount: areaSurchargeAmount,
+    specialAreaSurcharge: specialAreaSurcharge
   };
 }
 function recalcDetailQuoteRealtimeP462_(options) {
