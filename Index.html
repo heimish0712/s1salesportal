@@ -368,21 +368,21 @@
             <div class="support-form-label">고객번호 / 고객명 검색</div>
             <div class="support-customer-line">
               <input id="supportCustomerNo" placeholder="고객번호 또는 고객명">
-              <button class="secondary" onclick="lookupSupportCustomer()">불러오기</button>
-              <button class="secondary" onclick="searchSupportCustomerCandidates()">검색</button>
+              <button id="supportCustomerLoadBtn" class="secondary" onclick="lookupSupportCustomer()">불러오기</button>
+              <button id="supportCustomerSearchBtn" class="secondary" onclick="searchSupportCustomerCandidates()">검색</button>
             </div>
             <div class="support-search-results" id="supportCustomerSearchResults"></div>
           </div>
 
           <div class="support-section-title">고객 기본 정보</div>
-          <div class="support-form-item"><div class="support-form-label">고객명</div><input id="supportCustomerName"></div>
-          <div class="support-form-item"><div class="support-form-label">할인율</div><input id="supportDiscountRate"></div>
-          <div class="support-form-item"><div class="support-form-label">견적금액</div><input id="supportQuoteAmount"></div>
-          <div class="support-form-item"><div class="support-form-label">연면적</div><input id="supportArea"></div>
-          <div class="support-form-item"><div class="support-form-label">지역</div><input id="supportRegion"></div>
-          <div class="support-form-item"><div class="support-form-label">담당자 이름</div><input id="supportContactName"></div>
-          <div class="support-form-item half"><div class="support-form-label">담당자 이메일</div><input id="supportContactEmail"></div>
-          <div class="support-form-item wide"><div class="support-form-label">마스터시트 메모 <span class="support-muted">서무 참고용 / 여기서 수정해도 마스터시트에는 반영 안 됨</span></div><textarea id="supportMasterMemo" disabled></textarea></div>
+          <div class="support-form-item"><div class="support-form-label">고객명</div><input id="supportCustomerName" readonly></div>
+          <div class="support-form-item"><div class="support-form-label">할인율</div><input id="supportDiscountRate" readonly></div>
+          <div class="support-form-item"><div class="support-form-label">견적금액</div><input id="supportQuoteAmount" readonly></div>
+          <div class="support-form-item"><div class="support-form-label">연면적</div><input id="supportArea" readonly></div>
+          <div class="support-form-item"><div class="support-form-label">지역</div><input id="supportRegion" readonly></div>
+          <div class="support-form-item"><div class="support-form-label">담당자 이름</div><input id="supportContactName" readonly></div>
+          <div class="support-form-item half"><div class="support-form-label">담당자 이메일</div><input id="supportContactEmail" readonly></div>
+          <div class="support-form-item wide"><div class="support-form-label">마스터시트 메모</div><textarea id="supportMasterMemo" disabled></textarea></div>
 
           <div class="support-section-title">요청 내용</div>
           <div class="support-form-item wide"><div class="support-form-label">요청업무</div><textarea id="supportRequestText" placeholder="요청할 내용을 구체적으로 입력하세요."></textarea></div>

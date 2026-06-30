@@ -1730,8 +1730,10 @@ function confirmCustomerOrderP250_() {
       const company = String(res.company || state.company || '해당 고객').trim();
       const contractNo = String(res.contractNo || (res.orderInfo && res.orderInfo.contractNo) || '').trim();
       customerOrderModalStateP250 = Object.assign({}, state, { company: company, contractNo: contractNo });
-      const msg = '(' + company + ')의 발주번호(계약번호)는 ' + (contractNo || '-') + '번 입니다.';
+      const msg = '(' + company + ')의 발주번호(계약번호)는 ' + (contractNo || '-') + '번 입니다.\n자동으로 발주메일이 발송됩니다.';
       renderCustomerOrderModalP250_('result', msg);
+      // P447: 사용자는 결과 팝업을 바로 보고, 발주메일 큐 처리는 백그라운드로 즉시 한 번 태웁니다.
+      try { google.script.run.processPortalOrderNotificationMailQueueP447(); } catch (bgErr) {}
       if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
     })
     .withFailureHandler(function(err) {

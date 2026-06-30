@@ -404,7 +404,7 @@ function buildPortalSupportDataResponseV55_(rows, total, meta) {
 // v78: 상세/처리 팝업 빠른 로딩용 상세 캐시 API
 // - 목록 행에서 즉시 팝업을 채우고, 서버 상세는 ScriptCache를 먼저 봅니다.
 // - 저장 시 bumpPortalSupportCacheBustV64_()가 호출되어 목록/상세 캐시가 같이 무효화됩니다.
-const PORTAL_SUPPORT_DETAIL_CACHE_PREFIX_V78 = 'supportDetail:v250:';
+const PORTAL_SUPPORT_DETAIL_CACHE_PREFIX_V78 = 'supportDetail:v448:';
 const PORTAL_SUPPORT_DETAIL_CACHE_TTL_SEC_V78 = 300;
 
 function makePortalSupportDetailCacheKeyV78_(rowNo) {
@@ -413,6 +413,87 @@ function makePortalSupportDetailCacheKeyV78_(rowNo) {
 
 function getPortalSupportRequestDetail(rowNo, options) {
   return getPortalSupportRequestDetailFastV78(rowNo, options || {});
+}
+
+
+function getPortalSupportMasterCustomerInfoForRequestP448_(customerNo, customerName) {
+  customerNo = String(customerNo || '').trim();
+  customerName = String(customerName || '').trim();
+  const normalizedNo = customerNo.replace(/\s+/g, '').toLowerCase();
+  const normalizedName = customerName.replace(/\s+/g, '').toLowerCase();
+
+  if (!normalizedNo && !normalizedName) return null;
+
+  try {
+    const indexRows = getCustomerSearchIndexRows_();
+    let hitIndex = null;
+    if (normalizedNo) {
+      hitIndex = indexRows.find(function(r) {
+        const no = String(r.customerNo || '').replace(/\s+/g, '').toLowerCase();
+        return no && no === normalizedNo;
+      }) || null;
+    }
+    if (!hitIndex && normalizedName) {
+      hitIndex = indexRows.find(function(r) {
+        const company = String(r.company || '').replace(/\s+/g, '').toLowerCase();
+        return company && company.indexOf(normalizedName) >= 0;
+      }) || null;
+    }
+    if (hitIndex && hitIndex.rowNo) {
+      const masterSs = getMasterSpreadsheet_();
+      const masterSheet = masterSs.getSheetByName(PORTAL_CONFIG.MASTER_SHEET_NAME);
+      if (masterSheet) {
+        const obj = readMasterRowObject_(masterSheet, Number(hitIndex.rowNo));
+        obj.__rowNo = Number(hitIndex.rowNo);
+        return buildPortalSupportCustomerInfo_(obj);
+      }
+    }
+  } catch (err) {
+    Logger.log('영업지원 상세: 검색인덱스 기반 마스터 고객정보 조회 실패 - ' + (err && err.message || err));
+  }
+
+  try {
+    const rows = getMasterObjects_();
+    let hit = null;
+    if (normalizedNo) {
+      hit = rows.find(function(r) {
+        const no = String(r['고객번호'] || '').replace(/\s+/g, '').toLowerCase();
+        return no && no === normalizedNo;
+      }) || null;
+    }
+    if (!hit && normalizedName) {
+      hit = rows.find(function(r) {
+        const company = String(getCompanyValue_(r) || '').replace(/\s+/g, '').toLowerCase();
+        return company && company.indexOf(normalizedName) >= 0;
+      }) || null;
+    }
+    return hit ? buildPortalSupportCustomerInfo_(hit) : null;
+  } catch (err) {
+    Logger.log('영업지원 상세: 마스터 직접 고객정보 조회 실패 - ' + (err && err.message || err));
+    return null;
+  }
+}
+
+function enrichPortalSupportItemWithMasterCustomerInfoP448_(item) {
+  item = item || {};
+  const masterInfo = getPortalSupportMasterCustomerInfoForRequestP448_(item.customerNo, item.customerName);
+  if (!masterInfo) {
+    item.customerInfoSource = 'supportSheet';
+    return item;
+  }
+
+  item.customerNo = masterInfo.customerNo || item.customerNo || '';
+  item.customerName = masterInfo.customerName || item.customerName || '';
+  item.discountRate = masterInfo.discountRate || '';
+  item.quoteAmount = masterInfo.quoteAmount || '';
+  item.area = masterInfo.area || '';
+  item.region = masterInfo.region || '';
+  item.contactName = masterInfo.contactName || '';
+  item.contactEmail = masterInfo.contactEmail || '';
+  item.masterMemo = masterInfo.masterMemo || '';
+  item.contractSummary = masterInfo.contractSummary || item.contractSummary || '';
+  item.customerInfoSource = 'master';
+  return item;
 }
 
 function getPortalSupportRequestDetailFastV78(rowNo, options) {
@@ -427,6 +508,7 @@ function getPortalSupportRequestDetailFastV78(rowNo, options) {
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed && parsed.item) {
+          parsed.item = enrichPortalSupportItemWithMasterCustomerInfoP448_(parsed.item);
           const perm = getPortalCurrentPermission_();
           parsed.fromCache = true;
           parsed.loadedAt = parsed.loadedAt || new Date().toISOString();
@@ -442,7 +524,7 @@ function getPortalSupportRequestDetailFastV78(rowNo, options) {
   const sheet = getPortalSupportSheetFastV64_(getMasterSpreadsheet_());
   const headerMap = getPortalSupportHeaderMap_(sheet);
   const values = sheet.getRange(rowNo, 1, 1, Math.max(sheet.getLastColumn(), PORTAL_CONFIG.SUPPORT_HEADERS.length)).getDisplayValues()[0];
-  const item = buildPortalSupportRowObject_(values, rowNo, headerMap);
+  const item = enrichPortalSupportItemWithMasterCustomerInfoP448_(buildPortalSupportRowObject_(values, rowNo, headerMap));
   if (!item || (!item.requestText && !item.customerNo && !item.customerName)) throw new Error('영업지원 요청을 찾지 못했습니다.');
 
   const perm = getPortalCurrentPermission_();
@@ -648,6 +730,10 @@ function savePortalSupportRequestCoreP210_(payload) {
   assertPortalSupportRequesterAllowedP250_(requester, permForSupport);
   if (!requestText) throw new Error('요청업무를 입력하세요.');
 
+  const masterCustomerInfoP448 = getPortalSupportMasterCustomerInfoForRequestP448_(customerNo, customerName);
+  const resolvedCustomerNoP448 = masterCustomerInfoP448 && masterCustomerInfoP448.customerNo ? masterCustomerInfoP448.customerNo : customerNo;
+  const resolvedCustomerNameP448 = masterCustomerInfoP448 && masterCustomerInfoP448.customerName ? masterCustomerInfoP448.customerName : customerName;
+
   const receiptNo = String(payload.receiptNo || '').trim() || getExistingOrNextPortalSupportReceiptNo_(sheet, headerMap, rowNo);
   let completedAt = normalizePortalSupportCompletedAt_(payload.completedAt, status);
   let handlerValue = String(payload.handler || '').trim();
@@ -684,19 +770,19 @@ function savePortalSupportRequestCoreP210_(payload) {
     '업무유형': requestType,
     '요청자': requester,
     '처리자': handlerValue,
-    '고객번호': customerNo,
-    '고객명': customerName,
+    '고객번호': resolvedCustomerNoP448,
+    '고객명': resolvedCustomerNameP448,
     '요청업무': requestText,
-    '할인율': String(payload.discountRate || '').trim(),
-    '견적금액': String(payload.quoteAmount || '').trim(),
-    '연면적': String(payload.area || '').trim(),
-    '지역': String(payload.region || '').trim(),
-    '담당자 이름': String(payload.contactName || '').trim(),
-    '담당자 이메일': String(payload.contactEmail || '').trim(),
+    '할인율': masterCustomerInfoP448 ? String(masterCustomerInfoP448.discountRate || '').trim() : String(payload.discountRate || '').trim(),
+    '견적금액': masterCustomerInfoP448 ? String(masterCustomerInfoP448.quoteAmount || '').trim() : String(payload.quoteAmount || '').trim(),
+    '연면적': masterCustomerInfoP448 ? String(masterCustomerInfoP448.area || '').trim() : String(payload.area || '').trim(),
+    '지역': masterCustomerInfoP448 ? String(masterCustomerInfoP448.region || '').trim() : String(payload.region || '').trim(),
+    '담당자 이름': masterCustomerInfoP448 ? String(masterCustomerInfoP448.contactName || '').trim() : String(payload.contactName || '').trim(),
+    '담당자 이메일': masterCustomerInfoP448 ? String(masterCustomerInfoP448.contactEmail || '').trim() : String(payload.contactEmail || '').trim(),
     '처리내용': processContentValue,
     '완료 시각': completedAt,
     '진행 상태': status,
-    [PORTAL_SUPPORT_MEMO_HEADER]: String(payload.masterMemo || '').trim(),
+    [PORTAL_SUPPORT_MEMO_HEADER]: masterCustomerInfoP448 ? String(masterCustomerInfoP448.masterMemo || '').trim() : String(payload.masterMemo || '').trim(),
     '자동발송 확인': autoSendCheckValue,
     '클라이언트요청ID': clientRequestId
   };
@@ -716,7 +802,7 @@ function savePortalSupportRequestCoreP210_(payload) {
   SpreadsheetApp.flush();
   bumpPortalSupportCacheBustV64_();
 
-  const item = buildPortalSupportRowObject_(writtenRowValues, rowNo, headerMap);
+  const item = enrichPortalSupportItemWithMasterCustomerInfoP448_(buildPortalSupportRowObject_(writtenRowValues, rowNo, headerMap));
   return {
     ok: true,
     rowNo: rowNo,
@@ -726,8 +812,8 @@ function savePortalSupportRequestCoreP210_(payload) {
     message: isNew ? '영업지원 요청이 접수되었습니다.' : '영업지원 요청이 저장되었습니다.',
     item: item,
     audit: {
-      customerNo: customerNo,
-      customerName: customerName,
+      customerNo: resolvedCustomerNoP448,
+      customerName: resolvedCustomerNameP448,
       summary: (isNew ? '요청 접수: ' : '요청 저장: ') + requestText,
       detail: { receiptNo: receiptNo, requestType: requestType, status: status, rowNo: rowNo }
     }

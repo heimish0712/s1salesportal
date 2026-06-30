@@ -302,7 +302,35 @@ function createPortalCustomerOrderFromSearchP250(payload) {
       });
     } catch (logErr) {}
 
-    return buildPortalCustomerOrderResultP250_(target, appended, false);
+    // P447: 발주번호 생성 후 공용메일 자동 알림은 사용자 응답을 막지 않도록 큐에만 적재합니다.
+    // 실제 발송은 포탈 백그라운드 트리거가 메일 Worker에 위임합니다.
+    try {
+      if (typeof enqueuePortalOrderNotificationMailP447_ === 'function') {
+        enqueuePortalOrderNotificationMailP447_({
+          rowNo: target.rowNo,
+          customerNo: customerNo,
+          company: company,
+          contractNo: nextContractNo,
+          salesRep: rowObject.contractRep || getMasterFieldValue_(target.obj, 'salesRep') || '',
+          contractRowNo: targetRow
+        });
+      }
+    } catch (mailQueueErr) {
+      try {
+        appendPortalActivityLog_({
+          actionType: '발주메일큐실패',
+          screen: '고객 상세 검색',
+          customerNo: customerNo,
+          company: company,
+          summary: '발주메일 자동발송 큐 적재 실패 #' + nextContractNo,
+          detail: { error: mailQueueErr && mailQueueErr.message ? mailQueueErr.message : String(mailQueueErr) }
+        });
+      } catch (ignoreErr) {}
+    }
+
+    const orderResult = buildPortalCustomerOrderResultP250_(target, appended, false);
+    orderResult.orderMailAutoNotice = true;
+    return orderResult;
   });
 }
 

@@ -679,7 +679,7 @@ function fillSupportHandlerWithCurrentAccountP260_() {
 // v78: 상세/처리 팝업 로딩 최적화
 // - 목록에 이미 있는 행 데이터로 팝업을 즉시 채웁니다.
 // - 서버 상세 조회는 localStorage/ScriptCache를 거쳐 백그라운드 보정만 수행합니다.
-const SUPPORT_DETAIL_CACHE_STORAGE_KEY_V78 = 'portalSupportDetailCache:v78:';
+const SUPPORT_DETAIL_CACHE_STORAGE_KEY_V78 = 'portalSupportDetailCache:v448:';
 let supportModalDirtyV78 = false;
 let supportModalDetailRequestSeqV78 = 0;
 let supportModalDirtyBoundV78 = false;
@@ -793,6 +793,7 @@ function openSupportRequestModal(rowNo, options) {
 
   if (!supportCurrentRowNo) {
     document.getElementById('supportModalTitle').textContent = '영업지원 요청 추가';
+    setSupportModalCustomerInfoReadonlyP448_(true);
     fillSupportRequesterSelect_('supportRequester', (supportCurrentData && supportCurrentData.currentUser) || '');
     document.getElementById('supportStatus').value = '접수';
     setTimeout(function(){ const el=document.getElementById('supportCustomerNo'); if(el) el.focus(); }, 80);
@@ -800,6 +801,7 @@ function openSupportRequestModal(rowNo, options) {
   }
 
   document.getElementById('supportModalTitle').textContent = '영업지원 요청 상세/처리';
+  setSupportModalCustomerInfoReadonlyP448_(false);
 
   const listItem = mergeSupportRowForInstantDetailV78_(findSupportRowByRowNoV64_(supportCurrentRowNo));
   const cachedItem = readSupportDetailCacheV78_(supportCurrentRowNo);
@@ -808,11 +810,9 @@ function openSupportRequestModal(rowNo, options) {
   if (options.focusProcess) fillSupportHandlerWithCurrentAccountP260_();
   if (options.focusProcess) focusSupportProcessAreaV64_();
 
-  // 캐시가 있으면 화면은 즉시 사용 가능하므로 강제 조회하지 않습니다.
-  // 캐시가 없거나 요청업무가기처럼 최신 상태가 중요한 경우에만 백그라운드 보정합니다.
-  if (!cachedItem || options.focusProcess || options.forceRefresh) {
-    refreshSupportDetailInBackgroundV78_(supportCurrentRowNo, { focusProcess: !!options.focusProcess, force: false, showError: false });
-  }
+  // 목록/로컬 캐시에는 영업지원요청 시트의 과거 고객정보가 남을 수 있으므로,
+  // 상세 팝업은 항상 백그라운드에서 마스터시트 기준 고객 기본정보로 보정합니다.
+  refreshSupportDetailInBackgroundV78_(supportCurrentRowNo, { focusProcess: !!options.focusProcess, force: !!options.forceRefresh, showError: false });
 }
 
 function closeSupportRequestModal() {
@@ -831,6 +831,42 @@ function resetSupportModal_() {
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
   const btn = document.getElementById('supportSaveBtn');
   if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+  setSupportModalCustomerInfoReadonlyP448_(true);
+}
+
+
+function setSupportModalCustomerInfoReadonlyP448_(isNew) {
+  isNew = !!isNew;
+  const customerNo = document.getElementById('supportCustomerNo');
+  if (customerNo) {
+    customerNo.readOnly = !isNew;
+    customerNo.disabled = !isNew;
+    customerNo.classList.toggle('support-readonly-field', !isNew);
+  }
+
+  ['supportCustomerName','supportDiscountRate','supportQuoteAmount','supportArea','supportRegion','supportContactName','supportContactEmail'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.readOnly = true;
+    el.classList.add('support-readonly-field');
+  });
+
+  const memo = document.getElementById('supportMasterMemo');
+  if (memo) {
+    memo.disabled = true;
+    memo.classList.add('support-readonly-field');
+  }
+
+  const loadBtn = document.getElementById('supportCustomerLoadBtn');
+  const searchBtn = document.getElementById('supportCustomerSearchBtn');
+  if (loadBtn) loadBtn.disabled = !isNew;
+  if (searchBtn) searchBtn.disabled = !isNew;
+
+  const results = document.getElementById('supportCustomerSearchResults');
+  if (results && !isNew) {
+    results.style.display = 'none';
+    results.innerHTML = '';
+  }
 }
 
 function fillSupportSelects_(types, statuses) {
@@ -877,6 +913,7 @@ function fillSupportModal_(item) {
 }
 
 function lookupSupportCustomer() {
+  if (supportCurrentRowNo) return toast('상세/처리 화면에서는 고객 기본 정보는 마스터시트 기준 읽기 전용입니다.');
   const q = document.getElementById('supportCustomerNo').value || '';
   if (!q.trim()) return toast('고객번호 또는 고객명을 입력하세요.');
   google.script.run
@@ -886,6 +923,7 @@ function lookupSupportCustomer() {
 }
 
 function searchSupportCustomerCandidates() {
+  if (supportCurrentRowNo) return toast('상세/처리 화면에서는 고객 기본 정보는 마스터시트 기준 읽기 전용입니다.');
   const q = document.getElementById('supportCustomerNo').value || '';
   const box = document.getElementById('supportCustomerSearchResults');
   if (!q.trim()) return toast('검색할 고객번호 또는 고객명을 입력하세요.');

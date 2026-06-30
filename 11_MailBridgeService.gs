@@ -700,3 +700,203 @@ function getPortalMailCompleteSoundDataUrlV48() {
   };
 }
 
+
+
+/***************************************
+ * P447 발주번호 생성 알림 메일 자동발송 큐
+ * - 발주하기 버튼 응답을 지연시키지 않기 위해 포탈은 큐 적재만 수행
+ * - 백그라운드 트리거가 메일 Worker action=sendOrderNotificationMail 호출
+ ***************************************/
+const PORTAL_ORDER_MAIL_QUEUE_SHEET_P447 = '발주메일발송큐';
+const PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447 = [
+  '요청ID', '상태', '시도횟수', '생성일시', '최종시도일시', '완료일시', '오류',
+  '고객번호', '마스터행', '계약번호', '계약행', '고객사명', '영업담당자'
+];
+const PORTAL_ORDER_MAIL_WORKER_ACTION_P447 = 'sendOrderNotificationMail';
+
+function enqueuePortalOrderNotificationMailP447_(payload) {
+  payload = payload || {};
+  const customerNo = String(payload.customerNo || '').trim();
+  const contractNo = String(payload.contractNo || '').trim();
+  const company = String(payload.company || '').trim();
+  const salesRep = String(payload.salesRep || '').trim();
+  if (!contractNo || !company) return { ok: false, skipped: true, reason: 'contractNo/company empty' };
+
+  const requestId = buildPortalOrderMailRequestIdP447_(customerNo, contractNo, company);
+  const sheet = getPortalOrderMailQueueSheetP447_();
+  const existing = findPortalOrderMailQueueRowByRequestIdP447_(sheet, requestId);
+  if (existing && existing.rowNo) {
+    const status = String(existing.values[1] || '').trim();
+    if (status === '대기' || status === '발송중' || status === '완료') {
+      return { ok: true, duplicate: true, requestId: requestId, status: status };
+    }
+    // 오류 상태면 재시도 가능하도록 다시 대기로 돌립니다.
+    sheet.getRange(existing.rowNo, 2, 1, 6).setValues([['대기', existing.values[2] || 0, existing.values[3] || new Date(), '', '', '']]);
+    ensurePortalOrderMailTriggerP447_();
+    return { ok: true, retryQueued: true, requestId: requestId };
+  }
+
+  sheet.appendRow([
+    requestId,
+    '대기',
+    0,
+    new Date(),
+    '',
+    '',
+    '',
+    customerNo,
+    Number(payload.rowNo) || '',
+    contractNo,
+    Number(payload.contractRowNo) || '',
+    company,
+    salesRep
+  ]);
+
+  ensurePortalOrderMailTriggerP447_();
+  return { ok: true, queued: true, requestId: requestId };
+}
+
+function processPortalOrderNotificationMailQueueP447() {
+  const sheet = getPortalOrderMailQueueSheetP447_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { ok: true, processed: 0, pending: 0 };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: false, skipped: true, reason: 'lock busy' };
+
+  let processed = 0;
+  let pending = 0;
+  try {
+    const values = sheet.getRange(2, 1, lastRow - 1, PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447.length).getValues();
+    for (let i = 0; i < values.length; i++) {
+      const rowNo = i + 2;
+      const row = values[i];
+      const status = String(row[1] || '').trim();
+      const attempts = Number(row[2]) || 0;
+      if (status !== '대기' && status !== '오류') continue;
+      if (status === '오류' && attempts >= 3) continue;
+      pending++;
+      if (processed >= 10) continue;
+
+      const nextAttempts = attempts + 1;
+      sheet.getRange(rowNo, 2, 1, 5).setValues([['발송중', nextAttempts, row[3] || new Date(), new Date(), '']]);
+
+      try {
+        const result = callMailWorkerActionP447_(PORTAL_ORDER_MAIL_WORKER_ACTION_P447, {
+          requestId: String(row[0] || '').trim(),
+          customerNo: String(row[7] || '').trim(),
+          rowNo: Number(row[8]) || 0,
+          contractNo: String(row[9] || '').trim(),
+          contractRowNo: Number(row[10]) || 0,
+          company: String(row[11] || '').trim(),
+          salesRep: String(row[12] || '').trim(),
+          to: ['master@s1samsung.com'],
+          cc: []
+        });
+        sheet.getRange(rowNo, 2, 1, 5).setValues([['완료', nextAttempts, row[3] || new Date(), new Date(), new Date()]]);
+        sheet.getRange(rowNo, 7).setValue('');
+        processed++;
+      } catch (err) {
+        const msg = String(err && err.message || err || '').slice(0, 1000);
+        sheet.getRange(rowNo, 2, 1, 6).setValues([['오류', nextAttempts, row[3] || new Date(), new Date(), '', msg]]);
+        processed++;
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
+  if (hasPendingPortalOrderMailQueueP447_()) ensurePortalOrderMailTriggerP447_();
+  return { ok: true, processed: processed, pending: pending };
+}
+
+function callMailWorkerActionP447_(action, payload) {
+  const cfg = getPortalMailWorkerConfigV83_();
+  if (!cfg.workerUrl) throw new Error('MAIL_WORKER_WEBAPP_URL 스크립트 속성이 없습니다.');
+  if (!cfg.workerSecret) throw new Error('MAIL_WORKER_SHARED_SECRET 스크립트 속성이 없습니다.');
+
+  const res = UrlFetchApp.fetch(cfg.workerUrl, {
+    method: 'post',
+    contentType: 'application/json; charset=utf-8',
+    payload: JSON.stringify({
+      secret: cfg.workerSecret,
+      action: action,
+      payload: payload || {},
+      client: {
+        portalScriptId: (() => { try { return ScriptApp.getScriptId(); } catch (e) { return ''; } })(),
+        requestedAt: new Date().toISOString()
+      }
+    }),
+    followRedirects: true,
+    muteHttpExceptions: true
+  });
+
+  const code = res.getResponseCode();
+  const text = res.getContentText() || '';
+  let data = null;
+  try { data = JSON.parse(text); } catch (err) {}
+  if (code < 200 || code >= 300) throw new Error('메일 Worker 호출 실패 HTTP ' + code + '\n응답: ' + text.slice(0, 2000));
+  if (!data || data.ok !== true) {
+    const msg = data && data.message ? data.message : text;
+    const detail = data && data.detail ? ('\n상세: ' + String(data.detail).slice(0, 2500)) : '';
+    throw new Error('발주메일 Worker 실패: ' + msg + detail);
+  }
+  return data.result || data;
+}
+
+function getPortalOrderMailQueueSheetP447_() {
+  const ss = getMasterSpreadsheet_();
+  let sheet = ss.getSheetByName(PORTAL_ORDER_MAIL_QUEUE_SHEET_P447);
+  if (!sheet) {
+    sheet = ss.insertSheet(PORTAL_ORDER_MAIL_QUEUE_SHEET_P447);
+    try { sheet.hideSheet(); } catch (err) {}
+  }
+  const current = sheet.getRange(1, 1, 1, PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447.length).getValues()[0];
+  const needHeader = PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447.some(function(h, idx) { return String(current[idx] || '') !== h; });
+  if (needHeader) {
+    sheet.getRange(1, 1, 1, PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447.length).setValues([PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function findPortalOrderMailQueueRowByRequestIdP447_(sheet, requestId) {
+  requestId = String(requestId || '').trim();
+  if (!requestId) return null;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const values = sheet.getRange(2, 1, lastRow - 1, PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447.length).getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim() === requestId) return { rowNo: i + 2, values: values[i] };
+  }
+  return null;
+}
+
+function buildPortalOrderMailRequestIdP447_(customerNo, contractNo, company) {
+  const base = [String(customerNo || '').trim(), String(contractNo || '').trim(), String(company || '').trim()].join('|');
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, base);
+  return 'ORDERMAIL-' + Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '').slice(0, 20);
+}
+
+function ensurePortalOrderMailTriggerP447_() {
+  const handler = 'processPortalOrderNotificationMailQueueP447';
+  try {
+    const exists = ScriptApp.getProjectTriggers().some(function(t) { return t.getHandlerFunction && t.getHandlerFunction() === handler; });
+    if (exists) return;
+    ScriptApp.newTrigger(handler).timeBased().after(60 * 1000).create();
+  } catch (err) {
+    // 트리거 생성 실패 시 큐에는 남아 있으므로 다음 수동/후속 실행에서 처리 가능
+  }
+}
+
+function hasPendingPortalOrderMailQueueP447_() {
+  const sheet = getPortalOrderMailQueueSheetP447_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+  const values = sheet.getRange(2, 2, lastRow - 1, 2).getValues();
+  return values.some(function(row) {
+    const status = String(row[0] || '').trim();
+    const attempts = Number(row[1]) || 0;
+    return status === '대기' || (status === '오류' && attempts < 3);
+  });
+}
