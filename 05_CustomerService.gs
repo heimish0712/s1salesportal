@@ -2584,10 +2584,11 @@ function findFirstAvailableMasterCustomerRow_(sheet, headerMap) {
 function calculateGradeByArea_(area) {
   area = Number(area) || 0;
   if (!area) return '';
-  if (area < 10000) return '초급(7년이상)';
+  if (area < 10000) return '초급';
   if (area < 15000) return '초급';
   if (area < 30000) return '중급';
-  return '고급';
+  if (area < 60000) return '고급';
+  return '특급';
 }
 
 function generateNextCustomerNo_(sheet) {

@@ -714,13 +714,43 @@ const PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447 = [
 ];
 const PORTAL_ORDER_MAIL_WORKER_ACTION_P447 = 'sendOrderNotificationMail';
 
+/***************************************
+ * P455 발주메일 발송 로그
+ * - 큐 등록/중복/트리거/Worker 호출/성공/오류를 마스터 파일에 남깁니다.
+ * - 사용자는 몰라도 운영자가 왜 안 갔는지 바로 추적할 수 있게 합니다.
+ ***************************************/
+const PORTAL_ORDER_MAIL_LOG_SHEET_P455 = '발주메일발송로그';
+const PORTAL_ORDER_MAIL_LOG_HEADERS_P455 = [
+  '일시', '단계', '상태', '요청ID', '고객번호', '마스터행', '계약번호', '계약행',
+  '고객사명', '영업담당자', '수신자', '참조', 'WorkerAction', 'WorkerURL',
+  '시도횟수', '큐행', '메일제목', '발신자', '요약', '오류', '상세JSON'
+];
+
 function enqueuePortalOrderNotificationMailP447_(payload) {
   payload = payload || {};
   const customerNo = String(payload.customerNo || '').trim();
   const contractNo = String(payload.contractNo || '').trim();
   const company = String(payload.company || '').trim();
   const salesRep = String(payload.salesRep || '').trim();
-  if (!contractNo || !company) return { ok: false, skipped: true, reason: 'contractNo/company empty' };
+  const rowNo = Number(payload.rowNo) || '';
+  const contractRowNo = Number(payload.contractRowNo) || '';
+
+  if (!contractNo || !company) {
+    appendPortalOrderMailLogP455_({
+      step: '큐등록',
+      status: '스킵',
+      customerNo: customerNo,
+      rowNo: rowNo,
+      contractNo: contractNo,
+      contractRowNo: contractRowNo,
+      company: company,
+      salesRep: salesRep,
+      summary: 'contractNo/company empty',
+      error: 'contractNo 또는 company가 비어 있어 발주메일 큐에 넣지 않았습니다.',
+      detail: payload
+    });
+    return { ok: false, skipped: true, reason: 'contractNo/company empty' };
+  }
 
   const requestId = buildPortalOrderMailRequestIdP447_(customerNo, contractNo, company);
   const sheet = getPortalOrderMailQueueSheetP447_();
@@ -728,10 +758,40 @@ function enqueuePortalOrderNotificationMailP447_(payload) {
   if (existing && existing.rowNo) {
     const status = String(existing.values[1] || '').trim();
     if (status === '대기' || status === '발송중' || status === '완료') {
+      appendPortalOrderMailLogP455_({
+        step: '큐등록',
+        status: '중복스킵',
+        requestId: requestId,
+        queueRowNo: existing.rowNo,
+        customerNo: customerNo,
+        rowNo: rowNo,
+        contractNo: contractNo,
+        contractRowNo: contractRowNo,
+        company: company,
+        salesRep: salesRep,
+        attempts: existing.values[2] || 0,
+        summary: '기존 큐 상태=' + status + ' / 중복 큐 등록 생략',
+        detail: { existingStatus: status, payload: payload }
+      });
       return { ok: true, duplicate: true, requestId: requestId, status: status };
     }
     // 오류 상태면 재시도 가능하도록 다시 대기로 돌립니다.
     sheet.getRange(existing.rowNo, 2, 1, 6).setValues([['대기', existing.values[2] || 0, existing.values[3] || new Date(), '', '', '']]);
+    appendPortalOrderMailLogP455_({
+      step: '큐등록',
+      status: '재시도대기',
+      requestId: requestId,
+      queueRowNo: existing.rowNo,
+      customerNo: customerNo,
+      rowNo: rowNo,
+      contractNo: contractNo,
+      contractRowNo: contractRowNo,
+      company: company,
+      salesRep: salesRep,
+      attempts: existing.values[2] || 0,
+      summary: '오류 상태 큐를 대기 상태로 재전환',
+      detail: { payload: payload }
+    });
     ensurePortalOrderMailTriggerP447_();
     return { ok: true, retryQueued: true, requestId: requestId };
   }
@@ -745,12 +805,32 @@ function enqueuePortalOrderNotificationMailP447_(payload) {
     '',
     '',
     customerNo,
-    Number(payload.rowNo) || '',
+    rowNo,
     contractNo,
-    Number(payload.contractRowNo) || '',
+    contractRowNo,
     company,
     salesRep
   ]);
+  const queueRowNo = sheet.getLastRow();
+
+  appendPortalOrderMailLogP455_({
+    step: '큐등록',
+    status: '대기',
+    requestId: requestId,
+    queueRowNo: queueRowNo,
+    customerNo: customerNo,
+    rowNo: rowNo,
+    contractNo: contractNo,
+    contractRowNo: contractRowNo,
+    company: company,
+    salesRep: salesRep,
+    to: 'master@s1samsung.com',
+    cc: '',
+    action: PORTAL_ORDER_MAIL_WORKER_ACTION_P447,
+    subject: contractNo + '. ' + company,
+    summary: '발주메일 큐 등록 완료',
+    detail: payload
+  });
 
   ensurePortalOrderMailTriggerP447_();
   return { ok: true, queued: true, requestId: requestId };
@@ -759,46 +839,146 @@ function enqueuePortalOrderNotificationMailP447_(payload) {
 function processPortalOrderNotificationMailQueueP447() {
   const sheet = getPortalOrderMailQueueSheetP447_();
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { ok: true, processed: 0, pending: 0 };
+  if (lastRow < 2) {
+    appendPortalOrderMailLogP455_({
+      step: '큐처리',
+      status: '스킵',
+      summary: '처리할 발주메일 큐 없음'
+    });
+    return { ok: true, processed: 0, pending: 0 };
+  }
 
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return { ok: false, skipped: true, reason: 'lock busy' };
+  if (!lock.tryLock(1000)) {
+    appendPortalOrderMailLogP455_({
+      step: '큐처리',
+      status: '스킵',
+      summary: 'ScriptLock busy로 이번 실행 스킵',
+      error: 'lock busy'
+    });
+    return { ok: false, skipped: true, reason: 'lock busy' };
+  }
 
   let processed = 0;
   let pending = 0;
+  let workerUrl = '';
   try {
+    try { workerUrl = (getPortalMailWorkerConfigV83_() || {}).workerUrl || ''; } catch (cfgErr) {}
     const values = sheet.getRange(2, 1, lastRow - 1, PORTAL_ORDER_MAIL_QUEUE_HEADERS_P447.length).getValues();
     for (let i = 0; i < values.length; i++) {
       const rowNo = i + 2;
       const row = values[i];
+      const requestId = String(row[0] || '').trim();
       const status = String(row[1] || '').trim();
       const attempts = Number(row[2]) || 0;
       if (status !== '대기' && status !== '오류') continue;
-      if (status === '오류' && attempts >= 3) continue;
+      if (status === '오류' && attempts >= 3) {
+        appendPortalOrderMailLogP455_({
+          step: '큐처리',
+          status: '재시도중단',
+          requestId: requestId,
+          queueRowNo: rowNo,
+          customerNo: String(row[7] || '').trim(),
+          rowNo: Number(row[8]) || '',
+          contractNo: String(row[9] || '').trim(),
+          contractRowNo: Number(row[10]) || '',
+          company: String(row[11] || '').trim(),
+          salesRep: String(row[12] || '').trim(),
+          attempts: attempts,
+          workerUrl: workerUrl,
+          summary: '오류 3회 이상으로 자동 재시도 중단',
+          error: String(row[6] || '').trim()
+        });
+        continue;
+      }
       pending++;
       if (processed >= 10) continue;
 
       const nextAttempts = attempts + 1;
+      const payload = {
+        requestId: requestId,
+        customerNo: String(row[7] || '').trim(),
+        rowNo: Number(row[8]) || 0,
+        contractNo: String(row[9] || '').trim(),
+        contractRowNo: Number(row[10]) || 0,
+        company: String(row[11] || '').trim(),
+        salesRep: String(row[12] || '').trim(),
+        to: ['master@s1samsung.com'],
+        cc: []
+      };
+
       sheet.getRange(rowNo, 2, 1, 5).setValues([['발송중', nextAttempts, row[3] || new Date(), new Date(), '']]);
+      appendPortalOrderMailLogP455_({
+        step: 'Worker호출',
+        status: '시작',
+        requestId: requestId,
+        queueRowNo: rowNo,
+        customerNo: payload.customerNo,
+        rowNo: payload.rowNo,
+        contractNo: payload.contractNo,
+        contractRowNo: payload.contractRowNo,
+        company: payload.company,
+        salesRep: payload.salesRep,
+        to: 'master@s1samsung.com',
+        cc: '',
+        action: PORTAL_ORDER_MAIL_WORKER_ACTION_P447,
+        workerUrl: workerUrl,
+        attempts: nextAttempts,
+        subject: payload.contractNo + '. ' + payload.company,
+        summary: '발주메일 Worker 호출 시작',
+        detail: payload
+      });
 
       try {
-        const result = callMailWorkerActionP447_(PORTAL_ORDER_MAIL_WORKER_ACTION_P447, {
-          requestId: String(row[0] || '').trim(),
-          customerNo: String(row[7] || '').trim(),
-          rowNo: Number(row[8]) || 0,
-          contractNo: String(row[9] || '').trim(),
-          contractRowNo: Number(row[10]) || 0,
-          company: String(row[11] || '').trim(),
-          salesRep: String(row[12] || '').trim(),
-          to: ['master@s1samsung.com'],
-          cc: []
-        });
+        const result = callMailWorkerActionP447_(PORTAL_ORDER_MAIL_WORKER_ACTION_P447, payload);
         sheet.getRange(rowNo, 2, 1, 5).setValues([['완료', nextAttempts, row[3] || new Date(), new Date(), new Date()]]);
         sheet.getRange(rowNo, 7).setValue('');
+        appendPortalOrderMailLogP455_({
+          step: 'Worker호출',
+          status: '성공',
+          requestId: requestId,
+          queueRowNo: rowNo,
+          customerNo: payload.customerNo,
+          rowNo: payload.rowNo,
+          contractNo: payload.contractNo,
+          contractRowNo: payload.contractRowNo,
+          company: payload.company,
+          salesRep: payload.salesRep,
+          from: result && result.from ? result.from : '',
+          to: 'master@s1samsung.com',
+          cc: '',
+          action: PORTAL_ORDER_MAIL_WORKER_ACTION_P447,
+          workerUrl: workerUrl,
+          attempts: nextAttempts,
+          subject: payload.contractNo + '. ' + payload.company,
+          summary: '발주메일 Worker 성공 응답',
+          detail: result || {}
+        });
         processed++;
       } catch (err) {
         const msg = String(err && err.message || err || '').slice(0, 1000);
         sheet.getRange(rowNo, 2, 1, 6).setValues([['오류', nextAttempts, row[3] || new Date(), new Date(), '', msg]]);
+        appendPortalOrderMailLogP455_({
+          step: 'Worker호출',
+          status: '오류',
+          requestId: requestId,
+          queueRowNo: rowNo,
+          customerNo: payload.customerNo,
+          rowNo: payload.rowNo,
+          contractNo: payload.contractNo,
+          contractRowNo: payload.contractRowNo,
+          company: payload.company,
+          salesRep: payload.salesRep,
+          to: 'master@s1samsung.com',
+          cc: '',
+          action: PORTAL_ORDER_MAIL_WORKER_ACTION_P447,
+          workerUrl: workerUrl,
+          attempts: nextAttempts,
+          subject: payload.contractNo + '. ' + payload.company,
+          summary: '발주메일 Worker 오류 응답',
+          error: msg,
+          detail: { error: err && err.stack ? String(err.stack).slice(0, 3000) : String(err || ''), payload: payload }
+        });
         processed++;
       }
     }
@@ -882,11 +1062,99 @@ function ensurePortalOrderMailTriggerP447_() {
   const handler = 'processPortalOrderNotificationMailQueueP447';
   try {
     const exists = ScriptApp.getProjectTriggers().some(function(t) { return t.getHandlerFunction && t.getHandlerFunction() === handler; });
-    if (exists) return;
+    if (exists) {
+      appendPortalOrderMailLogP455_({
+        step: '트리거',
+        status: '기존유지',
+        summary: '발주메일 큐 처리 트리거가 이미 존재합니다.'
+      });
+      return;
+    }
     ScriptApp.newTrigger(handler).timeBased().after(60 * 1000).create();
+    appendPortalOrderMailLogP455_({
+      step: '트리거',
+      status: '생성',
+      summary: '발주메일 큐 처리 트리거 생성 완료'
+    });
   } catch (err) {
+    appendPortalOrderMailLogP455_({
+      step: '트리거',
+      status: '오류',
+      summary: '발주메일 큐 처리 트리거 생성 실패',
+      error: err && err.message ? err.message : String(err),
+      detail: { stack: err && err.stack ? String(err.stack).slice(0, 3000) : '' }
+    });
     // 트리거 생성 실패 시 큐에는 남아 있으므로 다음 수동/후속 실행에서 처리 가능
   }
+}
+
+
+function getPortalOrderMailLogSheetP455_() {
+  const ss = getMasterSpreadsheet_();
+  let sheet = ss.getSheetByName(PORTAL_ORDER_MAIL_LOG_SHEET_P455);
+  if (!sheet) {
+    sheet = ss.insertSheet(PORTAL_ORDER_MAIL_LOG_SHEET_P455);
+  }
+  const current = sheet.getRange(1, 1, 1, PORTAL_ORDER_MAIL_LOG_HEADERS_P455.length).getValues()[0];
+  const needHeader = PORTAL_ORDER_MAIL_LOG_HEADERS_P455.some(function(h, idx) {
+    return String(current[idx] || '') !== h;
+  });
+  if (needHeader) {
+    sheet.getRange(1, 1, 1, PORTAL_ORDER_MAIL_LOG_HEADERS_P455.length).setValues([PORTAL_ORDER_MAIL_LOG_HEADERS_P455]);
+    sheet.setFrozenRows(1);
+    try { sheet.getRange(1, 1, 1, PORTAL_ORDER_MAIL_LOG_HEADERS_P455.length).setFontWeight('bold').setBackground('#fce5cd'); } catch (e) {}
+  }
+  return sheet;
+}
+
+function appendPortalOrderMailLogP455_(entry) {
+  try {
+    entry = entry || {};
+    const sheet = getPortalOrderMailLogSheetP455_();
+    const detail = entry.detail == null ? '' : (typeof entry.detail === 'string' ? entry.detail : JSON.stringify(entry.detail));
+    sheet.appendRow([
+      new Date(),
+      String(entry.step || '').trim(),
+      String(entry.status || '').trim(),
+      String(entry.requestId || '').trim(),
+      String(entry.customerNo || '').trim(),
+      entry.rowNo || entry.masterRow || '',
+      String(entry.contractNo || '').trim(),
+      entry.contractRowNo || '',
+      String(entry.company || '').trim(),
+      String(entry.salesRep || '').trim(),
+      Array.isArray(entry.to) ? entry.to.join(',') : String(entry.to || '').trim(),
+      Array.isArray(entry.cc) ? entry.cc.join(',') : String(entry.cc || '').trim(),
+      String(entry.action || '').trim(),
+      String(entry.workerUrl || '').trim(),
+      entry.attempts || '',
+      entry.queueRowNo || '',
+      String(entry.subject || '').trim(),
+      String(entry.from || '').trim(),
+      String(entry.summary || '').trim(),
+      String(entry.error || '').slice(0, 4000),
+      detail.slice(0, 45000)
+    ]);
+  } catch (err) {
+    try { Logger.log('발주메일발송로그 기록 실패: ' + (err && err.stack || err)); } catch (e) {}
+  }
+}
+
+/**
+ * 운영자 수동 실행용: 대기/오류 상태의 발주메일 큐를 즉시 처리합니다.
+ */
+function runPortalOrderNotificationMailQueueNow() {
+  return processPortalOrderNotificationMailQueueP447();
+}
+
+/**
+ * 운영자 수동 실행용: 발주메일발송로그 시트를 즉시 생성/헤더 보정합니다.
+ */
+function preparePortalOrderMailLogSheetP455() {
+  const sheet = getPortalOrderMailLogSheetP455_();
+  try { sheet.showSheet(); } catch (err) {}
+  SpreadsheetApp.getActive().toast('발주메일발송로그 시트 준비 완료', '발주메일', 4);
+  return { ok: true, sheetName: PORTAL_ORDER_MAIL_LOG_SHEET_P455 };
 }
 
 function hasPendingPortalOrderMailQueueP447_() {
