@@ -130,6 +130,7 @@ const PORTAL_CONFIG = {
   CONTACT_METHODS: ['전화', '문자', '메일', '방문', '팩스', '기타'],
 
   USER_DISPLAY_NAME_MAP: {
+    'xnewspringx@gmail.com': '박새봄',
     'pangsw712@gmail.com': '방수원',
     'pangsw712@naver.com': '방수원'
   },

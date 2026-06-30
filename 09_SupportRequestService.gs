@@ -9,6 +9,22 @@
 // 이 파일에서는 PORTAL_SUPPORT_REQUEST_TYPES / PORTAL_SUPPORT_REQUESTER_OPTIONS /
 // PORTAL_SUPPORT_STATUS_OPTIONS / PORTAL_SUPPORT_MEMO_HEADER를 절대 재선언하지 않습니다.
 
+function getPortalSupportCurrentHandlerNameP260_(perm) {
+  perm = perm || getPortalCurrentPermission_();
+  const email = String((perm && perm.email) || getPortalSessionEmail_() || '').trim().toLowerCase();
+  const map = PORTAL_CONFIG.USER_DISPLAY_NAME_MAP || {};
+  if (email && map[email]) return String(map[email] || '').trim();
+
+  const name = String(perm && perm.name || '').trim();
+  if (name && name.indexOf('@') < 0) return name;
+
+  try {
+    const fallback = String(getCurrentUserLabel_() || '').trim();
+    if (fallback) return fallback;
+  } catch (err) {}
+  return name || email || '웹앱사용자';
+}
+
 function getPortalSupportDelegatedRequesterNamesP250_() {
   return (PORTAL_SUPPORT_REQUESTER_OPTIONS || ['문형진', '방수원', '박새봄', '김경아', '최보람', '이옥희']).slice();
 }
@@ -637,6 +653,17 @@ function savePortalSupportRequestCoreP210_(payload) {
   let handlerValue = String(payload.handler || '').trim();
   let processContentValue = String(payload.processContent || '').trim();
   let autoSendCheckValue = String(payload.autoSendCheck || '').trim();
+
+  const statusForHandlerP260 = String(status || '').trim();
+  const supportProcessingTouchedP260 =
+    statusForHandlerP260 === '처리중' ||
+    statusForHandlerP260 === '완료' ||
+    !!String(payload.completedAt || '').trim() ||
+    !!String(payload.processContent || '').trim() ||
+    !!String(payload.autoSendCheck || '').trim();
+  if (permForSupport.canCompleteSupport && supportProcessingTouchedP260 && !handlerValue) {
+    handlerValue = getPortalSupportCurrentHandlerNameP260_(permForSupport);
+  }
 
   if (!permForSupport.canCompleteSupport) {
     if (isNew) {

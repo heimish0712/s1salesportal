@@ -653,6 +653,29 @@ function focusSupportProcessAreaV64_() {
   }, 120);
 }
 
+function getSupportCurrentHandlerNameP260_() {
+  const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
+  const email = String((p && p.email) || '').trim().toLowerCase();
+  const map = {
+    'xnewspringx@gmail.com': '박새봄',
+    'pangsw712@gmail.com': '방수원',
+    'pangsw712@naver.com': '방수원'
+  };
+  if (email && map[email]) return map[email];
+
+  const name = String((p && (p.name || p.salesRepName)) || '').trim();
+  if (name && name.indexOf('@') < 0) return name;
+  return String((supportCurrentData && supportCurrentData.currentUser) || name || email || '').trim();
+}
+
+function fillSupportHandlerWithCurrentAccountP260_() {
+  const el = document.getElementById('supportHandler');
+  if (!el || String(el.value || '').trim()) return;
+  const name = getSupportCurrentHandlerNameP260_();
+  if (name) el.value = name;
+}
+
+
 // v78: 상세/처리 팝업 로딩 최적화
 // - 목록에 이미 있는 행 데이터로 팝업을 즉시 채웁니다.
 // - 서버 상세 조회는 localStorage/ScriptCache를 거쳐 백그라운드 보정만 수행합니다.
@@ -745,6 +768,7 @@ function refreshSupportDetailInBackgroundV78_(rowNo, options) {
       if (supportModalDirtyV78) return;
       fillSupportSelects_(data.requestTypes || [], data.statusOptions || []);
       fillSupportModal_(item);
+      if (options.focusProcess) fillSupportHandlerWithCurrentAccountP260_();
       if (options.focusProcess) focusSupportProcessAreaV64_();
     })
     .withFailureHandler(function(err) {
@@ -781,6 +805,7 @@ function openSupportRequestModal(rowNo, options) {
   const cachedItem = readSupportDetailCacheV78_(supportCurrentRowNo);
   const immediateItem = cachedItem || listItem;
   fillSupportModal_(immediateItem);
+  if (options.focusProcess) fillSupportHandlerWithCurrentAccountP260_();
   if (options.focusProcess) focusSupportProcessAreaV64_();
 
   // 캐시가 있으면 화면은 즉시 사용 가능하므로 강제 조회하지 않습니다.
@@ -817,6 +842,10 @@ function fillSupportSelects_(types, statuses) {
   fillSupportRequesterSelect_('supportRequester', prevRequester || (supportCurrentData && supportCurrentData.currentUser) || '');
   if (statusSel) {
     statusSel.innerHTML = (statuses || []).map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
+    statusSel.onchange = function() {
+      const v = String(statusSel.value || '').trim();
+      if (v === '처리중' || v === '완료') fillSupportHandlerWithCurrentAccountP260_();
+    };
     if (!canCompletePortalSupportP310_()) {
       Array.from(statusSel.options || []).forEach(function(opt) { if (String(opt.value || opt.text || '').trim() === '완료') opt.disabled = true; });
     }
@@ -961,6 +990,7 @@ function saveSupportRequestFromModal() {
 
 function setSupportCompletedNow() {
   if (!canCompletePortalSupportP310_()) return alert('영업지원 완료 처리 권한이 없습니다.');
+  fillSupportHandlerWithCurrentAccountP260_();
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
   document.getElementById('supportCompletedAt').value = String(d.getFullYear()).slice(2) + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
