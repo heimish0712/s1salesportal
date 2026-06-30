@@ -617,15 +617,16 @@
        1행: 연면적 / 관리등급 / 건물 유형 / 부가세
        2행: 계약단위 / 관리자 선임 여부 / 유지점검 / 성능점검
        3행: 할인율 / 최종 견적가 / 계약시작일 / 계약종료일
-       4행: 용역신청서특약사항 */
+       4행: 용역신청서특약사항 / 에스원제보자 */
     .customer-expand-block-contract .customer-expand-form-row.row-0,
     .customer-expand-block-contract .customer-expand-form-row.row-1,
-    .customer-expand-block-contract .customer-expand-form-row.row-2 {
+    .customer-expand-block-contract .customer-expand-form-row.row-2,
+    .customer-expand-block-contract .customer-expand-form-row.row-3 {
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
-    .customer-expand-block-contract .customer-expand-form-row.row-3 {
-      grid-template-columns: 1fr;
+    .customer-expand-block-contract .customer-expand-form-row.row-3 .customer-expand-form-cell.span-3 {
+      grid-column: span 3;
     }
 
     .customer-expand-block-docs .customer-expand-form-row.row-0,
@@ -920,6 +921,7 @@
       .customer-expand-block-contract .customer-expand-form-row.row-0,
       .customer-expand-block-contract .customer-expand-form-row.row-1,
       .customer-expand-block-contract .customer-expand-form-row.row-2,
+      .customer-expand-block-contract .customer-expand-form-row.row-3,
       .customer-expand-block-docs .customer-expand-form-row.row-0,
       .customer-expand-block-biz .customer-expand-form-row.row-0 {
         grid-template-columns: 1fr;

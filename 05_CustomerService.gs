@@ -20,6 +20,7 @@ function getCustomerSearchIndexHeadersK2_() {
     '계약단위',
     '계약시작일',
     '계약종료일',
+    '제보자',
     '관리자 선임 여부',
     '유지점검',
     '성능점검',
@@ -389,6 +390,7 @@ function getCustomerSearchIndexConsistencyReport(options) {
     ['contractUnit', '계약단위'],
     ['contractStartDate', '계약시작일'],
     ['contractEndDate', '계약종료일'],
+    ['s1Referrer', '제보자'],
     ['appointment', '관리자 선임 여부'],
     ['maintenance', '유지점검'],
     ['performance', '성능점검'],
@@ -546,6 +548,7 @@ function getCustomerSearchIndexRows_() {
       contractUnit: cellByIndexHeader_(row, map, '계약단위'),
       contractStartDate: cellByIndexHeader_(row, map, '계약시작일'),
       contractEndDate: cellByIndexHeader_(row, map, '계약종료일'),
+      s1Referrer: cellByIndexHeader_(row, map, '제보자'),
       appointment: cellByIndexHeader_(row, map, '관리자 선임 여부'),
       maintenance: cellByIndexHeader_(row, map, '유지점검'),
       performance: cellByIndexHeader_(row, map, '성능점검'),
@@ -893,6 +896,7 @@ function buildCustomerSearchIndexRow_(obj, now) {
   const vat = getCustomerIndexObjectValueK2_(obj, 'vat');
   const discountRate = getCustomerIndexObjectValueK2_(obj, 'discountRate');
   const specialTerms = getCustomerIndexObjectValueK2_(obj, 'specialTerms');
+  const s1Referrer = getCustomerIndexObjectValueK2_(obj, 's1Referrer');
   const lastSent = getCustomerIndexObjectValueK2_(obj, 'lastSent');
   const sentAt = getCustomerIndexObjectValueK2_(obj, 'sentAt');
   const masterUpdatedAt = getCustomerIndexObjectValueK2_(obj, ['수정일시', '최종수정일시', '수정 시각']);
@@ -903,7 +907,7 @@ function buildCustomerSearchIndexRow_(obj, now) {
   // PATCH K-2: 상세 lite 필드 중 검색에 실질적으로 필요한 값은 searchText에 포함합니다.
   const searchText = shortenTextForIndex_([
     customerNo, company, salesRep, status, customerRank, contact, phone, directPhone, email, vendor, finalQuote, address,
-    region, area, grade, buildingType, contractUnit, contractStartDate, contractEndDate, appointment, maintenance, performance, vat
+    region, area, grade, buildingType, contractUnit, contractStartDate, contractEndDate, s1Referrer, appointment, maintenance, performance, vat
   ].join(' ').toLowerCase(), PORTAL_CONFIG.CUSTOMER_INDEX_SEARCH_TEXT_MAX_LENGTH || 1500);
   const ts = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
   const rowMap = {
@@ -932,6 +936,7 @@ function buildCustomerSearchIndexRow_(obj, now) {
     '계약단위': contractUnit,
     '계약시작일': contractStartDate,
     '계약종료일': contractEndDate,
+    '제보자': s1Referrer,
     '관리자 선임 여부': appointment,
     '유지점검': maintenance,
     '성능점검': performance,
@@ -1071,6 +1076,7 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
     vat: '부가세',
     discountRate: '할인율',
     specialTerms: '용역신청서특약사항',
+    s1Referrer: '제보자',
     lastSent: '마지막발송',
     sentAt: '발송일시'
   };
@@ -1096,7 +1102,7 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
     getH('고객번호'), getH('회사명'), getH('영업담당자'), getH('진행현황'), getH('고객등급'), getH('담당자'),
     getH('전화번호'), getH('직통번호'), getH('담당자 이메일'), getH('수행사'), getH('최종 견적가'), getH('주소'),
     getH('지역구분'), getH('연면적'), getH('관리등급'), getH('건물 유형'), getH('계약단위'),
-    getH('계약시작일'), getH('계약종료일'), getH('관리자 선임 여부'), getH('유지점검'), getH('성능점검'), getH('부가세')
+    getH('계약시작일'), getH('계약종료일'), getH('제보자'), getH('관리자 선임 여부'), getH('유지점검'), getH('성능점검'), getH('부가세')
   ].join(' ').toLowerCase(), PORTAL_CONFIG.CUSTOMER_INDEX_SEARCH_TEXT_MAX_LENGTH || 1500);
   setByHeader('검색문자열', searchText);
 
@@ -1403,6 +1409,7 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   const vat = getCustomerMasterHeaderValueK2_(obj, 'vat');
   const discountRate = getCustomerMasterHeaderValueK2_(obj, 'discountRate');
   const specialTerms = getCustomerMasterHeaderValueK2_(obj, 'specialTerms');
+  const s1Referrer = getCustomerMasterHeaderValueK2_(obj, 's1Referrer');
 
   const orderInfoP250 = (options.includeOrderInfo === false || typeof getPortalCustomerOrderInfoByTargetP250_ !== 'function')
     ? null
@@ -1428,6 +1435,7 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     vat: vat,
     discountRate: discountRate,
     specialTerms: specialTerms,
+    s1Referrer: s1Referrer,
     contact: getCustomerMasterHeaderValueK2_(obj, 'contact'),
     phone: getCustomerMasterHeaderValueK2_(obj, 'phone'),
     directPhone: getCustomerMasterHeaderValueK2_(obj, 'directPhone'),

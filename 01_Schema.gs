@@ -40,6 +40,7 @@ const PORTAL_MASTER_FIELD_SCHEMA = {
   vat: { label: '부가세', headers: ['부가세', 'VAT', '부가세 여부'], type: 'select', options: ['', '별도', '포함'] },
   discountRate: { label: '할인율', headers: ['할인율(%)', '할인률(%)', '할인율', '할인률', '할인율 %'], type: 'numberText' },
   specialTerms: { label: '용역신청서특약사항', headers: ['용역신청서특약사항', '용역신청서 특약사항', '특약사항', '계약기간\n(상세 작성 요구한 경우만)'], type: 'textarea', wide: true },
+  s1Referrer: { label: '에스원제보자', headers: ['제보자', '에스원제보자', '에스원 제보자', 'S1제보자', 'S1 제보자'], type: 'text' },
 
   lastSent: { label: '마지막발송', headers: ['마지막발송', '마지막 발송', '최근발송', '최근 발송'], type: 'text' },
   sentAt: { label: '발송일시', headers: ['발송일시', '발송 일시', '최근발송일시', '최근 발송일시'], type: 'text' },
@@ -157,6 +158,7 @@ const PORTAL_DETAIL_FIELDS = {
     portalFieldDef_('contractUnit', { editable: true }),
     portalFieldDef_('contractStartDate', { editable: true }),
     portalFieldDef_('contractEndDate', { editable: true }),
+    portalFieldDef_('s1Referrer', { editable: true }),
     portalFieldDef_('appointment', { editable: true }),
     portalFieldDef_('maintenance', { editable: true }),
     portalFieldDef_('performance', { editable: true }),
@@ -199,6 +201,7 @@ const PORTAL_CUSTOMER_LIST_FIELD_HEADERS = {
   contractUnit: masterFieldHeaders_('contractUnit'),
   contractStartDate: masterFieldHeaders_('contractStartDate'),
   contractEndDate: masterFieldHeaders_('contractEndDate'),
+  s1Referrer: masterFieldHeaders_('s1Referrer'),
   appointment: masterFieldHeaders_('appointment'),
   maintenance: masterFieldHeaders_('maintenance'),
   performance: masterFieldHeaders_('performance'),

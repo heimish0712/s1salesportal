@@ -125,6 +125,7 @@ const CUSTOMER_FILTER_DEFS_P = [
   { section:'상세 계약조건', key:'contractUnit', label:'계약단위', type:'select' },
   { section:'상세 계약조건', key:'contractStartDate', label:'계약시작일', type:'text' },
   { section:'상세 계약조건', key:'contractEndDate', label:'계약종료일', type:'text' },
+  { section:'상세 계약조건', key:'s1Referrer', label:'에스원제보자', type:'text' },
   { section:'상세 계약조건', key:'appointment', label:'관리자 선임 여부', type:'select' },
   { section:'상세 계약조건', key:'maintenance', label:'유지점검', type:'select' },
   { section:'상세 계약조건', key:'performance', label:'성능점검', type:'select' },
@@ -1512,13 +1513,14 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
       { key:'contractEndDate', label:'계약종료일' }
     ],
     [
-      { key:'specialTerms', label:'용역신청서특약사항' }
+      { key:'specialTerms', label:'용역신청서특약사항', span:3 },
+      { key:'s1Referrer', label:'에스원제보자' }
     ]
   ];
   contractRows[0]._columns = 4;
   contractRows[1]._columns = 4;
   contractRows[2]._columns = 4;
-  contractRows[3]._columns = 1;
+  contractRows[3]._columns = 4;
 
   html += renderCustomerExpandFormBlock_('고객사 기본 정보', basicInfoRows, detail, 'basic', 'customer-expand-block-basic');
 
@@ -3608,7 +3610,7 @@ function buildDetailFieldsFromFlatDetail_(detail) {
   ];
   const contractDefs = [
     ['area','연면적',true,'numberText'], ['buildingType','건물 유형',true,'select'], ['finalQuote','최종 견적가',false,'money'], ['contractUnit','계약단위',true,'select'],
-    ['contractStartDate','계약시작일',true,'dateText'], ['contractEndDate','계약종료일',true,'dateText'], ['appointment','관리자 선임 여부',true,'select'], ['maintenance','유지점검',true,'select'], ['performance','성능점검',true,'select'], ['vat','부가세',true,'select'],
+    ['contractStartDate','계약시작일',true,'dateText'], ['contractEndDate','계약종료일',true,'dateText'], ['s1Referrer','에스원제보자',true,'text'], ['appointment','관리자 선임 여부',true,'select'], ['maintenance','유지점검',true,'select'], ['performance','성능점검',true,'select'], ['vat','부가세',true,'select'],
     ['discountRate','할인율',true,'numberText'], ['specialTerms','용역신청서특약사항',true,'textarea',true]
   ];
   const extraDefs = [
@@ -3756,6 +3758,7 @@ function applyDetailValuesToDetailObject_(detail, values) {
     'discountRate',
     'finalQuote',
     'specialTerms',
+    's1Referrer',
     'businessRegistrationReceived',
     'serviceApplicationReceived',
     'appointmentReportReceived',
