@@ -387,6 +387,12 @@ let customerDetailServerSaveGuardMapP430 = {};
 // 늦게 도착한 서버 응답이 이미 닫힌 모달 또는 다른 고객 화면을 덮어쓰지 못하게 현재 모달 세션을 고정합니다.
 let activeCustomerDetailModalTokenP456 = 0;
 let activeCustomerDetailModalStateP456 = { open: false, token: 0, mode: '', rowNo: 0, customerNo: '', startedAt: 0 };
+// P457: No-Interrupt Save Queue / 상세 모달 상태 보호 계층
+// currentDetail을 서버 응답으로 통째 덮어쓰지 않고, 서버 확정값 + pending operation + 사용중 draft를 분리합니다.
+let detailSessionP457 = null;
+let detailOperationSeqP457 = 0;
+let customerDetailPendingOpMapP457 = {};
+const DETAIL_PENDING_OPERATION_TTL_MS_P457 = 5 * 60 * 1000;
 // STEP4/P220: 같은 고객에 대한 상세/목록/확장메모 저장이 동시에 서버로 나가지 않도록
 // 고객번호(rowNo fallback) 단위 저장 큐를 둡니다. 서버 버전 체크와 함께 쓰여 저장 충돌 체감을 줄입니다.
 let customerSaveQueueMapP220 = {};

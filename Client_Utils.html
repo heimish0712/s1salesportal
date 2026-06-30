@@ -44,6 +44,10 @@ function renderCustomerDetailIfActiveP456_(detail, renderOptions, token) {
   const rowNo = Number(detail && detail.rowNo) || 0;
   const customerNo = detail && detail.customerNo;
   if (!isCustomerDetailResponseStillRelevantP456_(token || 0, rowNo, customerNo, { allowNew: allowNew })) return false;
+  if (!allowNew && typeof hasActiveDetailDraftP457_ === 'function' && hasActiveDetailDraftP457_() && typeof applyServerDetailSafelyP457_ === 'function') {
+    applyServerDetailSafelyP457_(detail, { reason: 'renderIfActiveGuarded', source: 'master', neverRender: true });
+    return true;
+  }
   if (typeof renderDetail === 'function') renderDetail(detail, renderOptions || {});
   return true;
 }
@@ -63,6 +67,7 @@ function cleanupCustomerDetailModalStateP456_() {
   try { registrationApplied = false; } catch (err) {}
   try { registrationCalcResult = null; } catch (err) {}
   try { if (typeof clearDetailEditBaseline_ === 'function') clearDetailEditBaseline_(); } catch (err) {}
+  try { if (typeof resetDetailSessionP457_ === 'function') resetDetailSessionP457_({ keepGlobalPending: true }); } catch (err) {}
 
   try {
     const body = document.getElementById('modalBody');
@@ -84,7 +89,8 @@ function cleanupCustomerDetailModalStateP456_() {
 
 function closeModal(options){
   options = options || {};
-  if (!options.force && typeof warnIfCustomerDetailSavePendingP430_ === 'function' && !warnIfCustomerDetailSavePendingP430_('closeModal')) return false;
+  // P457: 상세 저장은 고객별 큐/operation log로 추적합니다. 모달 닫기 자체는 입력 흐름을 방해하지 않습니다.
+  // 브라우저 종료/새로고침은 beforeunload에서만 보호합니다.
   const backdrop = document.getElementById('modalBackdrop');
   const footer = document.getElementById('modalActionFooter');
   if (backdrop) backdrop.style.display='none';

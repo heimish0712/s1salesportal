@@ -45,7 +45,7 @@ function openDetail(rowNo, customerNo, options) {
   if (cached && cached.rowNo) {
     currentDetailCustomerNo = normalizeCustomerNoForKey_(cached.customerNo || targetCustomerNo);
     renderDetail(cached, forceEditMode ? { preserveEditMode: true, reason: 'openDetailForceEdit' } : undefined);
-    if (cached.__summary || cached.__lite) toast('기본 정보를 먼저 표시했습니다. 상세정보를 보강 중입니다.');
+    // P457: 상세 보강 상태는 모달 내부 안내/하단 배지로만 표시합니다. 입력 focus를 방해하는 토스트는 띄우지 않습니다.
   } else {
     document.getElementById('modalBody').innerHTML = '<div class="loading">상세정보 불러오는 중...</div>';
   }
@@ -59,6 +59,12 @@ function openDetail(rowNo, customerNo, options) {
     if (targetCustomerNo && normalizeCustomerNoForKey_(detail.customerNo) && normalizeCustomerNoForKey_(detail.customerNo) !== targetCustomerNo) return;
     if (currentDetail && Number(currentDetail.rowNo) !== rowNo) return;
 
+    const protectActiveInputP457 = typeof hasActiveDetailDraftP457_ === 'function' && hasActiveDetailDraftP457_();
+    if (protectActiveInputP457 && typeof applyServerDetailSafelyP457_ === 'function') {
+      applyServerDetailSafelyP457_(detail, { reason: 'asyncDetailHydration', source: 'master', neverRender: true });
+      try { renderDetailSyncStatusP457_(); } catch (e) {}
+      return;
+    }
     const preserveEditMode = !!isDetailEditMode || forceEditMode;
     const draftValues = preserveEditMode ? collectCurrentDetailInputValues_() : null;
     const nextDetail = preserveEditMode ? mergeDetailDraftValues_(detail, draftValues) : detail;
@@ -92,6 +98,9 @@ function openDetailSafe_(rowNo, customerNo, options) {
 
 function renderDetail(d, options) {
   options = options || {};
+  if (typeof prepareDetailForRenderP457_ === 'function') {
+    d = prepareDetailForRenderP457_(d, options);
+  }
   const preserveEditMode = !!options.preserveEditMode && !d.isNew;
   const draftValues = options.draftValues || null;
 
@@ -149,8 +158,10 @@ function renderDetail(d, options) {
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
     setTempMemoDefaultTime();
-    if (preserveEditMode) toast('상세정보 보강 완료. 수정 모드는 유지했습니다.');
+    // P457: 서버 보강/저장 상태 표시는 focus를 뺏지 않는 footer badge만 사용합니다.
   }
+  try { if (typeof bindDetailDraftProtectionP457_ === 'function') bindDetailDraftProtectionP457_(); } catch (err) {}
+  try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch (err) {}
 }
 
 function collectCurrentDetailInputValues_() {
@@ -255,6 +266,401 @@ function mergeDetailDraftValues_(detail, values) {
   }
 }
 
+// P457: 상세 모달 No-Interrupt 상태 계층
+// - serverSnapshot: 서버/캐시에서 마지막으로 받은 확정 스냅샷
+// - pendingOps: 서버 저장 중인 필드 단위 operation log
+// - draft: 사용자가 현재 입력 중인 값
+// 화면값은 항상 serverSnapshot + pendingOps + draft 순서로 계산합니다.
+function cloneDetailP457_(obj) {
+  try { return obj ? JSON.parse(JSON.stringify(obj)) : obj; } catch (err) { return obj; }
+}
+
+function getDetailSessionKeyP457_(rowNo, customerNo) {
+  return makeCustomerDetailCacheKey_(Number(rowNo) || 0, normalizeCustomerNoForKey_(customerNo || ''));
+}
+
+function resetDetailSessionP457_(options) {
+  options = options || {};
+  detailSessionP457 = null;
+  // global pending op map은 캐시/검색결과 보호용이므로 모달 cleanup 시 기본적으로 보존합니다.
+  if (!options.keepGlobalPending) customerDetailPendingOpMapP457 = {};
+}
+
+function ensureDetailSessionP457_(detail, options) {
+  options = options || {};
+  if (!detail || detail.isNew) return null;
+  const rowNo = Number(detail.rowNo) || 0;
+  const customerNo = normalizeCustomerNoForKey_(detail.customerNo || currentDetailCustomerNo || '');
+  const key = getDetailSessionKeyP457_(rowNo, customerNo);
+  const needNew = !detailSessionP457 || detailSessionP457.key !== key || options.reset === true;
+  if (needNew) {
+    detailSessionP457 = {
+      key: key,
+      sessionId: 'DS_' + Date.now() + '_' + Math.floor(Math.random() * 1000000),
+      rowNo: rowNo,
+      customerNo: customerNo,
+      serverSnapshot: cloneDetailP457_(detail),
+      pendingOps: [],
+      draft: {},
+      dirtyFields: {},
+      focusedField: null,
+      syncStatus: 'idle',
+      startedAt: Date.now()
+    };
+  } else if (options.serverSnapshot) {
+    detailSessionP457.serverSnapshot = cloneDetailP457_(detail);
+  }
+  return detailSessionP457;
+}
+
+function isSameDetailSessionP457_(rowNo, customerNo) {
+  const key = getDetailSessionKeyP457_(rowNo, customerNo);
+  return !!(detailSessionP457 && detailSessionP457.key === key);
+}
+
+function prunePendingOpsP457_(ops) {
+  const now = Date.now();
+  return (ops || []).filter(function(op) {
+    if (!op) return false;
+    if (op.status === 'APPLIED') return false;
+    if (op.status === 'FAILED' || op.status === 'CONFLICT') return true;
+    return now - Number(op.createdAt || now) <= DETAIL_PENDING_OPERATION_TTL_MS_P457;
+  });
+}
+
+function getPendingOpsForCustomerP457_(rowNo, customerNo) {
+  const key = getDetailSessionKeyP457_(rowNo, customerNo);
+  const ops = key && customerDetailPendingOpMapP457 ? (customerDetailPendingOpMapP457[key] || []) : [];
+  const pruned = prunePendingOpsP457_(ops);
+  if (key && customerDetailPendingOpMapP457 && pruned.length !== ops.length) customerDetailPendingOpMapP457[key] = pruned;
+  return pruned;
+}
+
+function getPendingPatchForCustomerP457_(rowNo, customerNo) {
+  const patch = {};
+  getPendingOpsForCustomerP457_(rowNo, customerNo).forEach(function(op) {
+    if (!op || op.status === 'FAILED' || op.status === 'CONFLICT') return;
+    Object.assign(patch, op.patch || {});
+  });
+  return patch;
+}
+
+function computeDetailViewModelP457_(baseDetail) {
+  let next = cloneDetailP457_(baseDetail || (detailSessionP457 && detailSessionP457.serverSnapshot) || currentDetail || {});
+  const session = detailSessionP457;
+  if (!session || !next) return next;
+  const pending = {};
+  (session.pendingOps || []).forEach(function(op) {
+    if (!op || op.status === 'FAILED' || op.status === 'CONFLICT') return;
+    Object.assign(pending, op.patch || {});
+  });
+  if (Object.keys(pending).length) next = applyDetailValuesToDetailObject_(next, pending);
+  if (session.draft && Object.keys(session.draft).length) next = applyDetailValuesToDetailObject_(next, session.draft);
+  if (session.pendingOps && session.pendingOps.some(function(op) { return op && op.status !== 'APPLIED'; })) {
+    next.__pendingSave = true;
+    next.__pendingOpsP457 = (session.pendingOps || []).map(function(op) { return op.opId; });
+  }
+  return next;
+}
+
+function prepareDetailForRenderP457_(detail, options) {
+  options = options || {};
+  if (!detail || detail.isNew) return detail;
+  const hasExisting = !!detailSessionP457 && isSameDetailSessionP457_(detail.rowNo, detail.customerNo || currentDetailCustomerNo);
+  const reset = options.resetP457Session === true || !hasExisting;
+  const session = ensureDetailSessionP457_(detail, { reset: reset, serverSnapshot: !reset });
+  if (!session) return detail;
+  session.pendingOps = prunePendingOpsP457_(session.pendingOps || []);
+  const globalOps = getPendingOpsForCustomerP457_(session.rowNo, session.customerNo);
+  if (globalOps.length) {
+    const seen = {};
+    (session.pendingOps || []).forEach(function(op) { if (op && op.opId) seen[op.opId] = true; });
+    globalOps.forEach(function(op) { if (op && op.opId && !seen[op.opId]) session.pendingOps.push(op); });
+  }
+  return computeDetailViewModelP457_(session.serverSnapshot);
+}
+
+function isDetailInputElementP457_(el) {
+  return !!(el && el.classList && el.classList.contains('detail-edit-input'));
+}
+
+function getDetailInputKeyP457_(el) {
+  return el && el.getAttribute ? String(el.getAttribute('data-key') || '') : '';
+}
+
+function getDetailProtectedFieldsP457_() {
+  const protectedMap = {};
+  const session = detailSessionP457;
+  if (!session) return protectedMap;
+  Object.keys(session.dirtyFields || {}).forEach(function(k) { if (session.dirtyFields[k]) protectedMap[k] = true; });
+  Object.keys(session.draft || {}).forEach(function(k) { protectedMap[k] = true; });
+  if (session.focusedField) protectedMap[session.focusedField] = true;
+  (session.pendingOps || []).forEach(function(op) {
+    Object.keys((op && op.patch) || {}).forEach(function(k) { protectedMap[k] = true; });
+  });
+  const active = document.activeElement;
+  if (isDetailInputElementP457_(active)) {
+    const k = getDetailInputKeyP457_(active);
+    if (k) protectedMap[k] = true;
+  }
+  return protectedMap;
+}
+
+function hasActiveDetailDraftP457_() {
+  const session = detailSessionP457;
+  if (!session) return false;
+  return !!(session.focusedField || Object.keys(session.draft || {}).length || Object.keys(session.dirtyFields || {}).length || (session.pendingOps || []).length);
+}
+
+function markDetailDraftFieldP457_(key, value, options) {
+  options = options || {};
+  key = String(key || '');
+  if (!key || !detailSessionP457) return;
+  if (!isDetailEditMode && !options.force) return;
+  detailSessionP457.draft[key] = value == null ? '' : String(value);
+  detailSessionP457.dirtyFields[key] = true;
+  detailSessionP457.syncStatus = 'dirty';
+}
+
+function bindDetailDraftProtectionP457_() {
+  const session = detailSessionP457;
+  if (!session) return;
+  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
+    if (!el || el.__detailDraftBoundP457) return;
+    el.__detailDraftBoundP457 = true;
+    el.addEventListener('focus', function() {
+      if (!detailSessionP457) return;
+      detailSessionP457.focusedField = getDetailInputKeyP457_(el) || null;
+      try { document.body.classList.add('portal-user-editing'); } catch (err) {}
+    });
+    el.addEventListener('blur', function() {
+      if (detailSessionP457 && detailSessionP457.focusedField === getDetailInputKeyP457_(el)) detailSessionP457.focusedField = null;
+      setTimeout(function() {
+        const active = document.activeElement;
+        if (!isDetailInputElementP457_(active)) {
+          try { document.body.classList.remove('portal-user-editing'); } catch (err) {}
+        }
+      }, 0);
+    });
+    const handler = function() {
+      const key = getDetailInputKeyP457_(el);
+      if (!key) return;
+      markDetailDraftFieldP457_(key, el.value || '', { force: true });
+      try { updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
+    };
+    el.addEventListener('input', handler);
+    el.addEventListener('change', handler);
+  });
+}
+
+function updateDetailSaveButtonDirtyStateP457_() {
+  const saveBtn = document.getElementById('footerSaveDetail');
+  if (!saveBtn || !isDetailEditMode) return;
+  const dirty = getDirtyDetailInputValues_();
+  saveBtn.disabled = Object.keys(dirty).length === 0;
+}
+
+function applyServerDetailSafelyP457_(serverDetail, options) {
+  options = options || {};
+  if (!serverDetail || serverDetail.isNew) return false;
+  const rowNo = Number(serverDetail.rowNo) || 0;
+  const customerNo = normalizeCustomerNoForKey_(serverDetail.customerNo || currentDetailCustomerNo || '');
+  const session = ensureDetailSessionP457_(serverDetail, { reset: !isSameDetailSessionP457_(rowNo, customerNo), serverSnapshot: true });
+  if (!session) return false;
+  session.serverSnapshot = cloneDetailP457_(serverDetail);
+  session.pendingOps = prunePendingOpsP457_(session.pendingOps || []);
+
+  const shouldNotRender = !!(options.neverRender || isDetailEditMode || hasActiveDetailDraftP457_());
+  const view = computeDetailViewModelP457_(session.serverSnapshot);
+  currentDetail = view;
+  currentDetailCustomerNo = normalizeCustomerNoForKey_(view.customerNo || customerNo);
+
+  setCustomerDetailCache_(view, {
+    force: true,
+    skipPendingMerge: true,
+    source: options.source || 'serverSnapshot',
+    allowIndexPatch: !!options.allowIndexPatch,
+    patchValues: getPendingPatchForCustomerP457_(rowNo, customerNo)
+  });
+
+  if (shouldNotRender) {
+    // 사용자가 입력 중이면 DOM은 절대 갈아엎지 않습니다. 안전한 캐시만 갱신합니다.
+    return true;
+  }
+  renderDetail(view, { preserveP457Session: true, reason: options.reason || 'safeServerDetail' });
+  return true;
+}
+
+function createDetailSaveOperationP457_(rowNo, customerNo, patch, baseValues) {
+  rowNo = Number(rowNo) || 0;
+  customerNo = normalizeCustomerNoForKey_(customerNo || '');
+  const opId = 'DOP_' + (++detailOperationSeqP457) + '_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+  return {
+    opId: opId,
+    seq: detailOperationSeqP457,
+    rowNo: rowNo,
+    customerNo: customerNo,
+    patch: Object.assign({}, patch || {}),
+    baseValues: Object.assign({}, baseValues || {}),
+    status: 'LOCAL_PENDING',
+    createdAt: Date.now(),
+    queuedAt: 0,
+    appliedAt: 0,
+    lastError: ''
+  };
+}
+
+function addDetailPendingOperationP457_(op) {
+  if (!op || !op.opId) return;
+  const key = getDetailSessionKeyP457_(op.rowNo, op.customerNo);
+  if (!key) return;
+  if (!customerDetailPendingOpMapP457) customerDetailPendingOpMapP457 = {};
+  const list = prunePendingOpsP457_(customerDetailPendingOpMapP457[key] || []);
+  if (!list.some(function(item) { return item && item.opId === op.opId; })) list.push(op);
+  customerDetailPendingOpMapP457[key] = list;
+
+  const session = ensureDetailSessionP457_(currentDetail || { rowNo: op.rowNo, customerNo: op.customerNo }, { reset: !isSameDetailSessionP457_(op.rowNo, op.customerNo) });
+  if (session && !session.pendingOps.some(function(item) { return item && item.opId === op.opId; })) {
+    session.pendingOps.push(op);
+    Object.assign(session.draft, op.patch || {});
+    Object.keys(op.patch || {}).forEach(function(k) { session.dirtyFields[k] = true; });
+    session.syncStatus = 'local';
+  }
+}
+
+function updateGlobalPendingOperationP457_(op) {
+  if (!op) return;
+  const key = getDetailSessionKeyP457_(op.rowNo, op.customerNo);
+  const list = key && customerDetailPendingOpMapP457 ? (customerDetailPendingOpMapP457[key] || []) : [];
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] && list[i].opId === op.opId) {
+      list[i] = op;
+      break;
+    }
+  }
+  if (key) customerDetailPendingOpMapP457[key] = prunePendingOpsP457_(list);
+}
+
+function markDetailOperationQueuedP457_(op) {
+  if (!op) return;
+  op.status = 'SERVER_QUEUED';
+  op.queuedAt = Date.now();
+  updateGlobalPendingOperationP457_(op);
+  if (detailSessionP457) detailSessionP457.syncStatus = 'queued';
+}
+
+function markDetailOperationApplyingP457_(op) {
+  if (!op) return;
+  op.status = 'APPLYING';
+  updateGlobalPendingOperationP457_(op);
+  if (detailSessionP457) detailSessionP457.syncStatus = 'applying';
+}
+
+function markDetailOperationAppliedP457_(op, confirmedValues, result) {
+  if (!op) return;
+  confirmedValues = confirmedValues || op.patch || {};
+  op.status = 'APPLIED';
+  op.appliedAt = Date.now();
+  const key = getDetailSessionKeyP457_(op.rowNo, op.customerNo);
+  if (key && customerDetailPendingOpMapP457) {
+    customerDetailPendingOpMapP457[key] = (customerDetailPendingOpMapP457[key] || []).filter(function(item) { return item && item.opId !== op.opId; });
+  }
+  if (detailSessionP457 && detailSessionP457.key === key) {
+    detailSessionP457.serverSnapshot = applyDetailValuesToDetailObject_(cloneDetailP457_(detailSessionP457.serverSnapshot || currentDetail || {}), confirmedValues);
+    if (result) {
+      if (result.masterVersion) detailSessionP457.serverSnapshot.__masterVersion = detailSessionP457.serverSnapshot.masterVersion = result.masterVersion;
+      if (result.masterUpdatedAt) detailSessionP457.serverSnapshot.__masterUpdatedAt = detailSessionP457.serverSnapshot.masterUpdatedAt = result.masterUpdatedAt;
+      if (result.masterEditor) detailSessionP457.serverSnapshot.__masterEditor = detailSessionP457.serverSnapshot.masterEditor = result.masterEditor;
+    }
+    detailSessionP457.pendingOps = (detailSessionP457.pendingOps || []).filter(function(item) { return item && item.opId !== op.opId; });
+    // 저장 응답은 해당 operation의 필드만 확정합니다. 사용자가 그 후 같은 필드를 다시 바꿨으면 draft를 보존합니다.
+    Object.keys(confirmedValues || {}).forEach(function(k) {
+      const currentInput = document.querySelector('.detail-edit-input[data-key="' + String(k).replace(/"/g, '\\"') + '"]');
+      const currentVal = currentInput ? String(currentInput.value || '') : String((detailSessionP457.draft || {})[k] || '');
+      const savedVal = String(confirmedValues[k] == null ? '' : confirmedValues[k]);
+      if (!currentInput || currentVal === savedVal) {
+        delete detailSessionP457.draft[k];
+        delete detailSessionP457.dirtyFields[k];
+      }
+    });
+    detailSessionP457.syncStatus = detailSessionP457.pendingOps.length ? 'queued' : (Object.keys(detailSessionP457.draft || {}).length ? 'dirty' : 'synced');
+    currentDetail = computeDetailViewModelP457_(detailSessionP457.serverSnapshot);
+  }
+}
+
+function markDetailOperationFailedP457_(op, err, conflict) {
+  if (!op) return;
+  op.status = conflict ? 'CONFLICT' : 'FAILED';
+  op.lastError = getErrorMessage_(err);
+  updateGlobalPendingOperationP457_(op);
+  if (detailSessionP457 && detailSessionP457.key === getDetailSessionKeyP457_(op.rowNo, op.customerNo)) {
+    detailSessionP457.syncStatus = conflict ? 'conflict' : 'retrying';
+    // 실패해도 사용자가 입력한 draft는 절대 지우지 않습니다.
+    Object.assign(detailSessionP457.draft, op.patch || {});
+    Object.keys(op.patch || {}).forEach(function(k) { detailSessionP457.dirtyFields[k] = true; });
+    currentDetail = computeDetailViewModelP457_(detailSessionP457.serverSnapshot);
+  }
+}
+
+function clearDraftForSavedPatchP457_(patch) {
+  if (!detailSessionP457 || !patch) return;
+  Object.keys(patch).forEach(function(k) {
+    delete detailSessionP457.draft[k];
+    delete detailSessionP457.dirtyFields[k];
+  });
+}
+
+function getDetailBaseValuesForPatchP457_(patch) {
+  const base = {};
+  const snapshot = detailSessionP457 && detailSessionP457.serverSnapshot ? detailSessionP457.serverSnapshot : currentDetail || {};
+  Object.keys(patch || {}).forEach(function(key) {
+    base[key] = getDetailValueByKeyP457_(snapshot, key);
+  });
+  return base;
+}
+
+function getDetailValueByKeyP457_(detail, key) {
+  detail = detail || {};
+  if (Object.prototype.hasOwnProperty.call(detail, key)) return detail[key];
+  const sections = detail.detailFields || {};
+  const names = Object.keys(sections);
+  for (let i = 0; i < names.length; i++) {
+    const arr = sections[names[i]] || [];
+    for (let j = 0; j < arr.length; j++) {
+      if (arr[j] && arr[j].key === key) return arr[j].value;
+    }
+  }
+  return '';
+}
+
+function renderDetailSyncStatusP457_() {
+  const footer = document.getElementById('modalActionFooter');
+  if (!footer) return;
+  let badge = document.getElementById('detailSyncStatusP457');
+  const session = detailSessionP457;
+  const pendingCount = session ? (session.pendingOps || []).filter(function(op) { return op && op.status !== 'APPLIED'; }).length : 0;
+  const dirtyCount = session ? Object.keys(session.draft || {}).length : 0;
+  let text = '';
+  let cls = 'detail-sync-badge-p457';
+  if (pendingCount) text = '저장 ' + pendingCount + '건 동기화 중';
+  else if (dirtyCount) text = '수정 중';
+  else if (session && session.syncStatus === 'synced') text = '저장 완료';
+  if (!text) {
+    if (badge) badge.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'detailSyncStatusP457';
+    badge.className = cls;
+    badge.setAttribute('aria-hidden', 'true');
+    badge.setAttribute('tabindex', '-1');
+    footer.insertBefore(badge, footer.firstChild);
+  }
+  badge.textContent = text;
+  badge.className = cls + (pendingCount ? ' pending' : (dirtyCount ? ' dirty' : ' done'));
+}
+
 function renderExistingFooter() {
   modalActionFooter.innerHTML = '' +
     '<button class="secondary" id="footerEditDetail" onclick="toggleDetailEdit(true)">정보 수정</button>' +
@@ -267,39 +673,30 @@ function renderExistingFooter() {
 
 function setCustomerDetailSaveUiP430_(pending, message, options) {
   options = options || {};
-  const body = document.getElementById('modalBody');
-  let box = document.getElementById('customerDetailSaveStatusP430');
-  if (body && (pending || options.success)) {
-    if (!box) {
-      box = document.createElement('div');
-      box.id = 'customerDetailSaveStatusP430';
-      box.className = 'section-card';
-      box.style.marginBottom = '12px';
-      body.insertBefore(box, body.firstChild);
+  // P457: 저장/동기화 안내는 입력 영역을 밀거나 focus를 뺏지 않는 footer badge만 사용합니다.
+  // 기존처럼 modalBody 상단에 박스를 삽입하면 사용자가 타이핑 중일 때 화면이 튀고 스크롤/커서 흐름이 깨집니다.
+  try {
+    if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_();
+  } catch (err) {}
+
+  const saveBtn = document.getElementById('footerSaveDetail');
+  if (saveBtn) {
+    // 저장 중이어도 다른 필드 입력은 막지 않습니다. 단, 변경값이 없으면 저장 버튼만 비활성화합니다.
+    if (isDetailEditMode) {
+      try { updateDetailSaveButtonDirtyStateP457_(); } catch (err) { saveBtn.disabled = true; }
+    } else {
+      saveBtn.disabled = true;
     }
-    box.style.borderColor = pending ? '#fedf89' : '#abefc6';
-    box.style.background = pending ? '#fffaeb' : '#ecfdf3';
-    box.style.color = pending ? '#93370d' : '#067647';
-    box.style.fontWeight = '800';
-    box.textContent = message || (pending ? '마스터시트에 저장 중입니다.' : '마스터시트 저장 완료');
-  } else if (box && !pending) {
-    box.remove();
+    saveBtn.textContent = '저장';
   }
 
-  const editBtn = document.getElementById('footerEditDetail');
-  const saveBtn = document.getElementById('footerSaveDetail');
-  if (editBtn) editBtn.disabled = !!pending;
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = pending ? '마스터 저장 중...' : '저장';
-  }
   if (!pending && options.success) {
+    if (typeof detailSessionP457 !== 'undefined' && detailSessionP457) detailSessionP457.syncStatus = 'synced';
+    try { renderDetailSyncStatusP457_(); } catch (err) {}
     setTimeout(function() {
-      const doneBox = document.getElementById('customerDetailSaveStatusP430');
-      if (doneBox && !hasCustomerDetailServerSavePendingP430_()) doneBox.remove();
-      const editBtn2 = document.getElementById('footerEditDetail');
-      if (editBtn2) editBtn2.disabled = false;
-    }, 3500);
+      const badge = document.getElementById('detailSyncStatusP457');
+      if (badge && !(typeof hasCustomerDetailServerSavePendingP430_ === 'function' && hasCustomerDetailServerSavePendingP430_())) badge.remove();
+    }, 1800);
   }
 }
 
@@ -510,6 +907,9 @@ function toggleDetailEdit(enable) {
     if (btn) btn.textContent = '할인율 계산하기';
     discountTargetMode = false;
   }
+  try { if (typeof bindDetailDraftProtectionP457_ === 'function') bindDetailDraftProtectionP457_(); } catch (err) {}
+  try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
+  try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch (err) {}
 }
 
 
@@ -600,19 +1000,18 @@ function prepareDetailContractValuesForClientSaveP112_(values, options) {
 function applyServerDetailAfterSaveP112_(detail, rowNo) {
   if (!detail || !detail.rowNo) return false;
   try { markDetailSourceK1_(detail, 'master'); } catch (err) {}
-  setCustomerDetailCache_(detail, {
-    force: true,
-    skipPendingMerge: true,
-    source: 'master',
-    allowIndexPatch: true,
-    allowPagePatch: true,
-    allowStorageWrite: true
-  });
   const modalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo || detail.rowNo, detail.customerNo);
-  if (modalStillActiveP456) {
-    currentDetail = detail;
-    renderDetail(detail);
-    toggleDetailEdit(false);
+  if (typeof applyServerDetailSafelyP457_ === 'function') {
+    applyServerDetailSafelyP457_(detail, { reason: 'applyServerDetailAfterSave', source: 'master', neverRender: modalStillActiveP456, allowIndexPatch: true });
+  } else {
+    setCustomerDetailCache_(detail, {
+      force: true,
+      skipPendingMerge: true,
+      source: 'master',
+      allowIndexPatch: true,
+      allowPagePatch: true,
+      allowStorageWrite: true
+    });
   }
   repaintCustomerResultsIfVisible_();
   try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
@@ -624,8 +1023,7 @@ function saveDetailFields() {
   const rowNo = Number(currentDetail.rowNo);
   const targetCustomerNo = normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo);
 
-  // PATCH J: 전체 input이 아니라 정보수정 진입 후 실제 변경된 필드만 저장합니다.
-  // 로딩 중이던 계약조건 빈값이 payload에 섞여 마스터시트를 덮어쓰는 문제를 차단합니다.
+  // P457: 전체 객체 저장 금지. 사용자가 실제로 바꾼 dirty 필드만 field patch operation으로 저장합니다.
   let values = getDirtyDetailInputValues_();
   try {
     values = prepareDetailContractValuesForClientSaveP112_(values, { requireFull: false });
@@ -638,26 +1036,26 @@ function saveDetailFields() {
   }
   if (!Object.keys(values).length) {
     toast('변경된 항목이 없습니다.');
-    toggleDetailEdit(false);
     return;
   }
 
-  const prevDetail = currentDetail ? JSON.parse(JSON.stringify(currentDetail)) : null;
   const saveSeq = ++customerDetailSaveSeq;
   const clientSavedAtP430 = new Date().toISOString();
-  const optimisticDetail = applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(currentDetail)), values);
+  const baseValuesP457 = (typeof getDetailBaseValuesForPatchP457_ === 'function') ? getDetailBaseValuesForPatchP457_(values) : {};
+  const opP457 = (typeof createDetailSaveOperationP457_ === 'function')
+    ? createDetailSaveOperationP457_(rowNo, targetCustomerNo, values, baseValuesP457)
+    : null;
+  if (opP457 && typeof addDetailPendingOperationP457_ === 'function') addDetailPendingOperationP457_(opP457);
+
+  const optimisticDetail = (typeof computeDetailViewModelP457_ === 'function' && detailSessionP457)
+    ? computeDetailViewModelP457_(detailSessionP457.serverSnapshot)
+    : applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(currentDetail)), values);
   optimisticDetail.__pendingSave = true;
   optimisticDetail.__pendingSaveSeq = saveSeq;
   optimisticDetail.__optimisticSavedAt = clientSavedAtP430;
 
-  registerCustomerDetailPendingSave_(optimisticDetail, values, saveSeq);
   const detailSaveGuardIdP430 = markCustomerDetailServerSaveStartedP430_(rowNo, targetCustomerNo, saveSeq, values);
 
-  // PATCH K2-FIX1:
-  // 상세 팝업 저장 직후 뒤쪽 고객검색 행도 즉시 바뀌어야 합니다.
-  // K-1/K-2 이후 setCustomerDetailCache_는 allowIndexPatch:true가 있어야
-  // customerSearchIndexState / lastCustomerResultResponse / page cache까지 패치합니다.
-  // 예: 대표전화번호 phone만 수정해도 검색결과 행의 전화번호 칸이 즉시 변경됩니다.
   setCustomerDetailCache_(optimisticDetail, {
     force: true,
     skipPendingMerge: true,
@@ -667,83 +1065,79 @@ function saveDetailFields() {
   });
 
   currentDetail = optimisticDetail;
+  currentDetailCustomerNo = targetCustomerNo;
   repaintCustomerResultsIfVisible_();
   try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
 
-  renderDetail(optimisticDetail);
-  toggleDetailEdit(false);
-  setCustomerDetailSaveUiP430_(true, '화면에는 임시 반영했습니다. 아직 마스터시트 저장 완료 전입니다.');
-  toast('임시 반영 중입니다. 저장 완료 메시지가 뜰 때까지 닫거나 이동하지 마세요.', { force: true, duration: 3500 });
+  // P457: 저장 클릭 후에도 모달/입력 DOM을 갈아엎지 않습니다.
+  // 지금 사용자가 보는 input 값은 그대로 두고, 기준선만 현재값으로 갱신해 다음 수정이 별도 operation으로 쌓이게 합니다.
+  setDetailEditBaselineFromCurrentInputs_();
+  try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch(e) {}
+  try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
 
   enqueueCustomerSaveP220_(rowNo, targetCustomerNo, function() {
+    try { if (opP457 && typeof markDetailOperationQueuedP457_ === 'function') markDetailOperationQueuedP457_(opP457); } catch(e) {}
+    try { if (opP457 && typeof markDetailOperationApplyingP457_ === 'function') markDetailOperationApplyingP457_(opP457); } catch(e) {}
     return runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, targetCustomerNo, values, {
         clientSaveSource: 'detailModal',
         clientRequestId: detailSaveGuardIdP430,
         clientSavedAt: clientSavedAtP430,
+        clientOperationId: opP457 && opP457.opId ? opP457.opId : '',
         requireAuditLog: false,
-        fastMode: true
+        fastMode: true,
+        noSynchronousRefresh: true
       }))
       .then(function(res){
         const detailModalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo);
+        const confirmedValuesP457 = (res && (res.changedValues || res.values)) ? (res.changedValues || res.values) : values;
         try { applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res); } catch(e) {}
-        if (detailModalStillActiveP456 && res && (res.masterVersion || res.masterUpdatedAt || res.masterEditor) && currentDetail && Number(currentDetail.rowNo) === rowNo) {
-          if (res.masterVersion) currentDetail.__masterVersion = currentDetail.masterVersion = res.masterVersion;
-          if (res.masterUpdatedAt) currentDetail.__masterUpdatedAt = currentDetail.masterUpdatedAt = res.masterUpdatedAt;
-          if (res.masterEditor) currentDetail.__masterEditor = currentDetail.masterEditor = res.masterEditor;
+        try { if (opP457 && typeof markDetailOperationAppliedP457_ === 'function') markDetailOperationAppliedP457_(opP457, confirmedValuesP457, res || {}); } catch(e) {}
+
+        if (res && res.detail && res.refreshedFromMaster && typeof applyServerDetailSafelyP457_ === 'function') {
+          applyServerDetailSafelyP457_(res.detail, { reason: 'saveResultFullDetail', source: 'saveResult', neverRender: true, allowIndexPatch: true });
         }
-        // 저장 성공 후에도 잠시 pending을 유지하여 저장 전에 출발한 상세보강/프리패치 응답이 최신값을 되돌리지 못하게 합니다.
-        if (res && res.detail && res.refreshedFromMaster) {
-          applyServerDetailAfterSaveP112_(res.detail, rowNo);
-        } else if (detailModalStillActiveP456 && currentDetail && Number(currentDetail.rowNo) === rowNo) {
-          const confirmedValuesP451 = (res && res.values) ? res.values : values;
-          currentDetail = applyDetailValuesToDetailObject_(currentDetail, confirmedValuesP451);
-          currentDetail.__pendingSave = false;
-          // 서버 저장 성공 후에도 검색결과 행/상세 캐시를 한 번 더 확정 패치합니다.
-          setCustomerDetailCache_(currentDetail, {
-            force: true,
-            skipPendingMerge: true,
-            source: 'saveResult',
-            allowIndexPatch: true,
-            patchValues: confirmedValuesP451
-          });
-          repaintCustomerResultsIfVisible_();
-        }
-        setTimeout(function(){ clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq); }, 20000);
+
+        const baseForViewP457 = (detailSessionP457 && detailSessionP457.serverSnapshot)
+          ? detailSessionP457.serverSnapshot
+          : (getCustomerDetailCache_(rowNo, targetCustomerNo) || currentDetail || { rowNo: rowNo, customerNo: targetCustomerNo });
+        const viewDetailP457 = (typeof computeDetailViewModelP457_ === 'function' && detailSessionP457)
+          ? computeDetailViewModelP457_(detailSessionP457.serverSnapshot)
+          : applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(baseForViewP457)), confirmedValuesP457);
+        viewDetailP457.rowNo = Number(viewDetailP457.rowNo || rowNo) || rowNo;
+        viewDetailP457.customerNo = normalizeCustomerNoForKey_(viewDetailP457.customerNo || targetCustomerNo);
+        viewDetailP457.__pendingSave = !!(detailSessionP457 && detailSessionP457.pendingOps && detailSessionP457.pendingOps.length);
+        currentDetail = viewDetailP457;
+
+        setCustomerDetailCache_(viewDetailP457, {
+          force: true,
+          skipPendingMerge: true,
+          source: 'saveResult',
+          allowIndexPatch: true,
+          patchValues: confirmedValuesP457
+        });
+        repaintCustomerResultsIfVisible_();
+        try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, res || { message: '마스터시트 저장 완료' });
-        if (detailModalStillActiveP456) toast((res && res.message) || '마스터시트 저장 완료', { force: true, duration: 3200 });
+        if (detailModalStillActiveP456) {
+          try { renderDetailSyncStatusP457_(); } catch(e) {}
+        }
         setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
         return res;
       }, function(err){
         const detailModalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo);
-        clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq);
+        const isStaleP457 = typeof isCustomerStaleSaveErrorP202_ === 'function' && isCustomerStaleSaveErrorP202_(err);
+        try { if (opP457 && typeof markDetailOperationFailedP457_ === 'function') markDetailOperationFailedP457_(opP457, err, isStaleP457); } catch(e) {}
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, null);
         try { setCustomerDetailSaveUiP430_(false); } catch(e) {}
-        if (typeof isCustomerStaleSaveErrorP202_ === 'function' && isCustomerStaleSaveErrorP202_(err)) {
-          if (prevDetail) {
-            setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
-            if (detailModalStillActiveP456 && currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
-            repaintCustomerResultsIfVisible_();
-          }
-          if (detailModalStillActiveP456) showModalError('다른 사용자가 이 고객 정보를 먼저 수정했습니다. 최신 내용을 다시 불러옵니다.');
-          try {
-            fetchCustomerDetailFromServer_(rowNo, function(detail){
-              if (detailModalStillActiveP456 && currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
-              if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-            }, function(){}, { customerNo: targetCustomerNo });
-          } catch(e) {}
-          alert('다른 사용자가 먼저 수정했습니다. 최신 내용을 확인한 뒤 다시 저장해 주세요.');
-          throw err;
+        try { renderDetailSyncStatusP457_(); } catch(e) {}
+        // P457: 저장 실패/충돌이 나도 사용자가 입력한 draft와 이후 operation은 절대 롤백하지 않습니다.
+        if (detailModalStillActiveP456) {
+          if (isStaleP457) showModalError('다른 사용자가 같은 고객 정보를 먼저 수정했습니다. 입력값은 보존했습니다. 최신값 확인 후 다시 저장해 주세요.');
+          else showModalError('상세정보 저장이 지연/실패했습니다. 입력값은 화면에 보존했습니다: ' + getErrorMessage_(err));
         }
-        if (prevDetail) {
-          setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
-          if (detailModalStillActiveP456 && currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
-          repaintCustomerResultsIfVisible_();
-        }
-        if (detailModalStillActiveP456) showModalError(err);
-        alert('상세정보 저장 실패: ' + getErrorMessage_(err));
         throw err;
       });
-  }, { source: 'detailModal' });
+  }, { source: 'detailModal', silentQueued: true });
 }
 
 function gatherValuesForCalc(targetFinalPrice) {
@@ -797,7 +1191,11 @@ function handleDiscountModeClick() {
 
 function setInputValueByKey(key, value) {
   const el = document.querySelector('.detail-edit-input[data-key="' + key + '"]');
-  if (el) el.value = value || '';
+  if (el) {
+    el.value = value || '';
+    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_(key, el.value || '', { force: true }); } catch (err) {}
+    try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
+  }
   if (key === 'status') applyPortalStatusControlStyles_();
 }
 
@@ -1478,12 +1876,19 @@ function saveContactHistoryFromModal() {
       if (updatedMemo) applyCustomerMemoOptimistic_(rowNo, updatedMemo);
       if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
       if (currentDetail && Number(currentDetail.rowNo) === rowNo && updatedMemo && (!(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo))) {
-        currentDetail.memo = updatedMemo;
-        renderDetail(currentDetail);
+        if (typeof markDetailDraftFieldP457_ === 'function' && isDetailEditMode) {
+          // 사용자가 상세를 수정 중이면 메모 refresh도 input DOM을 덮지 않습니다.
+          if (detailSessionP457 && detailSessionP457.serverSnapshot) detailSessionP457.serverSnapshot.memo = updatedMemo;
+        } else {
+          currentDetail.memo = updatedMemo;
+        }
       }
       fetchCustomerDetailFromServer_(rowNo, function(detail){
         if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-        if (currentDetail && Number(currentDetail.rowNo) === rowNo && (!(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo))) renderDetail(detail);
+        if (currentDetail && Number(currentDetail.rowNo) === rowNo && (!(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo))) {
+          if (typeof applyServerDetailSafelyP457_ === 'function') applyServerDetailSafelyP457_(detail, { reason: 'contactHistoryRefresh', source: 'master', neverRender: true });
+          else renderDetail(detail);
+        }
       }, function(){}, { customerNo: targetCustomerNo });
       setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
       if (document.getElementById('todaySection') && document.getElementById('todaySection').classList.contains('active')) loadTodayPage({ force: true });

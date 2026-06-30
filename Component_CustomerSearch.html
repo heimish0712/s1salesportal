@@ -754,6 +754,9 @@ function makeCustomerSavePayloadP202_(rowNo, customerNo, values, options) {
   if (options.clientRequestId) payload.clientRequestId = String(options.clientRequestId || '');
   if (Object.prototype.hasOwnProperty.call(options, 'requireAuditLog')) payload.requireAuditLog = !!options.requireAuditLog;
   if (Object.prototype.hasOwnProperty.call(options, 'fastMode')) payload.fastMode = !!options.fastMode;
+  if (Object.prototype.hasOwnProperty.call(options, 'noSynchronousRefresh')) payload.noSynchronousRefresh = !!options.noSynchronousRefresh;
+  if (options.clientOperationId) payload.clientOperationId = String(options.clientOperationId || '');
+  if (options.expectedValues) payload.expectedValues = Object.assign({}, options.expectedValues || {});
   if (options.clientSavedAt) payload.clientSavedAt = String(options.clientSavedAt || '');
   return payload;
 }
@@ -860,7 +863,10 @@ function handleCustomerStaleSaveFailureP202_(rowNo, customerNo, err, rollback, k
   fetchCustomerDetailFromServer_(rowNo, function(detail) {
     setCustomerDetailCache_(detail, { force: true, source: 'master', allowIndexPatch: true, allowStorageWrite: true });
     if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-    if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
+    if (currentDetail && Number(currentDetail.rowNo) === rowNo) {
+      if (typeof applyServerDetailSafelyP457_ === 'function') applyServerDetailSafelyP457_(detail, { reason: 'inlineStaleRefresh', source: 'master', neverRender: true, allowIndexPatch: true });
+      else renderDetail(detail);
+    }
   }, function(){}, { customerNo: customerNo });
 }
 
@@ -1093,14 +1099,24 @@ function clearCustomerDetailPendingSave_(rowNo, customerNo, saveSeq) {
 function getCustomerDetailPendingSave_(rowNo, customerNo) {
   const key = getCustomerDetailPendingKey_(rowNo, customerNo);
   if (!key) return null;
+  let aggregateP457 = {};
+  try {
+    if (typeof getPendingPatchForCustomerP457_ === 'function') aggregateP457 = getPendingPatchForCustomerP457_(rowNo, customerNo) || {};
+  } catch (err) {}
+  const hasP457 = Object.keys(aggregateP457).length > 0;
   const pending = customerDetailPendingSaveMap[key] || null;
-  if (!pending) return null;
-  // 너무 오래된 pending은 실패/새로고침 흔적으로 보고 자동 폐기합니다.
-  if (Date.now() - Number(pending.startedAt || 0) > 120000) {
+  if (!pending && !hasP457) return null;
+  if (pending && Date.now() - Number(pending.startedAt || 0) > 120000) {
     delete customerDetailPendingSaveMap[key];
-    return null;
   }
-  return pending;
+  const values = Object.assign({}, pending && pending.values ? pending.values : {}, aggregateP457);
+  return {
+    rowNo: Number(rowNo) || 0,
+    customerNo: normalizeCustomerNoForKey_(customerNo || ''),
+    values: values,
+    saveSeq: pending && pending.saveSeq || 0,
+    startedAt: pending && pending.startedAt || Date.now()
+  };
 }
 
 function applyPendingSaveToIncomingDetail_(detail) {
@@ -1164,8 +1180,9 @@ function markCustomerDetailServerSaveFinishedP430_(guardId, result) {
 
 function warnIfCustomerDetailSavePendingP430_(context) {
   if (!hasCustomerDetailServerSavePendingP430_()) return true;
-  alert('고객상세 저장이 아직 마스터시트에 반영 중입니다. 저장 완료 메시지가 뜰 때까지 닫기, 메뉴 이동, 새로고침을 하지 마세요.');
-  return false;
+  // P457: 작업 중 alert로 사용자의 입력 focus를 뺏지 않습니다. 저장은 고객별 큐에서 계속 진행됩니다.
+  try { toast('저장 동기화가 백그라운드에서 진행 중입니다.'); } catch (err) {}
+  return true;
 }
 
 try {

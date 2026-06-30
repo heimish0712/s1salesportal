@@ -5400,4 +5400,38 @@ button[disabled], .portal-btn-pending {
   font-variant-numeric: tabular-nums !important;
 }
 
+
+/* P457: 상세 저장 상태는 입력 화면을 밀거나 focus를 뺏지 않는 footer badge로만 표시 */
+.detail-sync-badge-p457 {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid #d0d5dd;
+  background: #f9fafb;
+  color: #475467;
+  margin-right: auto;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+.detail-sync-badge-p457.pending {
+  border-color: #fedf89;
+  background: #fffaeb;
+  color: #93370d;
+}
+.detail-sync-badge-p457.dirty {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.detail-sync-badge-p457.done {
+  border-color: #abefc6;
+  background: #ecfdf3;
+  color: #067647;
+}
+
 </style>

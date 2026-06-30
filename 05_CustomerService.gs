@@ -1772,8 +1772,11 @@ function saveCustomerDetailFastCoreP202_(payload) {
 
   let indexUpdate = null;
   let masterMetaP202 = null;
-  const shouldRefreshMaster = shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys);
-  const deferPostProcessP400 = shouldUseDeferredCustomerSavePostProcessP400_(changedKeys);
+  // P457: 상세 모달 저장은 화면 보호/체감속도를 위해 동기 상세 재조회·인덱스 직접갱신을 생략할 수 있습니다.
+  // 마스터 셀 저장과 수정버전 bump는 즉시 수행하고, 검색인덱스/상세 보강은 dirty queue/다음 조회에 맡깁니다.
+  const noSynchronousRefreshP457 = payload.noSynchronousRefresh === true;
+  const shouldRefreshMaster = !noSynchronousRefreshP457 && shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys);
+  const deferPostProcessP400 = noSynchronousRefreshP457 || shouldUseDeferredCustomerSavePostProcessP400_(changedKeys);
   let refreshedDetail = null;
   const ultraFastP433 = payload.fastMode === true;
   if (changedTargets.length) {
@@ -1831,6 +1834,8 @@ function saveCustomerDetailFastCoreP202_(payload) {
     verified: true,
     auditLogged: auditLoggedP430,
     fastPatch: !shouldRefreshMaster,
+    clientOperationId: payload.clientOperationId || '',
+    noSynchronousRefresh: noSynchronousRefreshP457,
     detail: refreshedDetail,
     refreshedFromMaster: !!refreshedDetail,
     message: changed.length ? ('상세정보 저장 완료: ' + changed.join(', ')) : '변경된 값이 없습니다.'

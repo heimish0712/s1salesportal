@@ -23,6 +23,10 @@ function saveTempMemo() {
     if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, rowNoP456, customerNoP456)) return;
     toast('임시메모가 저장되었습니다.');
     fetchCustomerDetailFromServer_(rowNoP456, function(detail){
+      if (typeof applyServerDetailSafelyP457_ === 'function') {
+        applyServerDetailSafelyP457_(detail, { reason: 'tempMemoRefresh', source: 'master', neverRender: true });
+        return;
+      }
       if (typeof renderCustomerDetailIfActiveP456_ === 'function') renderCustomerDetailIfActiveP456_(detail, {}, modalTokenP456);
       else renderDetail(detail);
     }, function(){}, { customerNo: customerNoP456 });
