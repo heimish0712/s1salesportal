@@ -5435,3 +5435,39 @@ button[disabled], .portal-btn-pending {
 }
 
 </style>
+<style>
+.portal-boot-overlay-p462 {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 250, 252, 0.72);
+  backdrop-filter: blur(2px);
+  pointer-events: all;
+}
+.portal-boot-box-p462 {
+  min-width: 280px;
+  max-width: 420px;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22);
+  border: 1px solid #e5e7eb;
+  padding: 22px 26px;
+  text-align: center;
+  color: #0f172a;
+}
+.portal-boot-spinner-p462 {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 3px solid #dbeafe;
+  border-top-color: #2563eb;
+  animation: portalBootSpinP462 0.9s linear infinite;
+  margin: 0 auto 12px;
+}
+.portal-boot-title-p462 { font-weight: 900; font-size: 16px; margin-bottom: 6px; }
+.portal-boot-desc-p462 { font-size: 13px; color: #475569; line-height: 1.5; }
+@keyframes portalBootSpinP462 { to { transform: rotate(360deg); } }
+</style>

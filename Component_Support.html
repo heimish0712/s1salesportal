@@ -17,10 +17,31 @@ function isSupportSectionActiveV57_() {
   const section = document.getElementById('supportSection');
   return !!(section && section.classList && section.classList.contains('active'));
 }
+const SUPPORT_PREFILL_STORAGE_KEY_P462 = 'salesPortal.support.pendingCustomerPrefill.p462';
+function setPendingSupportCustomerPrefillP462_(info) {
+  info = Object.assign({}, info || {}, { createdAt: Date.now(), stickyP462: true });
+  window.__supportPendingCustomerPrefillP461 = info;
+  try { sessionStorage.setItem(SUPPORT_PREFILL_STORAGE_KEY_P462, JSON.stringify(info)); } catch (err) {}
+  return info;
+}
+function clearPendingSupportCustomerPrefillP462_() {
+  window.__supportPendingCustomerPrefillP461 = null;
+  try { sessionStorage.removeItem(SUPPORT_PREFILL_STORAGE_KEY_P462); } catch (err) {}
+}
 function getPendingSupportCustomerPrefillP461_() {
-  const info = window.__supportPendingCustomerPrefillP461;
+  let info = window.__supportPendingCustomerPrefillP461;
+  if (!info) {
+    try {
+      const raw = sessionStorage.getItem(SUPPORT_PREFILL_STORAGE_KEY_P462);
+      info = raw ? JSON.parse(raw) : null;
+      if (info) window.__supportPendingCustomerPrefillP461 = info;
+    } catch (err) { info = null; }
+  }
   if (!info || (!info.customerNo && !info.rowNo)) return null;
-  if (info.createdAt && Date.now() - Number(info.createdAt) > 120000) return null;
+  if (info.createdAt && Date.now() - Number(info.createdAt) > 10 * 60 * 1000) {
+    clearPendingSupportCustomerPrefillP462_();
+    return null;
+  }
   return info;
 }
 
@@ -35,7 +56,15 @@ function applyPendingSupportCustomerPrefillP461_(reason) {
     input.value = info.customerNo || '';
     name.value = info.customerName || '';
   }
+  input.setAttribute('data-prefill-sticky-p462', 'Y');
+  if (name) name.setAttribute('data-prefill-sticky-p462', 'Y');
   return true;
+}
+
+function scheduleSupportPrefillReapplyP462_(reason) {
+  [0, 80, 250, 700, 1500, 3000].forEach(function(delay) {
+    setTimeout(function(){ try { applyPendingSupportCustomerPrefillP461_(reason || ('delay' + delay)); } catch (err) {} }, delay);
+  });
 }
 
 
@@ -44,6 +73,7 @@ function renderSupportDataV57_(data) {
   supportCurrentData = data;
   renderSupportStatusFilter_(data.statusOptions || []);
   renderSupportBoard(data.rows || []);
+  try { scheduleSupportPrefillReapplyP462_('renderSupportData'); } catch (err) {}
 }
 
 function preloadSupportPageV57_(options) {
@@ -366,7 +396,7 @@ function renderSupportInlineEntryPanel_() {
   area.innerHTML = html;
   initSupportInlineEntryDefaults_();
   // P461: 고객상세검색 → 영업지원요청 이동 직후 support 데이터 보강이 inline 폼을 다시 그려도 고객번호를 즉시 재적용합니다.
-  try { applyPendingSupportCustomerPrefillP461_('renderInlinePanel'); } catch (err) {}
+  try { scheduleSupportPrefillReapplyP462_('renderInlinePanel'); } catch (err) {}
 }
 
 function renderSupportInlineEntryRow_() {
@@ -422,10 +452,12 @@ function fillSupportRequesterSelect_(id, selected) {
 
 function initSupportInlineEntryDefaults_() {
   fillSupportRequesterSelect_('supportInlineRequester', (supportCurrentData && supportCurrentData.currentUser) || '');
-  window.__supportInlineCustomer = null;
+  // P462: 고객상세검색에서 넘어온 prefill이 있는 동안은 supportCurrentData 보강 렌더가 고객번호를 지우면 안 됩니다.
+  if (!getPendingSupportCustomerPrefillP461_()) window.__supportInlineCustomer = null;
 }
 
-function resetSupportInlineEntry() {
+function resetSupportInlineEntry(options) {
+  options = options || {};
   ['supportInlineCustomerNo','supportInlineCustomerName','supportInlineRequestText'].forEach(function(id){ const el=document.getElementById(id); if(el) el.value=''; });
   const type = document.getElementById('supportInlineRequestType'); if (type) type.value = '';
   fillSupportRequesterSelect_('supportInlineRequester', (supportCurrentData && supportCurrentData.currentUser) || '');
@@ -433,7 +465,7 @@ function resetSupportInlineEntry() {
   if (summary) { summary.textContent = '고객번호 입력 후 적용을 누르면 계약조건과 고객 정보가 자동으로 표시됩니다.'; summary.className = 'support-inline-placeholder'; }
   renderSupportInlineCustomerHistoryP19_(null);
   window.__supportInlineCustomer = null;
-  window.__supportPendingCustomerPrefillP461 = null;
+  if (options.clearPrefill !== false) clearPendingSupportCustomerPrefillP462_();
 }
 
 function applySupportInlineCustomer() {
@@ -571,7 +603,7 @@ function saveSupportInlineRequest() {
       if (btn && btn.dataset.requestId && btn.dataset.requestId !== payload.clientRequestId) return;
       if (btn) delete btn.dataset.requestId;
       toast((res && res.message) || '영업지원 요청이 저장되었습니다.');
-      resetSupportInlineEntry();
+      resetSupportInlineEntry({ clearPrefill: true });
       loadSupportPage({ force: true });
     })
     .withFailureHandler(function(err) {

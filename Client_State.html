@@ -4,6 +4,15 @@ let currentDetail = null;
 let currentDetailCustomerNo = '';
 let isDetailEditMode = false;
 let lastCalcResult = null;
+
+
+// P462: 고객상세 실시간 견적 계산용 계약기준 캐시
+let portalQuoteBasisMapP462 = null;
+let portalQuoteBasisLoadingP462 = false;
+let portalQuoteBasisLoadedAtP462 = 0;
+let portalBootReadyP462 = false;
+let portalBootQueuedPageP462 = '';
+let portalBootQueuedSkipSearchP462 = false;
 let discountTargetMode = false;
 let registrationMode = false;
 let registrationApplied = false;

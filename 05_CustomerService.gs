@@ -1662,6 +1662,183 @@ function runPortalCustomerWriteLockedP202_(label, callback) {
   }
 }
 
+
+// P462: 초경량 필드 저장 경로 -------------------------------------------------
+// 목적: 상태/주소/사업자등록증/특약/계약조건 등 사용자가 이미 화면에서 계산한 patch를
+// 마스터시트에 바로 반영합니다. 기존 saveCustomerDetailFastCoreP202_는 계약조건 보정,
+// 전체 행 display read, 검증 flush, 후처리 분기 때문에 단일 필드도 3~10초가 걸렸습니다.
+function isPortalCustomerThinSavePayloadP462_(payload, values) {
+  payload = payload || {};
+  values = values || payload.values || {};
+  const keys = Object.keys(values || {});
+  if (!keys.length) return false;
+  if (payload.thinSave === true) return true;
+  // 저장 출처가 명확하고 한두 칸 patch인 경우는 초경량 저장으로 처리합니다.
+  if (payload.fastMode === true && payload.noSynchronousRefresh === true && keys.length <= 4) return true;
+  return false;
+}
+
+function getPortalThinSaveDetailDefMapP462_() {
+  const defs = getPortalCustomerAllDetailDefsP436_();
+  const map = {};
+  defs.forEach(function(def) { if (def && def.key) map[def.key] = def; });
+  return map;
+}
+
+function saveCustomerDetailThinCoreP462_(payload) {
+  payload = payload || {};
+  const started = new Date().getTime();
+  const target = assertCustomerTarget_(payload, '고객 상세정보 초경량 저장', { readObject: false });
+  assertPortalCanAccessCustomerTarget_(target, '고객 상세정보 초경량 저장');
+  const rowNo = target.rowNo;
+  const customerNo = target.customerNo;
+  const sheet = target.sheet;
+  let values = normalizePortalCustomerLocationValues_(Object.assign({}, payload.values || {}));
+  values = normalizePortalContractValuesForSaveP112_(values || {});
+  values = applyPortalAutoGradeByAreaForSaveP451_(values);
+
+  const keys = Object.keys(values || {});
+  if (!keys.length) {
+    return { ok: true, rowNo: rowNo, customerNo: customerNo, changedFields: [], changedKeys: [], values: {}, changedValues: {}, savedAt: new Date().toISOString(), message: '저장할 변경값이 없습니다.', thinSaveP462: true };
+  }
+
+  const defMap = getPortalThinSaveDetailDefMapP462_();
+  let headerMap = getHeaderMap_(sheet);
+  const expected = payload.expectedValues || {};
+  const targets = [];
+  const changed = [];
+  const changedKeys = [];
+  const changedValues = {};
+  const appliedValues = {};
+
+  keys.forEach(function(key) {
+    const def = defMap[key];
+    if (!canWritePortalDetailFieldP451_(def, values)) return;
+    const col = findFirstExistingHeaderCol_(headerMap, def.headers || []) || ensureMasterColumn_(sheet, headerMap, (def.headers && def.headers[0]) || def.label);
+    headerMap = getHeaderMap_(sheet);
+    const nextValue = getPortalMasterCompareTextP280_(key, values[key]);
+    const writeValue = getPortalMasterWriteValueP280_(key, values[key]);
+    const currentText = String(sheet.getRange(rowNo, col).getDisplayValue() || '').trim();
+    if (Object.prototype.hasOwnProperty.call(expected, key)) {
+      const expectedText = getPortalMasterCompareTextP280_(key, expected[key]);
+      if (currentText !== expectedText && currentText !== nextValue) {
+        throw makePortalStaleCustomerErrorP202_(getPortalCustomerMasterMetaP202_(sheet, rowNo), payload.baseMasterVersion || '');
+      }
+    }
+    appliedValues[key] = nextValue;
+    if (currentText !== nextValue) {
+      targets.push({ key: key, label: def.label || key, col: col, writeValue: writeValue, value: nextValue });
+      changed.push(def.label || key);
+      changedKeys.push(key);
+      changedValues[key] = nextValue;
+    }
+  });
+
+  if (targets.length) {
+    targets.sort(function(a, b) { return a.col - b.col; });
+    // 필드 format 적용은 필요한 경우만 수행합니다. 모든 저장마다 과한 서식 보정은 속도를 잡아먹습니다.
+    targets.forEach(function(t) {
+      if (['finalQuote','contractStartDate','contractEndDate','area','discountRate'].indexOf(String(t.key || '')) >= 0) {
+        try { applyPortalMasterCellFormatP433_(sheet, rowNo, t.col, t.key); } catch (fmtErr) {}
+      }
+    });
+    let blockStart = targets[0].col;
+    let prevCol = targets[0].col;
+    let blockValues = [targets[0].writeValue];
+    const flushBlock = function() { sheet.getRange(rowNo, blockStart, 1, blockValues.length).setValues([blockValues]); };
+    for (let i = 1; i < targets.length; i++) {
+      const t = targets[i];
+      if (t.col === prevCol + 1) {
+        blockValues.push(t.writeValue);
+        prevCol = t.col;
+      } else {
+        flushBlock();
+        blockStart = t.col;
+        prevCol = t.col;
+        blockValues = [t.writeValue];
+      }
+    }
+    flushBlock();
+  }
+
+  let masterMeta = null;
+  let indexUpdate = null;
+  if (targets.length) {
+    if (payload.skipMasterMeta !== true) {
+      masterMeta = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-thin-save');
+    }
+    indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, changedKeys, masterMeta, 'WEBAPP_CUSTOMER_THIN_SAVE');
+  }
+
+  return {
+    ok: true,
+    rowNo: rowNo,
+    customerNo: customerNo,
+    changedFields: changed,
+    changedKeys: changedKeys,
+    values: appliedValues,
+    changedValues: changedValues,
+    indexUpdate: indexUpdate,
+    masterVersion: masterMeta && masterMeta.version || '',
+    masterUpdatedAt: masterMeta && masterMeta.updatedAt || '',
+    masterEditor: masterMeta && masterMeta.editor || '',
+    savedAt: new Date().toISOString(),
+    verified: false,
+    fastPatch: true,
+    thinSaveP462: true,
+    clientOperationId: payload.clientOperationId || '',
+    noSynchronousRefresh: true,
+    timingInnerP462: { totalMs: new Date().getTime() - started, keyCount: keys.length, changedCount: changedKeys.length },
+    message: changed.length ? ('저장 완료: ' + changed.join(', ')) : '변경된 값이 없습니다.'
+  };
+}
+
+function saveCustomerMemoThinCoreP462_(rowNoOrPayload, memo) {
+  const started = new Date().getTime();
+  const payload = (rowNoOrPayload && typeof rowNoOrPayload === 'object') ? rowNoOrPayload : { rowNo: rowNoOrPayload, memo: memo };
+  const target = assertCustomerTarget_(payload, '고객 메모 초경량 저장', { readObject: false });
+  assertPortalCanAccessCustomerTarget_(target, '고객 메모 초경량 저장');
+  const rowNo = target.rowNo;
+  const customerNo = target.customerNo;
+  const sheet = target.sheet;
+  const headerMap = getHeaderMap_(sheet);
+  const memoCol = findMasterFieldCol_(headerMap, 'memo') || ensureMasterFieldColumn_(sheet, headerMap, 'memo');
+  const nextMemo = String(payload.memo == null ? '' : payload.memo);
+  const currentMemo = String(sheet.getRange(rowNo, memoCol).getDisplayValue() || '');
+  if (payload.expectedValues && Object.prototype.hasOwnProperty.call(payload.expectedValues, 'memo')) {
+    const expectedMemo = String(payload.expectedValues.memo == null ? '' : payload.expectedValues.memo);
+    if (currentMemo !== expectedMemo && currentMemo !== nextMemo) {
+      throw makePortalStaleCustomerErrorP202_(getPortalCustomerMasterMetaP202_(sheet, rowNo), payload.baseMasterVersion || '');
+    }
+  }
+  if (currentMemo !== nextMemo) sheet.getRange(rowNo, memoCol).setValue(nextMemo);
+  let masterMeta = null;
+  let indexUpdate = null;
+  if (currentMemo !== nextMemo) {
+    if (payload.skipMasterMeta !== true) masterMeta = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-memo-thin-save');
+    indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, ['memo'], masterMeta, 'WEBAPP_CUSTOMER_MEMO_THIN_SAVE');
+  }
+  return {
+    ok: true,
+    rowNo: rowNo,
+    customerNo: customerNo,
+    memo: nextMemo,
+    changedFields: currentMemo !== nextMemo ? ['메모'] : [],
+    changedKeys: currentMemo !== nextMemo ? ['memo'] : [],
+    values: { memo: nextMemo },
+    changedValues: currentMemo !== nextMemo ? { memo: nextMemo } : {},
+    indexUpdate: indexUpdate,
+    masterVersion: masterMeta && masterMeta.version || '',
+    masterUpdatedAt: masterMeta && masterMeta.updatedAt || '',
+    masterEditor: masterMeta && masterMeta.editor || '',
+    savedAt: new Date().toISOString(),
+    thinSaveP462: true,
+    timingInnerP462: { totalMs: new Date().getTime() - started, changed: currentMemo !== nextMemo },
+    message: '메모 저장 완료'
+  };
+}
+
+
 function saveCustomerDetail(payload) {
   return runPortalCustomerWriteLockedP202_('customer-detail-save', function() {
     return saveCustomerDetailCoreP202_(payload);
@@ -1675,14 +1852,19 @@ function saveCustomerDetailFast(payload) {
   return runPortalCustomerWriteLockedP202_('customer-detail-fast-save', function() {
     const cachedInsideLockP458 = getPortalCachedOperationResultP458_(payload);
     if (cachedInsideLockP458) return cachedInsideLockP458;
-    const res = saveCustomerDetailFastCoreP202_(payload);
+    const valuesP462 = payload && payload.values || {};
+    const res = isPortalCustomerThinSavePayloadP462_(payload, valuesP462)
+      ? saveCustomerDetailThinCoreP462_(payload)
+      : saveCustomerDetailFastCoreP202_(payload);
     putPortalCachedOperationResultP458_(payload, res);
     return res;
   });
 }
 
 function saveCustomerMemoFast(rowNoOrPayload, memo) {
+  const payloadP462 = (rowNoOrPayload && typeof rowNoOrPayload === 'object') ? rowNoOrPayload : { rowNo: rowNoOrPayload, memo: memo };
   return runPortalCustomerWriteLockedP202_('customer-memo-save', function() {
+    if (payloadP462 && payloadP462.thinSave === true) return saveCustomerMemoThinCoreP462_(payloadP462);
     return saveCustomerMemoFastCoreP202_(rowNoOrPayload, memo);
   });
 }
@@ -2392,6 +2574,40 @@ function shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys) {
   return changedKeys.some(function(key) {
     return PORTAL_CONTRACT_SAVE_KEYS_P112.indexOf(String(key || '')) >= 0;
   });
+}
+
+
+function getPortalQuoteBasisMapP462() {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'PORTAL_QUOTE_BASIS_MAP_P462';
+  try {
+    const raw = cache.get(cacheKey);
+    if (raw) return JSON.parse(raw);
+  } catch (err) {}
+  const ss = getMasterSpreadsheet_();
+  const sheet = ss.getSheetByName('계약기준');
+  if (!sheet) throw new Error('계약기준 시트를 찾지 못했습니다.');
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  const result = { ok: true, loadedAt: new Date().toISOString(), basis: {} };
+  if (lastRow < 2) return result;
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h){ return String(h || '').trim(); });
+  const map = {};
+  headers.forEach(function(h, i) { if (h) map[h] = i; });
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  values.forEach(function(row) {
+    const grade = cellByHeaderIndex_(row, map, ['등급', '관리등급']);
+    const norm = normalizeGrade_(grade);
+    if (!norm) return;
+    result.basis[norm] = {
+      grade: String(grade || '').trim(),
+      appointmentUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_선임', '선임단가', '관리자선임단가'])),
+      maintenanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_유지', '유지단가', '유지점검단가'])),
+      performanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_성능', '성능단가', '성능점검단가']))
+    };
+  });
+  try { cache.put(cacheKey, JSON.stringify(result), 21600); } catch (err) {}
+  return result;
 }
 
 function calculateQuoteDiscount(payload) {

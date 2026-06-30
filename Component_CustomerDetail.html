@@ -148,6 +148,7 @@ function renderDetail(d, options) {
     bindPortalContractDateHandlersP420_();
     bindPortalAreaGradeAutoUpdateP451_();
     bindCustomerAddressAutoRegionVendor_();
+    bindDetailRealtimeCalculatedFieldsP462_();
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
     setRegistrationSaveEnabled(true);
@@ -160,6 +161,7 @@ function renderDetail(d, options) {
     bindPortalContractDateHandlersP420_();
     bindPortalAreaGradeAutoUpdateP451_();
     bindCustomerAddressAutoRegionVendor_();
+    bindDetailRealtimeCalculatedFieldsP462_();
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
     setTempMemoDefaultTime();
@@ -228,10 +230,10 @@ function buildDetailBaselineFallbackP461_() {
   document.querySelectorAll('.detail-edit-input').forEach(function(el) {
     const key = el.getAttribute('data-key');
     if (!key) return;
+    // P462: detail.basic/detail.contract는 객체가 아니라 detailFields 배열입니다.
+    // 기존 fallback은 source.basic[key]를 보다가 항상 공란이 되어 전체 필드를 dirty로 오판했습니다.
     let value = '';
-    if (Object.prototype.hasOwnProperty.call(source, key)) value = source[key];
-    else if (source.basic && Object.prototype.hasOwnProperty.call(source.basic, key)) value = source.basic[key];
-    else if (source.contract && Object.prototype.hasOwnProperty.call(source.contract, key)) value = source.contract[key];
+    try { value = getDetailValueByKeyP457_(source, key); } catch (err) { value = ''; }
     base[key] = value == null ? '' : String(value);
   });
   return base;
@@ -1291,7 +1293,8 @@ function saveDetailFields() {
         expectedValues: baseValuesP457,
         requireAuditLog: false,
         fastMode: true,
-        noSynchronousRefresh: true
+        noSynchronousRefresh: true,
+        thinSave: true
       }))
       .then(function(res){
         const detailModalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo);
@@ -1357,6 +1360,10 @@ function gatherValuesForCalc(targetFinalPrice) {
 
 function calculateFinalQuoteFromCurrent() {
   clearModalErrorBox();
+  if (recalcDetailQuoteRealtimeP462_({ reason: 'manualQuoteButton' })) {
+    toast('견적가를 즉시 계산했습니다. 저장 버튼을 눌러 마스터시트에 반영하세요.');
+    return;
+  }
   const payload = gatherValuesForCalc('');
   google.script.run.withSuccessHandler(function(res){
     lastCalcResult = res;
@@ -1384,6 +1391,10 @@ function handleDiscountModeClick() {
   }
   const targetValue = target.value || '';
   if (!targetValue.trim()) { toast('목표 최종견적가를 입력하세요.'); target.focus(); return; }
+  if (recalcDetailQuoteRealtimeP462_({ reason: 'manualDiscountButton' })) {
+    toast('목표 최종견적가 기준으로 할인율을 즉시 계산했습니다. 저장 버튼을 눌러 마스터시트에 반영하세요.');
+    return;
+  }
   const payload = gatherValuesForCalc(targetValue);
   google.script.run.withSuccessHandler(function(res){
     lastCalcResult = res;
@@ -1405,6 +1416,160 @@ function setInputValueByKey(key, value) {
     try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
   }
   if (key === 'status') applyPortalStatusControlStyles_();
+}
+
+function parsePortalClientMoneyP462_(value) {
+  const raw = String(value == null ? '' : value).replace(/,/g, '').replace(/원/g, '').trim();
+  const n = Number(raw.replace(/[^0-9.\-]/g, ''));
+  return isFinite(n) ? n : 0;
+}
+function formatPortalClientWonP462_(value) {
+  const n = Number(value) || 0;
+  if (!n) return '';
+  return '￦ ' + Math.round(n).toLocaleString('ko-KR');
+}
+function roundDownToUnitClientP462_(value, unit) {
+  unit = Number(unit) || 1;
+  return Math.floor((Number(value) || 0) / unit) * unit;
+}
+function normalizeGradeClientP462_(grade) {
+  const text = String(grade || '').replace(/\s+/g, '').trim();
+  if (!text) return '';
+  if (text.indexOf('초급') >= 0) return '초급';
+  if (text.indexOf('중급') >= 0) return '중급';
+  if (text.indexOf('고급') >= 0 && text.indexOf('특급') < 0) return '고급';
+  if (text.indexOf('특급') >= 0) return '특급';
+  return text;
+}
+function normalizeContractMonthsClientP462_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (text === '1년') return 12;
+  if (text === '반년') return 6;
+  const m = text.match(/\d+/);
+  if (!m) return '';
+  const n = Number(m[0]);
+  return n >= 1 && n <= 12 ? n : '';
+}
+function normalizeInspectionCountClientP462_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (/^(해당없음|미선택|없음|0회|0)$/i.test(text)) return 0;
+  const m = text.match(/\d+/);
+  if (!m) return '';
+  const n = Number(m[0]);
+  return n >= 0 && n <= 12 ? n : '';
+}
+function getPortalQuoteBasisClientP462_(grade) {
+  const basisMap = portalQuoteBasisMapP462 && portalQuoteBasisMapP462.basis || portalQuoteBasisMapP462 || null;
+  if (!basisMap) return null;
+  const key = normalizeGradeClientP462_(grade);
+  return basisMap[key] || basisMap[String(grade || '').trim()] || null;
+}
+function preloadPortalQuoteBasisP462_() {
+  if (portalQuoteBasisMapP462 || portalQuoteBasisLoadingP462) return;
+  portalQuoteBasisLoadingP462 = true;
+  try {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        portalQuoteBasisLoadingP462 = false;
+        portalQuoteBasisMapP462 = res && res.basis ? res : { basis: {} };
+        portalQuoteBasisLoadedAtP462 = Date.now();
+        try { recalcDetailQuoteRealtimeP462_({ reason: 'basisLoaded' }); } catch (e) {}
+      })
+      .withFailureHandler(function(err) {
+        portalQuoteBasisLoadingP462 = false;
+        console.warn('계약기준 캐시 로딩 실패', err);
+      })
+      .getPortalQuoteBasisMapP462();
+  } catch (err) { portalQuoteBasisLoadingP462 = false; }
+}
+function collectDetailContractCalcValuesP462_() {
+  const v = gatherValuesForCalc ? gatherValuesForCalc('') : {};
+  const area = parseDetailAreaNumberP451_(v.area);
+  const grade = v.grade || calculateDetailGradeByAreaP451_(area);
+  return Object.assign({}, v, { area: area, grade: grade });
+}
+function calculateDetailQuoteClientP462_(values, targetFinalValue) {
+  values = values || collectDetailContractCalcValuesP462_();
+  const area = Number(values.area || parseDetailAreaNumberP451_(values.area)) || 0;
+  const grade = values.grade || calculateDetailGradeByAreaP451_(area);
+  if (!area || !grade) return { ok: false, reason: 'missing' };
+  if (normalizeGradeClientP462_(grade) === '특급') return { ok: true, special: true, grade: grade, finalPriceText: '특급 별도 문의', discountRate: values.discountRate || '' };
+  const basis = getPortalQuoteBasisClientP462_(grade);
+  if (!basis) return { ok: false, reason: 'basisMissing', grade: grade };
+  const months = normalizeContractMonthsClientP462_(values.contractUnit);
+  const maintenanceCount = normalizeInspectionCountClientP462_(values.maintenance);
+  const performanceCount = normalizeInspectionCountClientP462_(values.performance);
+  const appointmentText = String(values.appointment || '').trim();
+  const vatText = String(values.vat || '').trim();
+  if (months === '' || maintenanceCount === '' || performanceCount === '' || !appointmentText || !vatText) return { ok: false, reason: 'missing' };
+  const hasAppointment = appointmentText === '선임' || (appointmentText.indexOf('선임') >= 0 && appointmentText.indexOf('비선임') < 0 && appointmentText.indexOf('해당없음') < 0);
+  const appointmentAmount = hasAppointment ? (Number(basis.appointmentUnit) || 0) * Number(months) : 0;
+  const maintenanceAmount = (Number(basis.maintenanceUnit) || 0) * Number(maintenanceCount);
+  const performanceAmount = (Number(basis.performanceUnit) || 0) * Number(performanceCount);
+  const subtotal = appointmentAmount + maintenanceAmount + performanceAmount;
+  const vatMultiplier = vatText.indexOf('포함') >= 0 ? 1.1 : 1;
+  const originPrice = subtotal * vatMultiplier;
+  const targetFinal = parsePortalClientMoneyP462_(targetFinalValue || '');
+  let discountRate = parseFloat(String(values.discountRate == null || values.discountRate === '' ? '0' : values.discountRate).replace(/[^0-9.\-]/g, ''));
+  let finalPrice = 0;
+  if (targetFinal > 0 && originPrice > 0) {
+    discountRate = (1 - targetFinal / originPrice) * 100;
+    finalPrice = roundDownToUnitClientP462_(targetFinal, 10000);
+  } else if (!isNaN(discountRate)) {
+    finalPrice = roundDownToUnitClientP462_(originPrice * (1 - discountRate / 100), 10000);
+  } else {
+    discountRate = 0;
+    finalPrice = roundDownToUnitClientP462_(originPrice, 10000);
+  }
+  return {
+    ok: true,
+    grade: grade,
+    contractUnit: String(months),
+    discountRate: Math.round(discountRate * 100) / 100,
+    finalPrice: finalPrice,
+    finalPriceText: formatPortalClientWonP462_(finalPrice),
+    originPrice: originPrice
+  };
+}
+function recalcDetailQuoteRealtimeP462_(options) {
+  options = options || {};
+  if (!isDetailEditMode && !(currentDetail && currentDetail.isNew)) return false;
+  applyDetailAreaGradeAutoUpdateP451_();
+  const target = document.getElementById('calcTargetFinal');
+  const targetValue = discountTargetMode && target && !target.disabled ? String(target.value || '') : '';
+  const res = calculateDetailQuoteClientP462_(collectDetailContractCalcValuesP462_(), targetValue);
+  if (!res || !res.ok) return false;
+  if (res.grade) setInputValueByKey('grade', res.grade);
+  if (targetValue && res.discountRate !== undefined) setInputValueByKey('discountRate', String(res.discountRate));
+  if (res.finalPriceText) setInputValueByKey('finalQuote', res.finalPriceText);
+  lastCalcResult = res;
+  return true;
+}
+function bindDetailRealtimeCalculatedFieldsP462_() {
+  preloadPortalQuoteBasisP462_();
+  const keys = ['area','contractUnit','appointment','maintenance','performance','vat','discountRate','contractStartDate','contractEndDate'];
+  keys.forEach(function(key) {
+    const el = getDetailInputByKey_(key);
+    if (!el || el.__detailRealtimeBoundP462) return;
+    el.__detailRealtimeBoundP462 = true;
+    const handler = function() {
+      try { recalcDetailQuoteRealtimeP462_({ reason: key }); } catch (err) { console.warn('실시간 견적 계산 실패', err); }
+    };
+    el.addEventListener('input', handler);
+    el.addEventListener('change', handler);
+    el.addEventListener('blur', handler);
+  });
+  const target = document.getElementById('calcTargetFinal');
+  if (target && !target.__detailRealtimeBoundP462) {
+    target.__detailRealtimeBoundP462 = true;
+    const targetHandler = function(){ try { recalcDetailQuoteRealtimeP462_({ reason: 'targetFinal' }); } catch(e){} };
+    target.addEventListener('input', targetHandler);
+    target.addEventListener('change', targetHandler);
+    target.addEventListener('blur', targetHandler);
+  }
+  setTimeout(function(){ try { recalcDetailQuoteRealtimeP462_({ reason: 'bindInitial' }); } catch(e){} }, 0);
 }
 
 
@@ -1604,21 +1769,29 @@ function updateRegionVendorFromAddress_(options) {
   const normalizedAddress = normalizePortalAddressClient_(rawAddress);
   if (options.normalizeAddress && normalizedAddress && normalizedAddress !== rawAddress) {
     addressEl.value = normalizedAddress;
+    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_('address', addressEl.value || '', { force: true }); } catch (e) {}
   }
 
   const sourceAddress = normalizedAddress || rawAddress;
   const region = derivePortalRegionFromAddressClient_(sourceAddress);
   const regionEl = getDetailInputByKey_('region');
   if (regionEl) {
-    regionEl.value = region || '';
+    if (String(regionEl.value || '') !== String(region || '')) {
+      regionEl.value = region || '';
+      try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_('region', regionEl.value || '', { force: true }); } catch (e) {}
+    }
     enforceRegionReadonly_();
   }
 
   const vendor = derivePortalVendorFromAddressClient_(sourceAddress, region);
   const vendorEl = getDetailInputByKey_('vendor');
   if (vendorEl && vendor && !(options.onlyBlankVendor && String(vendorEl.value || '').trim() && String(vendorEl.value || '').trim() !== '-')) {
-    vendorEl.value = vendor;
+    if (String(vendorEl.value || '') !== String(vendor || '')) {
+      vendorEl.value = vendor;
+      try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_('vendor', vendorEl.value || '', { force: true }); } catch (e) {}
+    }
   }
+  try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
 }
 
 
@@ -1862,9 +2035,11 @@ function goToSupportForCurrentDetailP19_() {
   const info = buildSupportCustomerInfoFromCurrentDetailP19_();
   if (!info.rowNo && !info.customerNo) return toast('고객 정보를 찾지 못했습니다.');
   // P461: 영업지원 화면 로딩/보강 렌더가 뒤늦게 inline 입력폼을 다시 그리더라도 고객번호가 사라지지 않게 pending prefill로 보존합니다.
-  window.__supportPendingCustomerPrefillP461 = Object.assign({}, info || {}, { createdAt: Date.now(), source: 'customerDetail' });
+  if (typeof setPendingSupportCustomerPrefillP462_ === 'function') setPendingSupportCustomerPrefillP462_(Object.assign({}, info || {}, { source: 'customerDetail' }));
+  else window.__supportPendingCustomerPrefillP461 = Object.assign({}, info || {}, { createdAt: Date.now(), source: 'customerDetail' });
   closeModal();
   switchPage('support');
+  try { if (typeof scheduleSupportPrefillReapplyP462_ === 'function') scheduleSupportPrefillReapplyP462_('customerDetailSwitch'); } catch (err) {}
   let tries = 0;
   const timer = setInterval(function() {
     tries++;
