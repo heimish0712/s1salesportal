@@ -26,7 +26,7 @@ function getPortalSupportCurrentHandlerNameP260_(perm) {
 }
 
 function getPortalSupportDelegatedRequesterNamesP250_() {
-  return (PORTAL_SUPPORT_REQUESTER_OPTIONS || ['문형진', '방수원', '박새봄', '김경아', '최보람', '이옥희']).slice();
+  return (PORTAL_SUPPORT_REQUESTER_OPTIONS || ['문형진', '방수원', '박새봄', '김경아', '최보람', '이옥희', '김서하']).slice();
 }
 
 function canPortalChooseDelegatedSupportRequesterP250_(perm) {

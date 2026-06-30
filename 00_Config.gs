@@ -164,7 +164,7 @@ const PORTAL_NEXT_ACTION_OPTIONS = ['전화하기', '자료 발송', '견적서 
 
 const PORTAL_SUPPORT_REQUEST_TYPES = ['수기견적', '자료제출', '약속잡기', '확인하기', '기타요청'];
 
-const PORTAL_SUPPORT_REQUESTER_OPTIONS = ['문형진', '방수원', '박새봄', '김경아', '최보람', '이옥희'];
+const PORTAL_SUPPORT_REQUESTER_OPTIONS = ['문형진', '방수원', '박새봄', '김경아', '최보람', '이옥희', '김서하'];
 
 const PORTAL_SUPPORT_STATUS_OPTIONS = ['접수', '처리중', '완료', '보류', '반려'];
 
