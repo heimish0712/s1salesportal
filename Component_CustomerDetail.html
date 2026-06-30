@@ -1464,11 +1464,16 @@ function normalizeInspectionCountClientP462_(value) {
 function calculatePortalSpecialAreaSurchargeClientP464_(area, basis) {
   area = Number(area) || 0;
   basis = basis || {};
-  const addUnit = Number(basis.areaAddUnit) || 0;
+  const basisGrade = normalizeGradeClientP462_(basis.grade || basis.managementGrade || '');
+  // P465: 기존 브라우저/서버 캐시에 areaAddUnit이 빠져 있어도 특급은 기본 가산단가 200,000원을 적용합니다.
+  // 계약기준 시트에 단가_연면적가산 값이 있으면 그 값을 우선합니다.
+  let addUnit = Number(basis.areaAddUnit) || Number(basis.specialAreaAddUnit) || 0;
+  if (!(addUnit > 0) && basisGrade === '특급') addUnit = 200000;
   const flooredArea = Math.floor(Math.max(area, 0) / 10000) * 10000;
   if (!(area > 90000) || !(addUnit > 0)) {
     return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
   }
+  // 90,000㎡ 초과분만 계산하고, 10,000㎡ 미만은 절삭합니다.
   const surchargeArea = Math.max(0, flooredArea - 90000);
   const surchargeUnits = Math.floor(surchargeArea / 10000);
   return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: surchargeArea, surchargeUnits: surchargeUnits, surchargeAmount: surchargeUnits * addUnit };
@@ -1480,12 +1485,19 @@ function getPortalQuoteBasisClientP462_(grade, months) {
   const key = normalizeGradeClientP462_(grade);
   const m = normalizeContractMonthsClientP462_(months);
   const byGradeMonth = rawMap.byGradeMonth || rawMap.monthlyBasis || null;
+  let basis = null;
   if (byGradeMonth && key && m !== '') {
     const mk = key + '|' + String(m);
-    if (byGradeMonth[mk]) return byGradeMonth[mk];
+    if (byGradeMonth[mk]) basis = byGradeMonth[mk];
   }
-  const basisMap = rawMap.basis || rawMap;
-  return (basisMap && (basisMap[key] || basisMap[String(grade || '').trim()])) || null;
+  if (!basis) {
+    const basisMap = rawMap.basis || rawMap;
+    basis = (basisMap && (basisMap[key] || basisMap[String(grade || '').trim()])) || null;
+  }
+  if (basis && key === '특급' && !(Number(basis.areaAddUnit) > 0)) {
+    basis = Object.assign({}, basis, { grade: basis.grade || '특급', areaAddUnit: 200000 });
+  }
+  return basis;
 }
 function preloadPortalQuoteBasisP462_() {
   if (portalQuoteBasisMapP462 || portalQuoteBasisLoadingP462) return;

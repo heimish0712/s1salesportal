@@ -2583,25 +2583,31 @@ function normalizePortalQuoteBasisMonthKeyP463_(value) {
   return n === '' ? '' : String(n);
 }
 function makePortalQuoteBasisObjectP463_(row, map, grade) {
+  const norm = normalizeGrade_(grade);
+  let areaAddUnit = parseMoney_(cellByHeaderIndex_(row, map, ['단가_연면적가산', '연면적가산', '연면적 가산', '면적가산단가', '단가_면적가산']));
+  // P465: 기존 계약기준/캐시에 가산단가가 비어 있어도 특급 기본 가산단가 200,000원을 보장합니다.
+  if (!(areaAddUnit > 0) && norm.indexOf('특급') >= 0) areaAddUnit = 200000;
   return {
     grade: String(grade || '').trim(),
     appointmentUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_선임', '선임단가', '관리자선임단가'])),
     maintenanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_유지', '유지단가', '유지점검단가'])),
     performanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_성능', '성능단가', '성능점검단가'])),
-    areaAddUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_연면적가산', '연면적가산', '연면적 가산', '면적가산단가', '단가_면적가산']))
+    areaAddUnit: areaAddUnit
   };
 }
 
 function calculatePortalSpecialAreaSurchargeP464_(area, basis) {
   area = Number(area) || 0;
   basis = basis || {};
-  const addUnit = Number(basis.areaAddUnit) || 0;
+  const basisGrade = normalizeGrade_(basis.grade || basis.managementGrade || '');
+  let addUnit = Number(basis.areaAddUnit) || Number(basis.specialAreaAddUnit) || 0;
+  if (!(addUnit > 0) && basisGrade.indexOf('특급') >= 0) addUnit = 200000;
+  const flooredArea = Math.floor(Math.max(area, 0) / 10000) * 10000;
   if (!(area > 90000) || !(addUnit > 0)) {
-    return { areaAddUnit: addUnit, flooredArea: Math.floor(Math.max(area, 0) / 10000) * 10000, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
+    return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
   }
-  // P464: 특급은 90,000㎡까지 기본단가 적용, 초과분은 10,000㎡ 미만 절삭 후 10,000㎡당 단가_연면적가산을 더합니다.
+  // P465: 특급은 90,000㎡까지 기본단가 적용, 초과분은 10,000㎡ 미만 절삭 후 10,000㎡당 단가_연면적가산을 더합니다.
   // 예: 197,200㎡ → 190,000㎡로 보고, (190,000-90,000)/10,000=10단위 × 200,000 = 2,000,000원 가산.
-  const flooredArea = Math.floor(area / 10000) * 10000;
   const surchargeArea = Math.max(0, flooredArea - 90000);
   const surchargeUnits = Math.floor(surchargeArea / 10000);
   const surchargeAmount = surchargeUnits * addUnit;
@@ -2610,7 +2616,7 @@ function calculatePortalSpecialAreaSurchargeP464_(area, basis) {
 
 function getPortalQuoteBasisMapP462() {
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'PORTAL_QUOTE_BASIS_MAP_P462';
+  const cacheKey = 'PORTAL_QUOTE_BASIS_MAP_P465';
   try {
     const raw = cache.get(cacheKey);
     if (raw) return JSON.parse(raw);
