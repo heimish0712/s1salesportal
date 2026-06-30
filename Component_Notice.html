@@ -1,6 +1,7 @@
 <script>
 let noticeSortKeyP15 = "";
 let noticeSortDirP15 = "asc";
+let currentNoticeEditIdP449 = "";
 function loadHomeNoticeList() {
   google.script.run
     .withSuccessHandler(renderHomeNoticeList)
@@ -51,6 +52,48 @@ function renderNoticeTable(notices) {
   try { applyPortalPermissionToUi_(); } catch (err) {}
 }
 
+
+function getNoticeCurrentUserNameP449_() {
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  return String((p && (p.name || p.displayName || p.email)) || '').trim();
+}
+
+function isNoticeConfirmedByMeP449_(notice) {
+  const user = getNoticeCurrentUserNameP449_();
+  if (!user || !notice) return false;
+  const confirmers = String(notice.confirmers || '').replace(/\r/g, '\n');
+  if (!confirmers.trim()) return false;
+  const names = [user];
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  if (p) {
+    ['name','displayName','email'].forEach(function(k) {
+      const v = String(p[k] || '').trim();
+      if (v && names.indexOf(v) < 0) names.push(v);
+    });
+  }
+  return names.some(function(name) {
+    return name && confirmers.indexOf(name) >= 0;
+  });
+}
+
+function buildNoticeUnreadDotP449_(notice) {
+  return isNoticeConfirmedByMeP449_(notice) ? '' : '<span class="notice-unread-dot" title="미확인 공지"></span>';
+}
+
+function buildNoticeCreatedCellP449_(notice) {
+  const created = esc(notice.createdDate || notice.createdAt || '-');
+  const updated = String(notice.updatedAt || notice.updatedDate || '').trim();
+  if (!updated) return created;
+  return created + '<div class="notice-updated-line">수정 ' + esc(updated) + '</div>';
+}
+
+function buildNoticeUpdatedMetaP449_(notice) {
+  const updated = String(notice.updatedAt || notice.updatedDate || '').trim();
+  if (!updated) return '';
+  const by = String(notice.updatedBy || '').trim();
+  return '<label>수정일</label><div>' + esc(updated + (by ? ' · ' + by : '')) + '</div>';
+}
+
 function buildNoticeTableHtml(notices, allowDelete) {
   allowDelete = !!(allowDelete && canPortal_('canDeleteNotice'));
   const modeClass = allowDelete && noticeDeleteMode ? ' notice-delete-mode' : '';
@@ -61,9 +104,9 @@ function buildNoticeTableHtml(notices, allowDelete) {
     const shortContent = content.length > 42 ? content.slice(0, 42) + '...' : content;
     const check = allowDelete ? '<td class="notice-check-col"><input type="checkbox" class="notice-delete-check" value="' + escAttr(n.id) + '"></td>' : '';
     return '<tr>' + check +
-      '<td style="text-align:center;white-space:nowrap;">' + esc(n.createdDate || n.createdAt || '-') + '</td>' +
+      '<td style="text-align:center;white-space:nowrap;">' + buildNoticeCreatedCellP449_(n) + '</td>' +
       '<td style="text-align:center;white-space:nowrap;">' + esc(n.author || '-') + '</td>' +
-      '<td class="title-cell" onclick="openNoticeDetail(\'' + escAttr(n.id) + '\')">' + esc(n.title || '-') + '</td>' +
+      '<td class="title-cell" onclick="openNoticeDetail(\'' + escAttr(n.id) + '\')"><span class="notice-title-wrap">' + buildNoticeUnreadDotP449_(n) + '<span>' + esc(n.title || '-') + '</span></span></td>' +
       '<td>' + esc(shortContent || '-') + '</td>' +
     '</tr>';
   }).join('');
@@ -116,9 +159,12 @@ function showNoticeDetailModal(notice) {
     '<label>제목</label><div>' + esc(notice.title || '-') + '</div>' +
     '<label>작성자</label><div>' + esc(notice.author || '-') + '</div>' +
     '<label>작성일</label><div>' + esc(notice.createdDate || notice.createdAt || '-') + '</div>' +
+    buildNoticeUpdatedMetaP449_(notice) +
     '<label>내용</label><div class="notice-content-box">' + esc(notice.content || '') + '</div>' +
     '</div>' +
     '<div class="notice-confirmers"><b>확인자</b>: ' + esc(notice.confirmers || '아직 확인자가 없습니다.') + '</div>';
+  const editBtn = document.getElementById('noticeDetailEditBtn');
+  if (editBtn) editBtn.style.display = canPortal_('canWriteNotice') ? '' : 'none';
   document.getElementById('noticeDetailBackdrop').style.display = 'flex';
 }
 
@@ -142,8 +188,24 @@ function confirmCurrentNotice() {
     .confirmPortalNotice(currentNoticeId);
 }
 
+function setNoticeWriteModalModeP449_(mode, notice) {
+  currentNoticeEditIdP449 = mode === 'edit' && notice && notice.id ? String(notice.id) : '';
+  const titleEl = document.querySelector('#noticeWriteBackdrop .notice-modal-title');
+  const saveBtn = document.getElementById('noticeWriteSaveBtn');
+  if (titleEl) titleEl.textContent = currentNoticeEditIdP449 ? '공지사항 수정하기' : '공지사항 작성하기';
+  if (saveBtn) saveBtn.textContent = currentNoticeEditIdP449 ? '수정 저장' : '저장';
+}
+
+function toNoticeDateInputP449_(noticeDate) {
+  const text = String(noticeDate || '').trim();
+  const m = text.match(/(\d{4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+  if (!m) return new Date().toISOString().slice(0, 10);
+  return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
+}
+
 function openNoticeWriteModal() {
   if (!canPortal_('canWriteNotice')) return alert('공지사항 작성 권한이 없습니다.');
+  setNoticeWriteModalModeP449_('create');
   document.getElementById('noticeWriteTitle').value = '';
   document.getElementById('noticeWriteAuthor').value = (getPortalPermission_().name || getPortalPermission_().displayName || '');
   document.getElementById('noticeWriteContent').value = '';
@@ -152,28 +214,47 @@ function openNoticeWriteModal() {
   setTimeout(() => document.getElementById('noticeWriteTitle').focus(), 60);
 }
 
+function openNoticeEditModalFromCurrent() {
+  if (!canPortal_('canWriteNotice')) return alert('공지사항 수정 권한이 없습니다.');
+  const notice = noticeCacheById[String(currentNoticeId || '')];
+  if (!notice || !notice.id) return alert('수정할 공지사항을 먼저 열어주세요.');
+  setNoticeWriteModalModeP449_('edit', notice);
+  document.getElementById('noticeWriteTitle').value = notice.title || '';
+  document.getElementById('noticeWriteAuthor').value = notice.author || (getPortalPermission_().name || getPortalPermission_().displayName || '');
+  document.getElementById('noticeWriteDate').value = toNoticeDateInputP449_(notice.noticeDate || notice.createdDate || notice.createdAt);
+  document.getElementById('noticeWriteContent').value = notice.content || '';
+  document.getElementById('noticeWriteBackdrop').style.display = 'flex';
+  setTimeout(() => document.getElementById('noticeWriteTitle').focus(), 60);
+}
+
 function closeNoticeWriteModal() {
   document.getElementById('noticeWriteBackdrop').style.display = 'none';
+  currentNoticeEditIdP449 = '';
 }
 
 function saveNoticeFromModal() {
   if (!canPortal_('canWriteNotice')) return alert('공지사항 작성 권한이 없습니다.');
   const payload = {
+    id: currentNoticeEditIdP449,
     title: document.getElementById('noticeWriteTitle').value,
     author: document.getElementById('noticeWriteAuthor').value,
     noticeDate: document.getElementById('noticeWriteDate').value,
     content: document.getElementById('noticeWriteContent').value
   };
-  google.script.run
+  const runner = google.script.run
     .withSuccessHandler((res) => {
       closeNoticeWriteModal();
-      toast('공지사항을 저장했습니다.');
+      toast(payload.id ? '공지사항을 수정했습니다.' : '공지사항을 저장했습니다.');
+      if (res && res.notice) noticeCacheById[String(res.notice.id)] = res.notice;
       if (res && Array.isArray(res.notices)) renderNoticeTable(res.notices);
       else loadNoticeTable();
       loadHomeNoticeList();
+      if (payload.id && res && res.notice) showNoticeDetailModal(res.notice);
     })
-    .withFailureHandler(showGlobalError)
-    .savePortalNotice(payload);
+    .withFailureHandler(showGlobalError);
+
+  if (payload.id) runner.updatePortalNotice(payload);
+  else runner.savePortalNotice(payload);
 }
 
 function handleNoticeDeleteButton() {

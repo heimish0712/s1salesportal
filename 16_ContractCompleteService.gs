@@ -33,13 +33,13 @@ const PORTAL_CONTRACT_COMPLETE_FIELDS_V69 = [
   { key: 'phone', label: '전화번호', headers: ['전화번호', '대표전화번호', '연락처'] },
   { key: 'email', label: '이메일 주소', headers: ['이메일 주소', '이메일주소', '이메일'] },
   { key: 'area', label: '연면적', headers: ['연면적'] },
-  { key: 'grade', label: '관리등급', headers: ['관리등급', '관리 등급'] },
+  { key: 'grade', label: '관리등급', headers: ['관리등급', '관리 등급', '선임유형', '선임 유형'] },
   { key: 'contractPrice', label: '계약가', headers: ['계약가', '계약금액', '최종 견적가', '최종견적가'] },
   { key: 'vat', label: 'VAT', headers: ['VAT', '부가세'] },
   { key: 'vendor', label: '수행사', headers: ['수행사'] },
   { key: 'businessNo', label: '사업자등록번호', headers: ['사업자등록번호', '사업자 등록 번호', '사업자번호'] },
   { key: 'representativeName', label: '대표자명', headers: ['대표자명', '대표자'] },
-  { key: 'businessType', label: '업종', headers: ['업종', '업태', '종목', '업태/종목'] },
+  { key: 'businessType', label: '업태', headers: ['업태', '업종', '업태/종목'] },
   { key: 'customerAddress', label: '고객사 주소', headers: ['고객사 주소', '고객사주소', '주소'] },
   { key: 'contractPeriod', label: '계약기간', headers: ['계약기간'] },
   { key: 'appointment', label: '비상주선임', headers: ['비상주선임', '비상주 선임', '관리자 선임 여부'] },
@@ -52,6 +52,53 @@ const PORTAL_CONTRACT_COMPLETE_FIELDS_V69 = [
   { key: 'appointmentDone', label: '선임완료여부', headers: ['선임완료여부', '선임 완료 여부'] },
   { key: 'maintenanceDone', label: '유지점검완료여부', headers: ['유지점검완료여부', '유지점검 완료 여부'] },
   { key: 'performanceDone', label: '성능점검완료여부', headers: ['성능점검완료여부', '성능점검 완료 여부'] }
+];
+
+// P450: 수주확정/계약완료 시트는 실무 양식의 컬럼 순서가 사실상 고정되어 있으므로,
+// 헤더명이 일부 바뀌거나 매칭 후보가 부족해도 발주 이관이 부분 누락되지 않도록 0-base 컬럼 fallback을 둡니다.
+// A=0 기준입니다.
+const PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450 = {
+  contractNo: 0,
+  customerNo: 1,
+  contractDate: 2,
+  vendorSentDate: 3,
+  businessRegSaved: 4,
+  orderMailSaved: 5,
+  contractSaved: 6,
+  region: 7,
+  referrer: 8,
+  contractRep: 9,
+  company: 10,
+  contactName: 11,
+  phone: 12,
+  email: 13,
+  area: 14,
+  grade: 15,
+  contractPrice: 16,
+  vat: 17,
+  vendor: 18,
+  businessNo: 19,
+  representativeName: 20,
+  businessType: 21,
+  customerAddress: 23,
+  contractPeriod: 24,
+  appointment: 25,
+  maintenance: 26,
+  performance: 27,
+  billingMemo: 28,
+  appointmentDue: 29,
+  firstMaintenanceDue: 30,
+  performanceDue: 31,
+  appointmentDone: 32,
+  maintenanceDone: 33,
+  performanceDone: 34
+};
+
+const PORTAL_CONTRACT_ORDER_SYNC_KEYS_P450 = [
+  'region', 'city', 'referrer', 'contractRep', 'company', 'contactName', 'phone', 'email',
+  'area', 'grade', 'contractPrice', 'vat', 'vendor', 'businessNo', 'representativeName',
+  'businessType', 'customerAddress', 'contractPeriod', 'appointment', 'maintenance',
+  'performance', 'billingMemo'
 ];
 
 
@@ -264,6 +311,22 @@ function createPortalCustomerOrderFromSearchP250(payload) {
 
     const existing = findContractCompleteExistingOrderP250_(completeSheet, headerMap, customerNo, company);
     if (existing && existing.contractNo) {
+      // P450: 과거 오류/중단으로 계약번호·고객번호·계약일자만 생긴 부분 이관 행도
+      // 다시 발주하기를 누르면 마스터시트 기준으로 나머지 고객/계약정보를 보정합니다.
+      try {
+        syncExistingContractOrderRowFromMasterP450_(completeSheet, headerMap, target, existing);
+      } catch (syncErr) {
+        try {
+          appendPortalActivityLog_({
+            actionType: '발주행보정실패',
+            screen: '고객 상세 검색',
+            customerNo: customerNo,
+            company: company,
+            summary: '기존 발주행 보정 실패 #' + existing.contractNo,
+            detail: { error: syncErr && syncErr.message ? syncErr.message : String(syncErr), contractRowNo: existing.rowNo }
+          });
+        } catch (ignoreErr) {}
+      }
       markCustomerMasterStatusOrderedP250_(target);
       return buildPortalCustomerOrderResultP250_(target, existing, true);
     }
@@ -273,17 +336,15 @@ function createPortalCustomerOrderFromSearchP250(payload) {
     const targetRow = getNextContractCompleteAppendRowP250_(completeSheet, headerMap);
     if (targetRow > completeSheet.getMaxRows()) completeSheet.insertRowsAfter(completeSheet.getMaxRows(), targetRow - completeSheet.getMaxRows());
 
-    const rowValues = new Array(lastCol).fill('');
-    PORTAL_CONTRACT_COMPLETE_FIELDS_V69.forEach(function(def) {
-      const idx = getContractCompleteFieldColumnIndexV69_(headerMap, def.key);
-      if (idx < 0 || idx >= lastCol) return;
-      rowValues[idx] = rowObject[def.key] == null ? '' : rowObject[def.key];
-    });
-
-    completeSheet.getRange(targetRow, 1, 1, lastCol).setValues([rowValues]);
     try {
       if (targetRow > 2) completeSheet.getRange(targetRow - 1, 1, 1, lastCol).copyTo(completeSheet.getRange(targetRow, 1, 1, lastCol), { formatOnly: true });
     } catch (styleErr) {}
+
+    // P450: 헤더 매칭 실패/양식명 차이로 일부 컬럼만 들어가는 일을 막기 위해
+    // 헤더 매칭 + 실무 양식 컬럼 fallback을 함께 사용합니다.
+    writeContractCompleteObjectToRowP450_(completeSheet, targetRow, lastCol, headerMap, rowObject, {
+      mode: 'create'
+    });
 
     markCustomerMasterStatusOrderedP250_(target);
     clearContractCompleteCacheV69_();
@@ -428,7 +489,7 @@ function buildContractCompleteAppendObjectFromCustomerP250_(target, contractNo) 
     contractSaved: '',
     region: parsed.region,
     city: parsed.city,
-    referrer: '',
+    referrer: getMasterFieldValue_(obj, 's1Referrer'),
     contractRep: getMasterFieldValue_(obj, 'salesRep'),
     company: getCompanyValue_(obj),
     contactName: getMasterFieldValue_(obj, 'contact'),
@@ -456,6 +517,106 @@ function buildContractCompleteAppendObjectFromCustomerP250_(target, contractNo) 
     performanceDone: ''
   };
   return result;
+}
+
+
+/**
+ * P450: 수주확정/계약완료 행 쓰기 공통 함수
+ * - 헤더명 매칭 우선
+ * - 실패 시 실제 시트 양식의 컬럼 순서 fallback
+ * - 기존 부분 이관 행 보정에도 사용
+ */
+function writeContractCompleteObjectToRowP450_(sheet, rowNo, lastCol, headerMap, rowObject, options) {
+  options = options || {};
+  rowObject = rowObject || {};
+  lastCol = Math.max(Number(lastCol) || 0, sheet.getLastColumn(), 35);
+
+  let rowValues;
+  if (options.mode === 'merge') {
+    rowValues = sheet.getRange(rowNo, 1, 1, lastCol).getValues()[0];
+  } else {
+    rowValues = new Array(lastCol).fill('');
+  }
+
+  const preserveKeys = options.preserveKeys || {};
+  const onlyKeys = options.onlyKeys || null;
+
+  PORTAL_CONTRACT_COMPLETE_FIELDS_V69.forEach(function(def) {
+    const key = def && def.key;
+    if (!key) return;
+    if (onlyKeys && onlyKeys.indexOf(key) < 0) return;
+    if (preserveKeys[key]) return;
+
+    const idx = getContractCompleteFieldColumnIndexV69_(headerMap, key);
+    if (idx < 0 || idx >= lastCol) return;
+    if (!Object.prototype.hasOwnProperty.call(rowObject, key)) return;
+
+    rowValues[idx] = rowObject[key] == null ? '' : rowObject[key];
+  });
+
+  sheet.getRange(rowNo, 1, 1, lastCol).setValues([rowValues]);
+  applyContractCompleteRowFormatsP450_(sheet, rowNo, headerMap);
+}
+
+/**
+ * P450: 이미 계약번호만 생긴 기존 발주행을 마스터시트 기준으로 보정합니다.
+ */
+function syncExistingContractOrderRowFromMasterP450_(sheet, headerMap, target, existing) {
+  if (!sheet || !target || !existing || !existing.rowNo) return { ok: false, reason: 'invalid args' };
+
+  const lastCol = Math.max(sheet.getLastColumn(), 35);
+  const rowObject = buildContractCompleteAppendObjectFromCustomerP250_(target, existing.contractNo);
+
+  // 계약 고유값/후속 처리값은 기존 값을 보존하고, 고객/계약 기본 정보만 채웁니다.
+  const preserve = {
+    contractNo: true,
+    customerNo: true,
+    contractDate: true,
+    vendorSentDate: true,
+    businessRegSaved: true,
+    orderMailSaved: true,
+    contractSaved: true,
+    appointmentDue: true,
+    firstMaintenanceDue: true,
+    performanceDue: true,
+    appointmentDone: true,
+    maintenanceDone: true,
+    performanceDone: true
+  };
+
+  writeContractCompleteObjectToRowP450_(sheet, existing.rowNo, lastCol, headerMap, rowObject, {
+    mode: 'merge',
+    preserveKeys: preserve,
+    onlyKeys: PORTAL_CONTRACT_ORDER_SYNC_KEYS_P450
+  });
+
+  clearContractCompleteCacheV69_();
+  try { markPortalMasterDataChangedP201_('기존 발주행 보정 customerNo=' + (target.customerNo || '') + ', contractRow=' + existing.rowNo); } catch (err) {}
+  return { ok: true, rowNo: existing.rowNo };
+}
+
+/**
+ * P450: 수주확정/계약완료 행 서식 보정
+ */
+function applyContractCompleteRowFormatsP450_(sheet, rowNo, headerMap) {
+  const formats = {
+    contractDate: 'yyyy.MM.dd.',
+    vendorSentDate: 'yyyy.MM.dd.',
+    area: '#,##0.##',
+    contractPrice: '₩#,##0',
+    appointment: '0"개월"',
+    maintenance: '0"회"',
+    performance: '0"회"',
+    appointmentDue: 'yyyy.MM.dd.',
+    firstMaintenanceDue: 'yyyy.MM.dd.',
+    performanceDue: 'yyyy.MM.dd.'
+  };
+
+  Object.keys(formats).forEach(function(key) {
+    const idx = getContractCompleteFieldColumnIndexV69_(headerMap, key);
+    if (idx < 0) return;
+    try { sheet.getRange(rowNo, idx + 1).setNumberFormat(formats[key]); } catch (err) {}
+  });
 }
 
 function markCustomerMasterStatusOrderedP250_(target) {
@@ -1024,9 +1185,15 @@ function getContractCompleteFieldColumnIndexV69_(headerMap, key) {
   for (let i = 0; i < candidates.length; i++) {
     const h = String(candidates[i] || '').trim();
     if (!h) continue;
-    if (Object.prototype.hasOwnProperty.call(headerMap.exact, h)) return headerMap.exact[h];
+    if (headerMap && headerMap.exact && Object.prototype.hasOwnProperty.call(headerMap.exact, h)) return headerMap.exact[h];
     const normalized = normalizeContractCompleteHeaderV69_(h);
-    if (Object.prototype.hasOwnProperty.call(headerMap.normalized, normalized)) return headerMap.normalized[normalized];
+    if (headerMap && headerMap.normalized && Object.prototype.hasOwnProperty.call(headerMap.normalized, normalized)) return headerMap.normalized[normalized];
+  }
+
+  // P450 fallback: 헤더명이 미세하게 달라져도 실제 양식 컬럼 위치로 보정
+  if (typeof PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450 !== 'undefined' &&
+      Object.prototype.hasOwnProperty.call(PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450, key)) {
+    return PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450[key];
   }
   return -1;
 }

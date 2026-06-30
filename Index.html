@@ -255,7 +255,7 @@
     <div class="notice-modal">
       <div class="notice-modal-header"><div class="notice-modal-title">공지사항 상세 보기</div><button class="notice-x" onclick="closeNoticeDetailModal()">X</button></div>
       <div class="notice-modal-body" id="noticeDetailBody"></div>
-      <div class="notice-modal-footer"><button class="btn-blue" onclick="confirmCurrentNotice()">확인</button><button class="secondary" onclick="closeNoticeDetailModal()">닫기</button></div>
+      <div class="notice-modal-footer"><button class="secondary" id="noticeDetailEditBtn" onclick="openNoticeEditModalFromCurrent()" style="display:none;">수정</button><button class="btn-blue" onclick="confirmCurrentNotice()">확인</button><button class="secondary" onclick="closeNoticeDetailModal()">닫기</button></div>
     </div>
   </div>
 
@@ -270,7 +270,7 @@
           <label>내용</label><textarea id="noticeWriteContent" placeholder="공지 내용을 입력하세요."></textarea>
         </div>
       </div>
-      <div class="notice-modal-footer"><button class="btn-blue" onclick="saveNoticeFromModal()">저장</button><button class="secondary" onclick="closeNoticeWriteModal()">닫기</button></div>
+      <div class="notice-modal-footer"><button class="btn-blue" id="noticeWriteSaveBtn" onclick="saveNoticeFromModal()">저장</button><button class="secondary" onclick="closeNoticeWriteModal()">닫기</button></div>
     </div>
   </div>
 

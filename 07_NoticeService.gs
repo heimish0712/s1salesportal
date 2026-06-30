@@ -79,6 +79,8 @@ function savePortalNotice(payload) {
     title,
     content,
     '',
+    '',
+    '',
     ''
   ]);
 
@@ -93,6 +95,63 @@ function savePortalNotice(payload) {
     });
   } catch (err) {}
   return { ok: true, notice: getPortalNoticeDetail(id), notices: getPortalNotices(0) };
+}
+
+
+function updatePortalNotice(payload) {
+  assertPortalCanWriteNotice_();
+  payload = payload || {};
+
+  const id = String(payload.id || payload.noticeId || '').trim();
+  const title = String(payload.title || '').trim();
+  const content = String(payload.content || '').trim();
+
+  if (!id) throw new Error('수정할 공지 ID가 없습니다.');
+  if (!title) throw new Error('공지 제목을 입력하세요.');
+  if (!content) throw new Error('공지 내용을 입력하세요.');
+
+  const sheet = ensurePortalNoticeSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) throw new Error('공지사항이 없습니다.');
+
+  const values = sheet.getRange(2, 1, lastRow - 1, PORTAL_CONFIG.NOTICE_HEADERS.length).getValues();
+  const now = new Date();
+  const noticeDate = parsePortalDateOnly_(payload.noticeDate);
+  const author = String(payload.author || '').trim() || getPortalCurrentUserName_();
+  const editor = getPortalCurrentUserName_();
+  const tz = Session.getScriptTimeZone();
+
+  for (let i = 0; i < values.length; i++) {
+    const rowId = String(values[i][0] || '').trim();
+    const deleted = String(values[i][7] || '').trim().toUpperCase();
+    if (rowId !== id || deleted === 'Y') continue;
+
+    const rowNo = i + 2;
+    const rowValues = values[i].slice();
+    rowValues[2] = noticeDate ? Utilities.formatDate(noticeDate, tz, 'yyyy. MM. dd') : String(payload.noticeDate || rowValues[2] || '').trim();
+    rowValues[3] = author;
+    rowValues[4] = title;
+    rowValues[5] = content;
+    rowValues[8] = now;
+    rowValues[9] = editor;
+
+    sheet.getRange(rowNo, 1, 1, PORTAL_CONFIG.NOTICE_HEADERS.length).setValues([rowValues]);
+
+    SpreadsheetApp.flush();
+    clearPortalNoticeCacheP16_();
+    try {
+      appendPortalActivityLog_({
+        actionType: '공지사항',
+        screen: '공지사항',
+        summary: '공지 수정: ' + title,
+        detail: { noticeId: id, editor: editor }
+      });
+    } catch (err) {}
+
+    return { ok: true, notice: getPortalNoticeDetail(id), notices: getPortalNotices(0) };
+  }
+
+  throw new Error('수정할 공지사항을 찾지 못했습니다.');
 }
 
 function deletePortalNotices(ids) {
@@ -201,7 +260,11 @@ function readPortalNoticeRows_(sheet) {
       title: String(row[4] || '').trim(),
       content: String(row[5] || '').trim(),
       confirmers: String(row[6] || '').trim(),
-      deleted: String(row[7] || '').trim()
+      deleted: String(row[7] || '').trim(),
+      updatedAt: formatDateTimeText_(row[8]),
+      updatedAtValue: row[8] instanceof Date ? row[8] : null,
+      updatedBy: String(row[9] || '').trim(),
+      updatedDate: row[8] ? formatDateTimeText_(row[8]) : ''
     };
   }).filter(item => item.id || item.title || item.content);
 }
@@ -213,9 +276,9 @@ function seedDefaultPortalNotices_(sheet) {
   const now = new Date();
   const today = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy. MM. dd');
   const rows = [
-    [Utilities.getUuid().slice(0, 8), now, today, '문형진', '영업전산 개편 공지', '안녕하세요 여러분 영업전산이 새로운 내용을 가지게 되었습니다.\n서무님들이 개편한 마스터시트와 연동된 웹앱 기능을 만들어보았습니다.\n테스트 부탁드립니다.', '', ''],
-    [Utilities.getUuid().slice(0, 8), now, '2026. 06. 16', '문형진', '디엠정보기술 사업종료', '최근 저희와 함께 일하던 디엠정보기술이 사업을 종료했습니다. 수행사 배정 시 참고 부탁드립니다.', '', ''],
-    [Utilities.getUuid().slice(0, 8), now, '2026. 06. 16', '문형진', '영진약품 변경 관련 내용', '기존 디엠에서 케이제이로 수행사를 변경하는 내용입니다. 관련 고객 응대 시 확인 부탁드립니다.', '', '']
+    [Utilities.getUuid().slice(0, 8), now, today, '문형진', '영업전산 개편 공지', '안녕하세요 여러분 영업전산이 새로운 내용을 가지게 되었습니다.\n서무님들이 개편한 마스터시트와 연동된 웹앱 기능을 만들어보았습니다.\n테스트 부탁드립니다.', '', '', '', ''],
+    [Utilities.getUuid().slice(0, 8), now, '2026. 06. 16', '문형진', '디엠정보기술 사업종료', '최근 저희와 함께 일하던 디엠정보기술이 사업을 종료했습니다. 수행사 배정 시 참고 부탁드립니다.', '', '', '', ''],
+    [Utilities.getUuid().slice(0, 8), now, '2026. 06. 16', '문형진', '영진약품 변경 관련 내용', '기존 디엠에서 케이제이로 수행사를 변경하는 내용입니다. 관련 고객 응대 시 확인 부탁드립니다.', '', '', '', '']
   ];
   sheet.getRange(2, 1, rows.length, PORTAL_CONFIG.NOTICE_HEADERS.length).setValues(rows);
   SpreadsheetApp.flush();
