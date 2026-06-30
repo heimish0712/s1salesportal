@@ -1352,8 +1352,11 @@ function queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, change
 }
 
 function shouldUseDeferredCustomerSavePostProcessP400_(changedKeys) {
-  // P433: 고객상세 저장은 0.5초급 응답을 목표로 항상 dirty 표시만 하고 반환합니다.
-  // 화면/목록은 클라이언트 optimistic patch로 즉시 반영하고, 검색인덱스 재생성은 후속 점검/큐 처리 대상입니다.
+  changedKeys = changedKeys || [];
+  // P455: 일반 연락처/상태 저장은 기존처럼 dirty 표시 후 빠르게 반환합니다.
+  // 단, 연면적·할인율·최종 견적가·계약조건 계열은 시트 수식/표시값을 바로 확정해야 하므로
+  // 저장 응답 전에 마스터 단건 재조회 + 검색인덱스 행 갱신 경로를 탑니다.
+  if (shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys)) return false;
   return true;
 }
 
@@ -1754,7 +1757,17 @@ function saveCustomerDetailFastCoreP202_(payload) {
       }
     }
     flushBlock();
-    // P433: 속도 우선. Apps Script는 함수 종료 시 쓰기를 커밋하므로 저장 후 즉시 검증/flush는 생략합니다.
+
+    // P455: 고객상세/계약조건 저장은 빠른 화면 반영보다 실제 마스터 반영 확정이 우선입니다.
+    // 특히 연면적·할인율·최종 견적가·계약조건 계열은 저장 직후 수식/표시값 재조회에 쓰이므로
+    // 여기서 즉시 커밋하고 저장값을 1차 검증합니다.
+    const verifyDirectWriteP455 = changedTargets.some(function(t) {
+      return ['area','grade','buildingType','finalQuote','contractUnit','contractStartDate','contractEndDate','appointment','maintenance','performance','vat','discountRate','specialTerms'].indexOf(String(t.key || '')) >= 0;
+    });
+    if (verifyDirectWriteP455) {
+      SpreadsheetApp.flush();
+      verifyPortalCustomerFastSaveAppliedP430_(sheet, rowNo, changedTargets);
+    }
   }
 
   let indexUpdate = null;

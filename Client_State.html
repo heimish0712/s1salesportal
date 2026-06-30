@@ -83,14 +83,14 @@ let customerSearchIndexStaleDueToMasterP310 = false;
 let customerDetailPrefetchTimers = [];
 let customerDetailPrefetching = false;
 const CUSTOMER_INDEX_STORAGE_KEY = 'salesPortal.customerSearchIndex.v36.detailLite';
-const CUSTOMER_INDEX_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const CUSTOMER_INDEX_MAX_AGE_MS = 30 * 60 * 1000;
 // STEP23/P320: 검색인덱스 background refresh는 화면을 막지 않는 보조 작업입니다.
 // 너무 짧으면 메뉴 이동/검색 때마다 서버 조회가 겹쳐 체감 속도가 떨어집니다.
-const CUSTOMER_INDEX_BACKGROUND_REFRESH_MS_P300 = 15 * 60 * 1000;
+const CUSTOMER_INDEX_BACKGROUND_REFRESH_MS_P300 = 3 * 60 * 1000;
 const CUSTOMER_DETAIL_PREFETCH_BATCH_SIZE = 80;
 const CUSTOMER_DETAIL_PREFETCH_DELAY_MS = 180;
 const CUSTOMER_DETAIL_STORAGE_KEY_PREFIX = 'salesPortal.customerDetail.v58.masterBackedOnly.';
-const CUSTOMER_DETAIL_STORAGE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const CUSTOMER_DETAIL_STORAGE_MAX_AGE_MS = 30 * 60 * 1000;
 
 // STEP7/P240: 브라우저 고객 캐시 용량/계정 분리 정책
 // - 고객 상세 full cache는 localStorage에 남기되, 오래된 항목과 과다 누적 항목을 주기적으로 정리합니다.
@@ -620,6 +620,9 @@ function handlePortalExternalDataChangedP201_(meta) {
 
   // STEP40/P400: 저장 직후 또는 직접 수정 감지 모두 배너로 업무를 끊지 않습니다.
   // 현재 화면은 그대로 두고, 검색인덱스/즐겨찾기만 조용히 최신화합니다.
+  if (!silentChange) {
+    try { if (typeof clearCustomerDetailCachesP230_ === 'function') clearCustomerDetailCachesP230_(); } catch (err) {}
+  }
   try { schedulePortalSilentDataRefreshP400_(silentChange ? 'silent-webapp-save' : 'silent-master-change'); } catch (err) {}
 
   if (favoriteVisible) {

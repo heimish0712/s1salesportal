@@ -1,5 +1,5 @@
 /***************************************
- * 영업전산 WebApp MVP v55 supportFastCachePortalOnly
+ * 영업전산 WebApp MVP v55 supportFastCachePortalOnly + P455 save-cache-stabilized
  * - v1: 마스터시트 읽기 전용 / 고객 검색 / 상세보기
  * - v2: 컨택이력_DB append
  * - v3: 상태 변경 / 다음연락일 저장
@@ -29,6 +29,7 @@
  * - v47: 메일 발송 진행상황 팝업 제거. 자료선택 하단 inline 진행률 표시
  * - v45: 상세조회 batch 최적화 / 메모·상세 저장 optimistic UI용 fast API 추가
  * - v44: 메일 Worker 발송 성공 기준 세이브포인트. 포털은 Worker로 발송/진행률/취소를 프록시하고, TEST 발송은 @s1samsung.com만 허용
+ * - P455: 고객상세 저장 안정화. 연면적/할인율/최종견적가/계약조건 저장 시 즉시 flush·검증·마스터 단건 재조회. 브라우저 고객 캐시 TTL 단축 및 외부 직접수정 시 상세 캐시 무효화.
  ***************************************/
 
 /***************************************

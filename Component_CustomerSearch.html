@@ -1375,7 +1375,7 @@ function findCustomerRowSummary_(rowNo, customerNo) {
 
 // PATCH P1-12: 마스터시트 단건 최신화 TTL
 // 전체 목록을 매번 재생성하지 않고, 펼침/상세/프리패치 시 보이는 row만 짧은 주기로 마스터에서 재조회합니다.
-const CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112 = 10 * 60 * 1000;
+const CUSTOMER_DETAIL_MASTER_REALTIME_TTL_MS_P112 = 60 * 1000;
 const CUSTOMER_DETAIL_EXPAND_REALTIME_TTL_MS_P112 = 3000;
 
 function getCustomerDetailLoadedAtMsP112_(detail) {
