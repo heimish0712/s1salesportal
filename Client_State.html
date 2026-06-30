@@ -402,6 +402,13 @@ const DETAIL_DURABLE_RETRY_BASE_MS_P458 = 12 * 1000;
 const DETAIL_DURABLE_RETRY_MAX_MS_P458 = 3 * 60 * 1000;
 let detailDurableFlushTimerP458 = null;
 let detailDurableFlushRunningP458 = false;
+// P459: 성능/저장 안정성 계측. 시트에 매번 기록하지 않고 브라우저 localStorage ring buffer에만 가볍게 남깁니다.
+const PORTAL_PERF_LOG_STORAGE_KEY_P459 = 's1portal:perfLog:P459:v1';
+const PORTAL_PERF_LOG_MAX_ITEMS_P459 = 500;
+const PORTAL_SAVE_RETRY_MAX_ATTEMPTS_P459 = 5;
+const PORTAL_SAVE_RETRY_BASE_MS_P459 = 900;
+const PORTAL_SAVE_RETRY_MAX_MS_P459 = 12000;
+
 // STEP4/P220: 같은 고객에 대한 상세/목록/확장메모 저장이 동시에 서버로 나가지 않도록
 // 고객번호(rowNo fallback) 단위 저장 큐를 둡니다. 서버 버전 체크와 함께 쓰여 저장 충돌 체감을 줄입니다.
 let customerSaveQueueMapP220 = {};

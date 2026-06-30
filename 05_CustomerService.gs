@@ -1620,10 +1620,25 @@ function getPortalCustomerAllDetailDefsP436_() {
 
 
 function runPortalCustomerWriteLockedP202_(label, callback) {
+  const startedP459 = new Date().getTime();
+  const lockOptionsP459 = { attempts: 4, waitMs: 700, sleepBaseMs: 180 };
+  const attachTimingP459 = function(res) {
+    if (res && typeof res === 'object') {
+      res.timingP459 = Object.assign({}, res.timingP459 || {}, {
+        label: label || '',
+        totalMs: new Date().getTime() - startedP459,
+        lockWaitMs: Number(lockOptionsP459.__lockWaitMsP459 || 0) || 0,
+        lockAttempts: Number(lockOptionsP459.__lockAttemptsP459 || 0) || 0
+      });
+    }
+    return res;
+  };
   if (typeof withPortalScriptLockP201_ === 'function') {
-    return withPortalScriptLockP201_(label, callback, { attempts: 4, waitMs: 700, sleepBaseMs: 180 });
+    return attachTimingP459(withPortalScriptLockP201_(label, function() {
+      return callback({ startedAt: startedP459, lockOptions: lockOptionsP459 });
+    }, lockOptionsP459));
   }
-  return callback();
+  return attachTimingP459(callback({ startedAt: startedP459, lockOptions: lockOptionsP459 }));
 }
 
 function saveCustomerDetail(payload) {

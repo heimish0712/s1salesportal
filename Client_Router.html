@@ -137,6 +137,7 @@ function forceMasterSearchIndexRefreshP310_() {
 }
 
 function switchPage(page, skipSearch) {
+  const perfMarkP459 = (typeof portalPerfStartP459_ === 'function') ? portalPerfStartP459_('route.switch', { page: page || 'home', skipSearch: !!skipSearch }) : null;
   page = page || 'home';
   if (page === 'dashboard') page = 'home';
   if (typeof warnIfCustomerDetailSavePendingP430_ === 'function' && !warnIfCustomerDetailSavePendingP430_('switchPage')) return;
@@ -163,6 +164,7 @@ function switchPage(page, skipSearch) {
     pageTitle.textContent = '영업전산 HOME';
     pageSubtitle.textContent = '영업 현황 및 공지사항을 볼 수 있습니다.';
     loadDashboard();
+    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
@@ -172,6 +174,7 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '공지사항 세부 내용 확인 및 공지사항 작성이 가능합니다.';
     loadNoticeTable();
     setTimeout(function(){ try { applyPortalPermissionToUi_(); } catch (err) {} }, 50);
+    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
@@ -181,6 +184,7 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '고객사 기본정보와 상세 계약조건을 조회하고 수정합니다.';
     if (!skipSearch) search();
     setTimeout(() => { if (keyword) keyword.focus(); }, 80);
+    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
@@ -191,6 +195,7 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '내가 즐겨찾기한 고객만 빠르게 조회합니다.';
     refreshFavoriteCustomers(false);
     setTimeout(function() { const el = document.getElementById('favoriteKeyword'); if (el) el.focus(); }, 80);
+    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
@@ -201,6 +206,7 @@ function switchPage(page, skipSearch) {
     if (typeof renderFocusCustomerShellP290_ === 'function') renderFocusCustomerShellP290_();
     if (typeof loadFocusCustomerPageP290 === 'function') loadFocusCustomerPageP290(false);
     setTimeout(function() { const el = document.getElementById('focusKeywordP290'); if (el) el.focus(); }, 80);
+    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 

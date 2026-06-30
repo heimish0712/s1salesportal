@@ -29,6 +29,7 @@ function openNewCustomer() {
 function openDetail(rowNo, customerNo, options) {
   options = options || {};
   rowNo = Number(rowNo) || 0;
+  const perfMarkP459 = (typeof portalPerfStartP459_ === 'function') ? portalPerfStartP459_('customerDetail.open', { rowNo: rowNo, customerNo: customerNo || '', forceEdit: !!options.forceEdit }) : null;
   const rowSummary = findCustomerRowSummary_(rowNo, customerNo) || {};
   const targetCustomerNo = normalizeCustomerNoForKey_(customerNo || rowSummary.customerNo);
   currentDetailCustomerNo = targetCustomerNo;
@@ -45,9 +46,11 @@ function openDetail(rowNo, customerNo, options) {
   if (cached && cached.rowNo) {
     currentDetailCustomerNo = normalizeCustomerNoForKey_(cached.customerNo || targetCustomerNo);
     renderDetail(cached, forceEditMode ? { preserveEditMode: true, reason: 'openDetailForceEdit' } : undefined);
+    if (typeof portalPerfLogP459_ === 'function') portalPerfLogP459_('customerDetail.firstPaint', { rowNo: rowNo, customerNo: targetCustomerNo, fromCache: true });
     // P457: 상세 보강 상태는 모달 내부 안내/하단 배지로만 표시합니다. 입력 focus를 방해하는 토스트는 띄우지 않습니다.
   } else {
     document.getElementById('modalBody').innerHTML = '<div class="loading">상세정보 불러오는 중...</div>';
+    if (typeof portalPerfLogP459_ === 'function') portalPerfLogP459_('customerDetail.firstPaint', { rowNo: rowNo, customerNo: targetCustomerNo, fromCache: false });
   }
 
   getCustomerDetailFast_(rowNo, function(detail) {
@@ -63,6 +66,7 @@ function openDetail(rowNo, customerNo, options) {
     if (protectActiveInputP457 && typeof applyServerDetailSafelyP457_ === 'function') {
       applyServerDetailSafelyP457_(detail, { reason: 'asyncDetailHydration', source: 'master', neverRender: true });
       try { renderDetailSyncStatusP457_(); } catch (e) {}
+      if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { fullHydrated: true, protectedInput: true, rowNo: rowNo, customerNo: targetCustomerNo });
       return;
     }
     const preserveEditMode = !!isDetailEditMode || forceEditMode;
@@ -73,10 +77,12 @@ function openDetail(rowNo, customerNo, options) {
       draftValues: draftValues,
       reason: 'asyncDetailHydration'
     });
+    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { fullHydrated: true, rowNo: rowNo, customerNo: targetCustomerNo });
   }, function(err) {
     if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, rowNo, targetCustomerNo)) return;
+    if (typeof portalPerfErrorP459_ === 'function') portalPerfErrorP459_(perfMarkP459, err, { rowNo: rowNo, customerNo: targetCustomerNo });
     showModalError(err);
-  }, { forceFull: true, customerNo: targetCustomerNo });
+  }, { forceFull: true, customerNo: targetCustomerNo, reason: 'openDetail' });
 }
 
 function openDetailReadOnly(rowNo, customerNo) {
@@ -1314,10 +1320,19 @@ function saveDetailFields() {
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, null);
         try { setCustomerDetailSaveUiP430_(false); } catch(e) {}
         try { renderDetailSyncStatusP457_(); } catch(e) {}
-        // P457: 저장 실패/충돌이 나도 사용자가 입력한 draft와 이후 operation은 절대 롤백하지 않습니다.
+        // P457/P459: 저장 실패/충돌이 나도 사용자가 입력한 draft와 이후 operation은 절대 롤백하지 않습니다.
+        // lock/timeout 계열은 alert/modal error로 focus를 빼앗지 않고 durable queue 재시도에 맡깁니다.
         if (detailModalStillActiveP456) {
+          const transientP459 = typeof isPortalTransientWriteErrorP459_ === 'function' && isPortalTransientWriteErrorP459_(err);
           if (isStaleP457) showModalError('다른 사용자가 같은 고객 정보를 먼저 수정했습니다. 입력값은 보존했습니다. 최신값 확인 후 다시 저장해 주세요.');
-          else showModalError('상세정보 저장이 지연/실패했습니다. 입력값은 화면에 보존했습니다: ' + getErrorMessage_(err));
+          else if (transientP459) {
+            try {
+              if (typeof portalPerfLogP459_ === 'function') portalPerfLogP459_('detailSave.transientFailureKept', { rowNo: rowNo, customerNo: targetCustomerNo, error: getErrorMessage_(err) });
+              toast('저장 재시도 중입니다. 입력값은 유지됩니다.');
+            } catch(e) {}
+          } else {
+            showModalError('상세정보 저장이 실패했습니다. 입력값은 화면에 보존했습니다: ' + getErrorMessage_(err));
+          }
         }
         throw err;
       });

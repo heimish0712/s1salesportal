@@ -182,6 +182,7 @@ function canServeCustomerSearchFastP300_(keyword, page) {
 }
 
 function searchCustomerPage(page) {
+  const perfMarkP459 = (typeof portalPerfStartP459_ === 'function') ? portalPerfStartP459_('customerSearch.page', { page: Math.max(0, Number(page) || 0) }) : null;
   ensureCustomerFilterUi_();
   renderCustomerScopeToggleP04_();
   hideCustomerTopPager_();
@@ -218,10 +219,12 @@ function searchCustomerPage(page) {
   fetchCustomerPage_(keywordValue, pageNo, function(res, fromCache) {
     if (!isCustomerSearchRequestCurrentP230_(requestSeq, requestSnapshot)) return;
     renderResults(res, fromCache);
+    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { fromCache: !!fromCache, count: res && res.rows ? res.rows.length : 0, keyword: keywordValue });
     scheduleCustomerPrefetch_(keywordValue, pageNo + 1, 4);
     scheduleDetailPrefetchFromResult_(res, keywordValue, pageNo);
   }, function(err) {
     if (!isCustomerSearchRequestCurrentP230_(requestSeq, requestSnapshot)) return;
+    if (typeof portalPerfErrorP459_ === 'function') portalPerfErrorP459_(perfMarkP459, err, { keyword: keywordValue });
     showSearchError(err);
   });
 }
@@ -791,7 +794,32 @@ function enqueueCustomerSaveP220_(rowNo, customerNo, workFn, options) {
   }
 
   const runPromise = previousTail.catch(function() { return null; }).then(function() {
-    return workFn({ key: key, queueSeq: queueSeq, queuedCount: queuedCount, options: options });
+    const maxAttempts = Math.max(1, Number(options.maxAttempts || (typeof PORTAL_SAVE_RETRY_MAX_ATTEMPTS_P459 !== 'undefined' ? PORTAL_SAVE_RETRY_MAX_ATTEMPTS_P459 : 5)) || 5);
+    const source = String(options.source || 'customerSave');
+    const runWithRetry = function(attempt) {
+      const perfMark = (typeof portalPerfStartP459_ === 'function') ? portalPerfStartP459_('saveQueue.' + source, {
+        key: key, rowNo: Number(rowNo) || 0, customerNo: normalizeCustomerNoForKey_(customerNo || ''), queueSeq: queueSeq, queuedCount: queuedCount, attempt: attempt
+      }) : null;
+      return Promise.resolve().then(function() {
+        return workFn({ key: key, queueSeq: queueSeq, queuedCount: queuedCount, options: options, attempt: attempt });
+      }).then(function(res) {
+        if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMark, { ok: true, serverTiming: res && (res.timingP459 || res.__serverTimingP459 || res.timing) || null });
+        return res;
+      }).catch(function(err) {
+        const transient = typeof isPortalTransientWriteErrorP459_ === 'function' && isPortalTransientWriteErrorP459_(err);
+        if (typeof portalPerfErrorP459_ === 'function') portalPerfErrorP459_(perfMark, err, { transient: transient, attempt: attempt });
+        if (transient && attempt < maxAttempts) {
+          const delay = typeof getPortalSaveRetryDelayP459_ === 'function' ? getPortalSaveRetryDelayP459_(attempt) : (900 * attempt);
+          try {
+            if (!options.silentQueued) toast('저장 대기 중입니다. 같은 고객의 이전 작업 후 자동 재시도합니다.');
+            if (typeof portalPerfLogP459_ === 'function') portalPerfLogP459_('saveQueue.retryScheduled', { key: key, source: source, attempt: attempt, nextAttempt: attempt + 1, delayMs: Math.round(delay), error: getErrorMessage_(err) });
+          } catch (toastErr) {}
+          return waitPortalMsP459_(delay).then(function() { return runWithRetry(attempt + 1); });
+        }
+        throw err;
+      });
+    };
+    return runWithRetry(1);
   });
 
   const tail = runPromise.catch(function() { return null; }).then(function() {
@@ -813,9 +841,21 @@ function enqueueCustomerSaveP220_(rowNo, customerNo, workFn, options) {
 }
 
 function runCustomerSaveRequestP220_(methodName, payload) {
+  const perfMark = (typeof portalPerfStartP459_ === 'function') ? portalPerfStartP459_('googleScript.' + methodName, {
+    rowNo: payload && payload.rowNo || 0,
+    customerNo: payload && payload.customerNo || '',
+    keys: Object.keys((payload && payload.values) || (payload && Object.prototype.hasOwnProperty.call(payload, 'memo') ? { memo: payload.memo } : {}) || {}),
+    clientOperationId: payload && payload.clientOperationId || ''
+  }) : null;
   return new Promise(function(resolve, reject) {
     try {
-      const runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+      const runner = google.script.run.withSuccessHandler(function(res) {
+        if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMark, { ok: true, serverTiming: res && (res.timingP459 || res.__serverTimingP459 || res.timing) || null });
+        resolve(res);
+      }).withFailureHandler(function(err) {
+        if (typeof portalPerfErrorP459_ === 'function') portalPerfErrorP459_(perfMark, err, { transient: typeof isPortalTransientWriteErrorP459_ === 'function' && isPortalTransientWriteErrorP459_(err) });
+        reject(err);
+      });
       if (methodName === 'saveCustomerMemoFast') {
         runner.saveCustomerMemoFast(payload);
       } else if (methodName === 'saveCustomerDetailFast') {
@@ -824,6 +864,7 @@ function runCustomerSaveRequestP220_(methodName, payload) {
         reject(new Error('지원하지 않는 고객 저장 메서드입니다: ' + methodName));
       }
     } catch (err) {
+      if (typeof portalPerfErrorP459_ === 'function') portalPerfErrorP459_(perfMark, err);
       reject(err);
     }
   });
@@ -935,9 +976,19 @@ function commitCustomerInlineEdit_(inputId, options) {
         handleCustomerStaleSaveFailureP202_(rowNo, customerNo, err, rollback, key);
         throw err;
       }
+      if (typeof isPortalTransientWriteErrorP459_ === 'function' && isPortalTransientWriteErrorP459_(err)) {
+        // P459: lock/timeout 계열은 사용자가 잘못한 오류가 아니므로 alert로 튕기지 않습니다.
+        // 화면의 optimistic 값을 유지하고, 고객 큐/재시도 로그에 맡깁니다.
+        try {
+          if (typeof portalPerfLogP459_ === 'function') portalPerfLogP459_('inlineEdit.transientFailureKept', { rowNo: rowNo, customerNo: customerNo, key: key, error: getErrorMessage_(err) });
+          toast('저장 재시도 중입니다. 입력값은 유지됩니다.');
+        } catch (e) {}
+        refreshCustomerInlineCellDisplay_(rowNo, key);
+        throw err;
+      }
       applyCustomerInlinePatchOptimistic_(rowNo, rollback);
       refreshCustomerInlineCellDisplay_(rowNo, key);
-      alert('목록 즉시수정 저장 실패: ' + getErrorMessage_(err));
+      try { toast('목록 즉시수정 저장 실패: ' + getErrorMessage_(err)); } catch(e) {}
       throw err;
     });
   }, { source: 'inlineEdit', key: key });
@@ -2229,10 +2280,19 @@ function saveExpandedCustomerMemo(rowNo) {
           handleCustomerStaleSaveFailureP202_(rowNo, targetCustomerNo, err, null, 'memo');
           throw err;
         }
+        if (typeof isPortalTransientWriteErrorP459_ === 'function' && isPortalTransientWriteErrorP459_(err)) {
+          // P459: 일시 lock/timeout은 사용자가 입력한 메모를 되돌리지 않습니다. 큐 재시도에 맡깁니다.
+          try {
+            if (typeof portalPerfLogP459_ === 'function') portalPerfLogP459_('expandedMemo.transientFailureKept', { rowNo: rowNo, customerNo: targetCustomerNo, error: getErrorMessage_(err) });
+            toast('메모 저장 재시도 중입니다. 입력값은 유지됩니다.');
+          } catch(e) {}
+          renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
+          throw err;
+        }
         if (prevDetail) setCustomerDetailCache_(prevDetail); else applyCustomerMemoOptimistic_(rowNo, prevMemo);
         updateCustomerRowMemoInCaches_(rowNo, prevMemo);
         renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-        alert('메모 저장 실패: ' + getErrorMessage_(err));
+        try { toast('메모 저장 실패: ' + getErrorMessage_(err)); } catch(e) {}
         throw err;
       });
   }, { source: 'expandedMemo', key: 'memo' });
@@ -3714,6 +3774,7 @@ function loadCustomerDetailFromLocalStorage_(rowNo, customerNo) {
 function fetchCustomerDetailFromServer_(rowNo, onSuccess, onError, options) {
   options = options || {};
   rowNo = Number(rowNo) || 0;
+  const perfMarkP459 = (typeof portalPerfStartP459_ === 'function') ? portalPerfStartP459_('customerDetail.fetchFull', { rowNo: rowNo, customerNo: options.customerNo || '', reason: options.reason || '' }) : null;
   const summary = findCustomerRowSummary_(rowNo, options.customerNo) || {};
   const cached = getCustomerDetailCache_(rowNo, options.customerNo || summary.customerNo) || {};
   const targetCustomerNo = normalizeCustomerNoForKey_(options.customerNo || cached.customerNo || summary.customerNo);
@@ -3722,9 +3783,11 @@ function fetchCustomerDetailFromServer_(rowNo, onSuccess, onError, options) {
     .withSuccessHandler(function(detail) {
       if (detail && detail.rowNo) markDetailSourceK1_(detail, 'master');
       setCustomerDetailCache_(detail, { source: 'master', allowIndexPatch: true, allowPagePatch: true, allowStorageWrite: true });
+      if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { ok: true, rowNo: detail && detail.rowNo || rowNo, customerNo: detail && detail.customerNo || targetCustomerNo });
       if (typeof onSuccess === 'function') onSuccess(detail, false);
     })
     .withFailureHandler(function(err) {
+      if (typeof portalPerfErrorP459_ === 'function') portalPerfErrorP459_(perfMarkP459, err, { rowNo: rowNo, customerNo: targetCustomerNo });
       if (typeof onError === 'function') onError(err);
     });
 

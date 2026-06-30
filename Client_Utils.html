@@ -248,4 +248,122 @@ function makePortalSortableThP15_(label, key, activeKey, activeDir, handlerName,
     esc(label || key) + '<span class="portal-sort-arrow">' + esc(arrow) + '</span></th>';
 }
 
+
+// P459: client-side performance and save-stability instrumentation.
+// Keeps a small local ring buffer only; this must never block the user flow.
+function portalNowP459_() {
+  try { return (window.performance && performance.now) ? performance.now() : Date.now(); } catch (err) { return Date.now(); }
+}
+
+function portalPerfSafeJsonP459_(value) {
+  try { return JSON.parse(JSON.stringify(value || {})); } catch (err) { return {}; }
+}
+
+function portalPerfLogP459_(eventName, detail) {
+  try {
+    const key = (typeof PORTAL_PERF_LOG_STORAGE_KEY_P459 !== 'undefined') ? PORTAL_PERF_LOG_STORAGE_KEY_P459 : 's1portal:perfLog:P459:v1';
+    const max = (typeof PORTAL_PERF_LOG_MAX_ITEMS_P459 !== 'undefined') ? PORTAL_PERF_LOG_MAX_ITEMS_P459 : 500;
+    const raw = localStorage.getItem(key);
+    const arr = raw ? JSON.parse(raw) : [];
+    const item = {
+      at: new Date().toISOString(),
+      t: Math.round(portalNowP459_()),
+      event: String(eventName || ''),
+      route: (typeof currentRoute !== 'undefined' ? currentRoute : ''),
+      detail: portalPerfSafeJsonP459_(detail || {})
+    };
+    arr.push(item);
+    while (arr.length > max) arr.shift();
+    localStorage.setItem(key, JSON.stringify(arr));
+    return item;
+  } catch (err) {
+    return null;
+  }
+}
+
+function portalPerfStartP459_(eventName, detail) {
+  const started = portalNowP459_();
+  portalPerfLogP459_(String(eventName || '') + ':start', Object.assign({ started: Math.round(started) }, detail || {}));
+  return {
+    event: String(eventName || ''),
+    started: started,
+    detail: portalPerfSafeJsonP459_(detail || {})
+  };
+}
+
+function portalPerfEndP459_(mark, extra) {
+  try {
+    if (!mark || !mark.event) return null;
+    const ended = portalNowP459_();
+    const ms = Math.round(ended - Number(mark.started || ended));
+    return portalPerfLogP459_(mark.event + ':end', Object.assign({}, mark.detail || {}, extra || {}, { durationMs: ms }));
+  } catch (err) {
+    return null;
+  }
+}
+
+function portalPerfErrorP459_(mark, err, extra) {
+  try {
+    const ended = portalNowP459_();
+    const base = mark && mark.event ? mark.event : 'operation';
+    const ms = mark ? Math.round(ended - Number(mark.started || ended)) : 0;
+    return portalPerfLogP459_(base + ':error', Object.assign({}, (mark && mark.detail) || {}, extra || {}, {
+      durationMs: ms,
+      error: getErrorMessage_(err)
+    }));
+  } catch (e) {
+    return null;
+  }
+}
+
+function getPortalPerfLogsP459_() {
+  try {
+    const key = (typeof PORTAL_PERF_LOG_STORAGE_KEY_P459 !== 'undefined') ? PORTAL_PERF_LOG_STORAGE_KEY_P459 : 's1portal:perfLog:P459:v1';
+    const raw = localStorage.getItem(key);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function copyPortalPerfLogsP459_() {
+  const logs = getPortalPerfLogsP459_();
+  const text = JSON.stringify(logs, null, 2);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text);
+      toast('성능 로그를 클립보드에 복사했습니다.');
+      return;
+    }
+  } catch (err) {}
+  console.log('[P459 PERF LOG]', logs);
+  toast('성능 로그를 콘솔에 출력했습니다.');
+}
+
+function clearPortalPerfLogsP459_() {
+  try {
+    const key = (typeof PORTAL_PERF_LOG_STORAGE_KEY_P459 !== 'undefined') ? PORTAL_PERF_LOG_STORAGE_KEY_P459 : 's1portal:perfLog:P459:v1';
+    localStorage.removeItem(key);
+    toast('성능 로그를 비웠습니다.');
+  } catch (err) {}
+}
+
+function isPortalTransientWriteErrorP459_(err) {
+  const msg = getErrorMessage_(err);
+  if (typeof isTransientPortalWriteError_ === 'function' && isTransientPortalWriteError_(err)) return true;
+  return /PORTAL_LOCK_BUSY|다른 작업 처리 중|LOCK|잠금|LockService|timeout|timed out|Exceeded maximum execution|Service invoked too many times/i.test(msg);
+}
+
+function getPortalSaveRetryDelayP459_(attempt) {
+  const base = (typeof PORTAL_SAVE_RETRY_BASE_MS_P459 !== 'undefined') ? PORTAL_SAVE_RETRY_BASE_MS_P459 : 900;
+  const max = (typeof PORTAL_SAVE_RETRY_MAX_MS_P459 !== 'undefined') ? PORTAL_SAVE_RETRY_MAX_MS_P459 : 12000;
+  const n = Math.max(1, Number(attempt || 1));
+  return Math.min(max, base * Math.pow(1.7, n - 1));
+}
+
+function waitPortalMsP459_(ms) {
+  return new Promise(function(resolve) { setTimeout(resolve, Math.max(0, Number(ms || 0) || 0)); });
+}
+
 </script>
