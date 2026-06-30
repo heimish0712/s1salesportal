@@ -114,6 +114,127 @@ const PORTAL_CONTRACT_ORDER_FORCE_FILL_KEYS_P452 = [
 
 
 
+/**
+ * P453: 수주확정/계약완료 행 강제 보정
+ * - P452에서 호출만 있고 함수 정의가 빠져 ReferenceError가 났던 부분을 복구합니다.
+ * - 헤더 매칭이 흔들려도 실무 양식의 고정 컬럼 위치에 직접 씁니다.
+ */
+function forceFillContractOrderRowFromMasterP452_(sheet, rowNo, lastCol, rowObject, options) {
+  options = options || {};
+  if (!sheet || !rowNo || !rowObject) return { ok: false, reason: 'invalid args' };
+
+  lastCol = Math.max(Number(lastCol) || 0, sheet.getLastColumn(), 35);
+  const rowValues = sheet.getRange(rowNo, 1, 1, lastCol).getValues()[0];
+  const preserveContractCore = options.preserveContractCore === true;
+  const keys = (typeof PORTAL_CONTRACT_ORDER_FORCE_FILL_KEYS_P452 !== 'undefined')
+    ? PORTAL_CONTRACT_ORDER_FORCE_FILL_KEYS_P452.slice()
+    : [];
+
+  // 새 행 생성/부분 행 복구 모두 안전하게 핵심 3개는 비어 있을 때만 보정합니다.
+  ['contractNo', 'customerNo', 'contractDate'].forEach(function(key) {
+    const idx = PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450[key];
+    if (idx == null || idx < 0 || idx >= lastCol) return;
+    if (preserveContractCore && String(rowValues[idx] || '').trim()) return;
+    if (Object.prototype.hasOwnProperty.call(rowObject, key)) {
+      rowValues[idx] = rowObject[key] == null ? '' : rowObject[key];
+    }
+  });
+
+  keys.forEach(function(key) {
+    const idx = PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450[key];
+    if (idx == null || idx < 0 || idx >= lastCol) return;
+    if (!Object.prototype.hasOwnProperty.call(rowObject, key)) return;
+    rowValues[idx] = rowObject[key] == null ? '' : rowObject[key];
+  });
+
+  sheet.getRange(rowNo, 1, 1, lastCol).setValues([rowValues]);
+  try {
+    const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+    const headerMap = buildContractCompleteHeaderMapV69_(headers);
+    applyContractCompleteRowFormatsP450_(sheet, rowNo, headerMap);
+  } catch (err) {}
+
+  return { ok: true, rowNo: rowNo, forcedKeys: keys };
+}
+
+/**
+ * P453: 발주메일 큐 적재 안전 wrapper
+ * - P452에서 호출한 wrapper가 정의되지 않아 다음 단계에서 또 ReferenceError가 날 수 있어 명시 정의합니다.
+ */
+function enqueuePortalOrderNotificationMailSafeP452_(payload) {
+  try {
+    if (typeof enqueuePortalOrderNotificationMailP447_ !== 'function') {
+      return { ok: false, skipped: true, reason: 'enqueuePortalOrderNotificationMailP447_ missing' };
+    }
+    return enqueuePortalOrderNotificationMailP447_(payload || {});
+  } catch (err) {
+    try {
+      appendPortalActivityLog_({
+        actionType: '발주메일큐실패',
+        screen: '고객 상세 검색',
+        customerNo: payload && payload.customerNo || '',
+        company: payload && payload.company || '',
+        summary: '발주메일 큐 적재 실패',
+        detail: { error: err && err.message ? err.message : String(err), payload: payload || {} }
+      });
+    } catch (ignoreErr) {}
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+}
+
+/**
+ * P453: 마스터시트 해당 고객 행의 `발주번호` 저장
+ * - 고객상세 발주여부 표시는 수주확정/계약완료 lookup이 아니라 마스터 발주번호 기준입니다.
+ */
+function setCustomerMasterOrderNoP453_(target, contractNo) {
+  if (!target || !target.sheet || !target.rowNo) return { ok: false, reason: 'invalid target' };
+  const no = String(contractNo || '').trim();
+  if (!no) return { ok: false, reason: 'empty contractNo' };
+
+  const sheet = target.sheet;
+  let headerMap = getHeaderMap_(sheet);
+  let col = findMasterFieldCol_(headerMap, 'orderNo');
+  if (!col) {
+    col = ensureMasterFieldColumn_(sheet, headerMap, 'orderNo');
+    headerMap = getHeaderMap_(sheet);
+  }
+
+  sheet.getRange(target.rowNo, col).setValue(no);
+  try { sheet.getRange(target.rowNo, col).setNumberFormat('@'); } catch (err) {}
+
+  if (target.obj) {
+    target.obj['발주번호'] = no;
+  }
+
+  try {
+    if (typeof updateCustomerSearchIndexRowFastByPatch_ === 'function') {
+      updateCustomerSearchIndexRowFastByPatch_(target.rowNo, target.customerNo, { orderNo: no, orderInfo: { exists: true, contractNo: no, customerNo: target.customerNo || '', company: getCompanyValue_(target.obj) || '', source: 'masterOrderNo' } });
+    }
+  } catch (idxErr) {}
+
+  return { ok: true, rowNo: target.rowNo, col: col, orderNo: no };
+}
+
+/**
+ * P453: 마스터 발주번호 기반 발주여부 조회
+ */
+function getPortalCustomerOrderInfoFromMasterP453_(target) {
+  target = target || {};
+  const obj = target.obj || {};
+  const orderNo = getMasterFieldValue_(obj, 'orderNo') || obj['발주번호'] || '';
+  const no = String(orderNo || '').trim();
+  return {
+    exists: !!no,
+    contractNo: no,
+    rowNo: 0,
+    customerNo: String(target.customerNo || getMasterFieldValue_(obj, 'customerNo') || '').trim(),
+    company: String(getCompanyValue_(obj) || '').trim(),
+    source: 'masterOrderNo'
+  };
+}
+
+
+
 function getContractCompleteSheetV69_(ss) {
   ss = ss || getMasterSpreadsheet_();
   const names = (typeof PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250 !== 'undefined' && PORTAL_CONTRACT_COMPLETE_SHEET_NAME_FALLBACKS_P250)
@@ -353,6 +474,7 @@ function createPortalCustomerOrderFromSearchP250(payload) {
         throw new Error('기존 발주행 보정 실패: ' + (syncErr && syncErr.message ? syncErr.message : String(syncErr)));
       }
       markCustomerMasterStatusOrderedP250_(target);
+      setCustomerMasterOrderNoP453_(target, existing.contractNo);
 
       // P452: 기존 발주행이 이미 있어서 새 행을 만들지 않는 경우에도 발주메일 큐를 태웁니다.
       // 형진컴퍼니처럼 이전 버전에서 부분 발주행만 생긴 케이스는 여기로 들어오기 때문입니다.
@@ -391,6 +513,7 @@ function createPortalCustomerOrderFromSearchP250(payload) {
     });
 
     markCustomerMasterStatusOrderedP250_(target);
+    setCustomerMasterOrderNoP453_(target, nextContractNo);
     clearContractCompleteCacheV69_();
     try { markPortalMasterDataChangedP201_('발주확정 customerNo=' + customerNo + ', contractNo=' + nextContractNo); } catch (err) {}
 
@@ -765,24 +888,9 @@ function getPortalCustomerOrderInfoP250(payload) {
 }
 
 function getPortalCustomerOrderInfoByTargetP250_(target, lookup) {
-  // STEP15/P260: 상세/프리패치에서 발주여부를 다른 상세 데이터와 같은 타이밍에 표시하도록 compact lookup을 우선 사용합니다.
-  if (typeof getPortalCustomerOrderInfoFromLookupP260_ === 'function') {
-    return getPortalCustomerOrderInfoFromLookupP260_(target, lookup || getPortalCustomerOrderLookupP260_({ force: false }));
-  }
-  const customerNo = String((target && target.customerNo) || '').trim();
-  const company = String((target && target.obj && getCompanyValue_(target.obj)) || '').trim();
-  const rows = listContractCompleteRowsV69({ force: false }).rows || [];
-  const companyKey = normalizeContractOrderCompanyKeyP250_(company);
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i] || {};
-    if (customerNo && String(row.customerNo || '').trim() === customerNo) {
-      return { exists: true, contractNo: String(row.contractNo || '').trim(), rowNo: Number(row.rowNo) || 0, customerNo: customerNo, company: row.company || company };
-    }
-    if (!customerNo && companyKey && normalizeContractOrderCompanyKeyP250_(row.company) === companyKey) {
-      return { exists: true, contractNo: String(row.contractNo || '').trim(), rowNo: Number(row.rowNo) || 0, customerNo: row.customerNo || '', company: row.company || company };
-    }
-  }
-  return { exists: false, contractNo: '', rowNo: 0, customerNo: customerNo, company: company };
+  // P453: 발주여부는 마스터시트 해당 행의 `발주번호`를 기준으로 판정합니다.
+  // 수주확정/계약완료 시트에 과거 부분 행이 있어도 마스터 발주번호가 비어 있으면 X(발주하기)입니다.
+  return getPortalCustomerOrderInfoFromMasterP453_(target || {});
 }
 
 function normalizeContractOrderCompanyKeyP250_(value) {

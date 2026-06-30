@@ -1034,6 +1034,7 @@ function toggleCustomerFavoriteFromList(rowNo) {
     .setPortalCustomerFavorite({
       rowNo: rowNo,
       customerNo: row.customerNo || '',
+    orderNo: row.orderNo || '',
       company: row.company || '',
       favorite: nextFavorite
     });
@@ -1641,12 +1642,8 @@ function renderCustomerExpandOrderStatusHtmlP250_(detail) {
   detail = detail || {};
   const orderInfo = detail.orderInfo || null;
   if (!orderInfo || typeof orderInfo.exists === 'undefined') {
-    const statusText = String(detail.status || '').trim();
-    if (statusText === '발주완료' || statusText === '계약완료') {
-      return '<span class="customer-order-status done">O</span>';
-    }
-    // 서버 상세 보강 전에도 다른 기본정보와 같은 타이밍에 표시되도록 진행현황/요약 캐시 기준 X를 먼저 보여줍니다.
-    // 실제 수주확정/계약완료 중복 여부는 발주 처리 서버 함수에서 다시 검증합니다.
+    const masterOrderNo = String(detail.orderNo || '').trim();
+    if (masterOrderNo) return '<span class="customer-order-status done">O</span>';
     return renderCustomerOrderActionHtmlP260_(detail);
   }
   if (orderInfo.exists) {
@@ -1755,12 +1752,14 @@ function applyCustomerOrderResultToCachesP250_(res) {
   const detail = getCustomerDetailCache_(rowNo, customerNo);
   if (detail) {
     detail.orderInfo = orderInfo;
+    detail.orderNo = String(orderInfo.contractNo || res.contractNo || '').trim();
     if (detail.status !== '계약완료') detail.status = '발주완료';
     setCustomerDetailCache_(detail, { source: 'orderResult', force: true, allowIndexPatch: false, skipStorage: false });
   }
   const rowSummary = findCustomerRowSummaryByRowNo_(rowNo);
   if (rowSummary) {
     rowSummary.orderInfo = orderInfo;
+    rowSummary.orderNo = String(orderInfo.contractNo || res.contractNo || '').trim();
     if (rowSummary.status !== '계약완료') rowSummary.status = '발주완료';
   }
   try {
@@ -1768,6 +1767,7 @@ function applyCustomerOrderResultToCachesP250_(res) {
       lastCustomerResultResponse.rows.forEach(function(row) {
         if (Number(row && row.rowNo) !== rowNo) return;
         row.orderInfo = orderInfo;
+        row.orderNo = String(orderInfo.contractNo || res.contractNo || '').trim();
         if (row.status !== '계약완료') row.status = '발주완료';
       });
     }
@@ -3194,6 +3194,7 @@ function normalizeCustomerPatchForIndexK1_(target, patchValues) {
 
   const keyMap = {
     customerNo: 'customerNo',
+    orderNo: 'orderNo',
     company: 'company',
     salesRep: 'salesRep',
     status: 'status',
@@ -3245,6 +3246,7 @@ function recomputeCustomerRowSearchTextK1_(row) {
   row = row || {};
   row.searchText = [
     row.customerNo,
+    row.orderNo,
     row.company,
     row.fullAddress || row.address,
     row.contact,
@@ -3531,14 +3533,14 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
   row = row || {};
   rowNo = Number(rowNo || row.rowNo) || 0;
   const statusTextP260 = String(row.status || '').trim();
-  const orderInfoP260 = row.orderInfo || ((statusTextP260 === '발주완료' || statusTextP260 === '계약완료')
-    ? { exists: true, contractNo: '', rowNo: 0, customerNo: row.customerNo || '', company: row.company || '', fromStatus: true }
-    : { exists: false, contractNo: '', rowNo: 0, customerNo: row.customerNo || '', company: row.company || '', fromStatus: true });
+  const orderNoP453 = String(row.orderNo || '').trim();
+  const orderInfoP260 = row.orderInfo || { exists: !!orderNoP453, contractNo: orderNoP453, rowNo: 0, customerNo: row.customerNo || '', company: row.company || '', source: 'masterOrderNo' };
 
   const detail = {
     rowNo: rowNo,
     company: row.company || '',
     customerNo: row.customerNo || '',
+    orderNo: row.orderNo || '',
     address: row.fullAddress || row.address || '',
     contact: row.contact || '',
     phone: row.phone || '',

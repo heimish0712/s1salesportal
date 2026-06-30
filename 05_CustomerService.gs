@@ -11,6 +11,7 @@
 function getCustomerSearchIndexHeadersK2_() {
   const base = Array.isArray(PORTAL_CONFIG.CUSTOMER_INDEX_HEADERS) ? PORTAL_CONFIG.CUSTOMER_INDEX_HEADERS.slice() : [];
   const extra = [
+    '발주번호',
     '마스터시트 최초등록일',
     '지역구분',
     '고객등급',
@@ -375,6 +376,7 @@ function getCustomerSearchIndexConsistencyReport(options) {
   }).slice(0, limit);
   const fields = [
     ['customerNo', '고객번호'],
+    ['orderNo', '발주번호'],
     ['company', '회사명'],
     ['salesRep', '영업담당자'],
     ['status', '진행현황'],
@@ -523,6 +525,7 @@ function getCustomerSearchIndexRows_() {
     const item = {
       rowNo: Number(cellByIndexHeader_(row, map, 'rowNo')) || 0,
       customerNo: cellByIndexHeader_(row, map, '고객번호'),
+      orderNo: cellByIndexHeader_(row, map, '발주번호'),
       company: cellByIndexHeader_(row, map, '회사명'),
       salesRep: cellByIndexHeader_(row, map, '영업담당자'),
       status: cellByIndexHeader_(row, map, '진행현황'),
@@ -868,6 +871,7 @@ function buildCustomerSearchIndexRow_(obj, now) {
   now = now || new Date();
   obj = obj || {};
   const customerNo = getCustomerListValue_(obj, 'customerNo');
+  const orderNo = getCustomerListValue_(obj, 'orderNo');
   const company = getCustomerListValue_(obj, 'company');
   const salesRep = getCustomerListValue_(obj, 'salesRep');
   const status = getCustomerListValue_(obj, 'status');
@@ -906,13 +910,14 @@ function buildCustomerSearchIndexRow_(obj, now) {
   // v35 FIX: 검색문자열에는 메모/작성자 로그를 넣지 않습니다.
   // PATCH K-2: 상세 lite 필드 중 검색에 실질적으로 필요한 값은 searchText에 포함합니다.
   const searchText = shortenTextForIndex_([
-    customerNo, company, salesRep, status, customerRank, contact, phone, directPhone, email, vendor, finalQuote, address,
+    customerNo, orderNo, company, salesRep, status, customerRank, contact, phone, directPhone, email, vendor, finalQuote, address,
     region, area, grade, buildingType, contractUnit, contractStartDate, contractEndDate, s1Referrer, appointment, maintenance, performance, vat
   ].join(' ').toLowerCase(), PORTAL_CONFIG.CUSTOMER_INDEX_SEARCH_TEXT_MAX_LENGTH || 1500);
   const ts = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
   const rowMap = {
     'rowNo': obj.__rowNo || '',
     '고객번호': customerNo,
+    '발주번호': orderNo,
     '회사명': company,
     '영업담당자': salesRep,
     '진행현황': status,
@@ -1052,6 +1057,7 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
 
   const keyToHeader = {
     customerNo: '고객번호',
+    orderNo: '발주번호',
     company: '회사명',
     salesRep: '영업담당자',
     status: '진행현황',
@@ -1099,7 +1105,7 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
     return col ? String(row[col - 1] || '') : '';
   };
   const searchText = shortenTextForIndex_([
-    getH('고객번호'), getH('회사명'), getH('영업담당자'), getH('진행현황'), getH('고객등급'), getH('담당자'),
+    getH('고객번호'), getH('발주번호'), getH('회사명'), getH('영업담당자'), getH('진행현황'), getH('고객등급'), getH('담당자'),
     getH('전화번호'), getH('직통번호'), getH('담당자 이메일'), getH('수행사'), getH('최종 견적가'), getH('주소'),
     getH('지역구분'), getH('연면적'), getH('관리등급'), getH('건물 유형'), getH('계약단위'),
     getH('계약시작일'), getH('계약종료일'), getH('제보자'), getH('관리자 선임 여부'), getH('유지점검'), getH('성능점검'), getH('부가세')
@@ -1380,6 +1386,23 @@ function getCustomerDetailByCustomerNo(customerNo, fallbackRowNo) {
   return buildCustomerDetailFromObj_(target.obj, target.rowNo, { includeLogs: true, includeRaw: true, lite: false });
 }
 
+
+/**
+ * P453: 마스터시트 `발주번호` 기준 발주여부 정보 생성
+ */
+function buildPortalCustomerOrderInfoFromMasterOrderNoP453_(customerNo, company, orderNo, rowNo) {
+  const no = String(orderNo == null ? '' : orderNo).trim();
+  return {
+    exists: !!no,
+    contractNo: no,
+    rowNo: 0,
+    customerNo: String(customerNo || '').trim(),
+    company: String(company || '').trim(),
+    masterRowNo: Number(rowNo) || 0,
+    source: 'masterOrderNo'
+  };
+}
+
 function buildCustomerDetailFromObj_(obj, rowNo, options) {
   options = options || {};
   rowNo = Number(rowNo) || Number(obj && obj.__rowNo) || 0;
@@ -1387,6 +1410,7 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   obj.__rowNo = rowNo;
 
   const customerNo = getCustomerMasterHeaderValueK2_(obj, 'customerNo') || obj['고객번호'] || '';
+  const orderNo = getCustomerMasterHeaderValueK2_(obj, 'orderNo') || obj['발주번호'] || '';
   const company = getCompanyValue_(obj);
   const status = getStatusValueFromObj_(obj);
   const customerRank = getCustomerMasterHeaderValueK2_(obj, 'customerRank');
@@ -1411,14 +1435,15 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   const specialTerms = getCustomerMasterHeaderValueK2_(obj, 'specialTerms');
   const s1Referrer = getCustomerMasterHeaderValueK2_(obj, 's1Referrer');
 
-  const orderInfoP250 = (options.includeOrderInfo === false || typeof getPortalCustomerOrderInfoByTargetP250_ !== 'function')
-    ? null
-    : getPortalCustomerOrderInfoByTargetP250_({ customerNo: customerNo, rowNo: rowNo, obj: obj }, options.orderLookup || null);
+  // P453: 고객상세의 발주여부는 마스터시트 해당 행의 `발주번호`를 기준으로 봅니다.
+  // 수주확정/계약완료 시트에 부분 행이 있더라도 마스터 발주번호가 비어 있으면 X(발주하기)로 표시해야 합니다.
+  const orderInfoP250 = buildPortalCustomerOrderInfoFromMasterOrderNoP453_(customerNo, company, orderNo, rowNo);
 
   const detail = {
     rowNo: rowNo,
     company: company,
     customerNo: customerNo,
+    orderNo: orderNo,
     address: address,
     firstRegisteredAt: firstRegisteredAt,
     region: region,

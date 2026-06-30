@@ -12,6 +12,7 @@
  */
 const PORTAL_MASTER_FIELD_SCHEMA = {
   customerNo: { label: '고객번호', headers: ['고객번호', '고객 번호'], type: 'text' },
+  orderNo: { label: '발주번호', headers: ['발주번호', '계약번호', '계약 번호'], type: 'text' },
   company: { label: '회사명', headers: ['회사명', '건물명', '건물명 (회사명)', '고객사명'], type: 'text' },
   salesRep: { label: '영업담당자', headers: ['영업담당자', '견적담당', '담당영업'], type: 'text' },
   firstRegisteredAt: { label: '마스터시트 최초등록일', headers: ['마스터시트\n최초등록일', '마스터시트 최초등록일', '최초등록일', '등록일'], type: 'text' },
@@ -179,6 +180,7 @@ const PORTAL_DETAIL_FIELDS = {
 
 const PORTAL_CUSTOMER_LIST_FIELD_HEADERS = {
   customerNo: masterFieldHeaders_('customerNo'),
+  orderNo: masterFieldHeaders_('orderNo'),
   salesRep: masterFieldHeaders_('salesRep'),
   company: masterFieldHeaders_('company'),
   status: masterFieldHeaders_('status'),
