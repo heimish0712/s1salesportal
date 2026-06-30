@@ -40,6 +40,7 @@ const PORTAL_CONTRACT_COMPLETE_FIELDS_V69 = [
   { key: 'businessNo', label: '사업자등록번호', headers: ['사업자등록번호', '사업자 등록 번호', '사업자번호'] },
   { key: 'representativeName', label: '대표자명', headers: ['대표자명', '대표자'] },
   { key: 'businessType', label: '업태', headers: ['업태', '업종', '업태/종목'] },
+  { key: 'businessItem', label: '종목', headers: ['종목'] },
   { key: 'customerAddress', label: '고객사 주소', headers: ['고객사 주소', '고객사주소', '주소'] },
   { key: 'contractPeriod', label: '계약기간', headers: ['계약기간'] },
   { key: 'appointment', label: '비상주선임', headers: ['비상주선임', '비상주 선임', '관리자 선임 여부'] },
@@ -80,6 +81,7 @@ const PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450 = {
   businessNo: 19,
   representativeName: 20,
   businessType: 21,
+  businessItem: 22,
   customerAddress: 23,
   contractPeriod: 24,
   appointment: 25,
@@ -97,7 +99,7 @@ const PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450 = {
 const PORTAL_CONTRACT_ORDER_SYNC_KEYS_P450 = [
   'region', 'city', 'referrer', 'contractRep', 'company', 'contactName', 'phone', 'email',
   'area', 'grade', 'contractPrice', 'vat', 'vendor', 'businessNo', 'representativeName',
-  'businessType', 'customerAddress', 'contractPeriod', 'appointment', 'maintenance',
+  'businessType', 'businessItem', 'customerAddress', 'contractPeriod', 'appointment', 'maintenance',
   'performance', 'billingMemo'
 ];
 
@@ -108,7 +110,7 @@ const PORTAL_CONTRACT_ORDER_SYNC_KEYS_P450 = [
 const PORTAL_CONTRACT_ORDER_FORCE_FILL_KEYS_P452 = [
   'region', 'referrer', 'contractRep', 'company', 'contactName', 'phone', 'email',
   'area', 'grade', 'contractPrice', 'vat', 'vendor', 'businessNo', 'representativeName',
-  'businessType', 'customerAddress', 'contractPeriod', 'appointment', 'maintenance',
+  'businessType', 'businessItem', 'customerAddress', 'contractPeriod', 'appointment', 'maintenance',
   'performance', 'billingMemo'
 ];
 
@@ -124,37 +126,39 @@ function forceFillContractOrderRowFromMasterP452_(sheet, rowNo, lastCol, rowObje
   if (!sheet || !rowNo || !rowObject) return { ok: false, reason: 'invalid args' };
 
   lastCol = Math.max(Number(lastCol) || 0, sheet.getLastColumn(), 35);
-  const rowValues = sheet.getRange(rowNo, 1, 1, lastCol).getValues()[0];
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+  const headerMap = buildContractCompleteHeaderMapV69_(headers);
   const preserveContractCore = options.preserveContractCore === true;
   const keys = (typeof PORTAL_CONTRACT_ORDER_FORCE_FILL_KEYS_P452 !== 'undefined')
     ? PORTAL_CONTRACT_ORDER_FORCE_FILL_KEYS_P452.slice()
     : [];
 
-  // 새 행 생성/부분 행 복구 모두 안전하게 핵심 3개는 비어 있을 때만 보정합니다.
+  const updated = [];
+
+  // 계약번호/고객번호/계약일자는 기존값이 있으면 보존하고, 비어 있을 때만 보정합니다.
   ['contractNo', 'customerNo', 'contractDate'].forEach(function(key) {
-    const idx = PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450[key];
-    if (idx == null || idx < 0 || idx >= lastCol) return;
-    if (preserveContractCore && String(rowValues[idx] || '').trim()) return;
-    if (Object.prototype.hasOwnProperty.call(rowObject, key)) {
-      rowValues[idx] = rowObject[key] == null ? '' : rowObject[key];
-    }
-  });
-
-  keys.forEach(function(key) {
-    const idx = PORTAL_CONTRACT_COMPLETE_FIELD_FALLBACK_INDEX_P450[key];
-    if (idx == null || idx < 0 || idx >= lastCol) return;
+    const idx = getContractCompleteFieldColumnIndexV69_(headerMap, key);
+    if (idx < 0 || idx >= lastCol) return;
+    const cell = sheet.getRange(rowNo, idx + 1);
+    if (preserveContractCore && String(cell.getDisplayValue() || '').trim()) return;
     if (!Object.prototype.hasOwnProperty.call(rowObject, key)) return;
-    rowValues[idx] = rowObject[key] == null ? '' : rowObject[key];
+    cell.setValue(normalizeContractCompleteValueForWriteP454_(key, rowObject[key]));
+    updated.push(key);
   });
 
-  sheet.getRange(rowNo, 1, 1, lastCol).setValues([rowValues]);
-  try {
-    const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
-    const headerMap = buildContractCompleteHeaderMapV69_(headers);
-    applyContractCompleteRowFormatsP450_(sheet, rowNo, headerMap);
-  } catch (err) {}
+  // H열 같은 고정 위치가 아니라, 반드시 헤더명으로 찾은 컬럼에 씁니다.
+  // 헤더명이 누락된 경우에만 getContractCompleteFieldColumnIndexV69_ 내부 fallback을 사용합니다.
+  keys.forEach(function(key) {
+    const idx = getContractCompleteFieldColumnIndexV69_(headerMap, key);
+    if (idx < 0 || idx >= lastCol) return;
+    if (!Object.prototype.hasOwnProperty.call(rowObject, key)) return;
+    const value = normalizeContractCompleteValueForWriteP454_(key, rowObject[key]);
+    sheet.getRange(rowNo, idx + 1).setValue(value);
+    updated.push(key);
+  });
 
-  return { ok: true, rowNo: rowNo, forcedKeys: keys };
+  try { applyContractCompleteRowFormatsP450_(sheet, rowNo, headerMap); } catch (err) {}
+  return { ok: true, rowNo: rowNo, updatedKeys: updated };
 }
 
 /**
@@ -655,7 +659,8 @@ function buildContractCompleteAppendObjectFromCustomerP250_(target, contractNo) 
     vendor: normalizeContractOrderVendorP250_(getMasterFieldValue_(obj, 'vendor')),
     businessNo: getMasterFieldValue_(obj, 'businessNo'),
     representativeName: getMasterFieldValue_(obj, 'representativeName'),
-    businessType: buildContractOrderBusinessTypeP250_(obj),
+    businessType: getContractOrderBusinessTypeP454_(obj),
+    businessItem: getContractOrderBusinessItemP454_(obj),
     customerAddress: address,
     contractPeriod: getContractOrderExplicitPeriodP250_(obj),
     appointment: normalizeContractOrderAppointmentMonthsP250_(appointment, contractUnit),
@@ -684,31 +689,29 @@ function writeContractCompleteObjectToRowP450_(sheet, rowNo, lastCol, headerMap,
   rowObject = rowObject || {};
   lastCol = Math.max(Number(lastCol) || 0, sheet.getLastColumn(), 35);
 
-  let rowValues;
-  if (options.mode === 'merge') {
-    rowValues = sheet.getRange(rowNo, 1, 1, lastCol).getValues()[0];
-  } else {
-    rowValues = new Array(lastCol).fill('');
-  }
-
+  // P454: 행 전체 setValues는 데이터 확인 규칙이 있는 칸(H열 지역 등)에서
+  // 의도치 않은 기존값까지 다시 검증해 실패할 수 있으므로, 실제 변경 대상 셀만 헤더명 기준으로 씁니다.
   const preserveKeys = options.preserveKeys || {};
   const onlyKeys = options.onlyKeys || null;
+  const written = [];
 
   PORTAL_CONTRACT_COMPLETE_FIELDS_V69.forEach(function(def) {
     const key = def && def.key;
     if (!key) return;
     if (onlyKeys && onlyKeys.indexOf(key) < 0) return;
     if (preserveKeys[key]) return;
+    if (!Object.prototype.hasOwnProperty.call(rowObject, key)) return;
 
     const idx = getContractCompleteFieldColumnIndexV69_(headerMap, key);
     if (idx < 0 || idx >= lastCol) return;
-    if (!Object.prototype.hasOwnProperty.call(rowObject, key)) return;
 
-    rowValues[idx] = rowObject[key] == null ? '' : rowObject[key];
+    const value = normalizeContractCompleteValueForWriteP454_(key, rowObject[key]);
+    sheet.getRange(rowNo, idx + 1).setValue(value);
+    written.push(key);
   });
 
-  sheet.getRange(rowNo, 1, 1, lastCol).setValues([rowValues]);
   applyContractCompleteRowFormatsP450_(sheet, rowNo, headerMap);
+  return { ok: true, rowNo: rowNo, writtenKeys: written };
 }
 
 /**
@@ -967,24 +970,80 @@ function joinUniqueContractOrderValuesP250_(values, delimiter) {
 
 function parseContractOrderRegionCityP250_(address, fallbackRegion) {
   const addr = String(address || '').trim();
-  const fb = String(fallbackRegion || '').replace(/권$/,'').trim();
   const tokens = addr.split(/\s+/).filter(Boolean);
-  let region = fb || '';
+  let region = normalizeContractOrderRegionForValidationP454_(fallbackRegion, '');
   let city = '';
+
   if (tokens.length) {
-    const first = tokens[0];
+    const first = tokens[0] || '';
     const second = tokens[1] || '';
-    if (/서울/.test(first)) { region = '수도권'; city = '서울'; }
-    else if (/인천/.test(first)) { region = '수도권'; city = '인천'; }
-    else if (/경기/.test(first)) { region = '경기'; city = second.replace(/시|군|구$/,''); }
-    else if (/충청|대전|세종/.test(first)) { region = '충청'; city = /대전|세종/.test(first) ? first.replace(/광역시|특별자치시|특별자치도|시$/,'') : second.replace(/시|군|구$/,''); }
-    else if (/전라|광주/.test(first)) { region = '호남'; city = /광주/.test(first) ? '광주' : second.replace(/시|군|구$/,''); }
-    else if (/경상|부산|울산|대구/.test(first)) { region = '부울경'; city = /부산|울산|대구/.test(first) ? first.replace(/광역시|시$/,'') : second.replace(/시|군|구$/,''); }
-    else if (/강원/.test(first)) { region = '강원'; city = second.replace(/시|군|구$/,''); }
-    else if (/제주/.test(first)) { region = '제주'; city = second.replace(/시|군|구$/,'') || '제주'; }
+    const firstTwo = (first + ' ' + second).trim();
+
+    if (/서울|인천|경기/.test(first)) {
+      region = '수도권';
+      city = /서울/.test(first) ? '서울' : (/인천/.test(first) ? '인천' : second.replace(/시|군|구$/,''));
+    } else if (/대전|세종|충청|충북|충남/.test(firstTwo)) {
+      region = '충청권';
+      city = /대전|세종/.test(first) ? first.replace(/광역시|특별자치시|특별자치도|시$/,'') : second.replace(/시|군|구$/,'');
+    } else if (/광주|전라|전북|전남/.test(firstTwo)) {
+      region = '호남권';
+      city = /광주/.test(first) ? '광주' : second.replace(/시|군|구$/,'');
+    } else if (/대구|경북|경상북도/.test(firstTwo)) {
+      region = '대구경북권';
+      city = /대구/.test(first) ? '대구' : second.replace(/시|군|구$/,'');
+    } else if (/부산|울산|경남|경상남도/.test(firstTwo)) {
+      region = '부울경권';
+      city = /부산|울산/.test(first) ? first.replace(/광역시|시$/,'') : second.replace(/시|군|구$/,'');
+    } else if (/강원/.test(first)) {
+      region = '강원권';
+      city = second.replace(/시|군|구$/,'');
+    } else if (/제주/.test(first)) {
+      region = '제주권';
+      city = second.replace(/시|군|구$/,'') || '제주';
+    }
   }
+
+  region = normalizeContractOrderRegionForValidationP454_(region, addr);
   return { region: region, city: city };
 }
+
+function normalizeContractOrderRegionForValidationP454_(value, address) {
+  const raw = String(value || '').trim();
+  const norm = raw.replace(/\s+/g, '');
+  const addr = String(address || '').trim();
+  const combined = norm || addr;
+
+  const allowed = ['강원권', '대구경북권', '부울경권', '수도권', '제주권', '충청권', '호남권'];
+  if (allowed.indexOf(norm) >= 0) return norm;
+
+  if (/수도|서울|인천|경기/.test(combined)) return '수도권';
+  if (/충청|충북|충남|대전|세종/.test(combined)) return '충청권';
+  if (/호남|전라|전북|전남|광주/.test(combined)) return '호남권';
+  if (/강원/.test(combined)) return '강원권';
+  if (/제주/.test(combined)) return '제주권';
+  if (/대구|경북|경상북도/.test(combined)) return '대구경북권';
+  if (/부울경|부산|울산|경남|경상남도/.test(combined)) return '부울경권';
+
+  // 데이터 확인 규칙을 깨는 값이면 공란으로 둡니다.
+  return '';
+}
+
+function normalizeContractCompleteValueForWriteP454_(key, value) {
+  if (key === 'region') return normalizeContractOrderRegionForValidationP454_(value, '');
+  if (key === 'vendor') return normalizeContractOrderVendorP250_(value);
+  return value == null ? '' : value;
+}
+
+function getContractOrderBusinessTypeP454_(obj) {
+  obj = obj || {};
+  return getValueByHeaderCandidates_(obj, ['업태']) || '';
+}
+
+function getContractOrderBusinessItemP454_(obj) {
+  obj = obj || {};
+  return getValueByHeaderCandidates_(obj, ['종목']) || '';
+}
+
 
 
 /**
@@ -1412,7 +1471,8 @@ function buildContractCompleteSyncObjectFromCustomerP420_(obj) {
     vendor: normalizeContractOrderVendorP250_(getMasterFieldValue_(obj, 'vendor')),
     businessNo: getMasterFieldValue_(obj, 'businessNo'),
     representativeName: getMasterFieldValue_(obj, 'representativeName'),
-    businessType: buildContractOrderBusinessTypeP250_(obj),
+    businessType: getContractOrderBusinessTypeP454_(obj),
+    businessItem: getContractOrderBusinessItemP454_(obj),
     customerAddress: address,
     contractPeriod: getContractOrderExplicitPeriodP250_(obj),
     appointment: normalizeContractOrderAppointmentMonthsP250_(appointment, contractUnit),
