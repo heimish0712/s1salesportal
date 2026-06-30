@@ -2345,15 +2345,51 @@ function normalizePagedResponse_(response) {
   return response;
 }
 
+function buildNumericPagerHtml_(res, fnName) {
+  res = normalizePagedResponse_(res);
+  const totalPages = Math.max(1, Math.ceil((Number(res.total) || 0) / Math.max(1, Number(res.pageSize) || CUSTOMER_PAGE_SIZE)));
+  const currentPage = Math.max(0, Number(res.page) || 0);
+  if (totalPages <= 1) return '';
+
+  let startPage = 0;
+  let endPage = totalPages - 1;
+  if (totalPages > 10) {
+    startPage = Math.max(0, currentPage - 4);
+    endPage = Math.min(totalPages - 1, startPage + 9);
+    startPage = Math.max(0, endPage - 9);
+  }
+
+  const html = [];
+  for (let page = startPage; page <= endPage; page += 1) {
+    if (page === currentPage) {
+      html.push('<button type="button" class="pager-page-link active" aria-current="page">' + (page + 1) + '</button>');
+    } else {
+      html.push('<button type="button" class="pager-page-link" onclick="' + fnName + '(' + page + ')">' + (page + 1) + '</button>');
+    }
+  }
+
+  if (endPage < totalPages - 1) {
+    html.push('<span class="pager-page-ellipsis">…</span>');
+  }
+
+  html.push('<button type="button" class="pager-page-link pager-page-next" ' + (res.hasNext ? 'onclick="' + fnName + '(' + (currentPage + 1) + ')"' : 'disabled') + '>다음 &gt;</button>');
+  html.push('<button type="button" class="pager-page-link pager-page-last" ' + ((currentPage < totalPages - 1) ? 'onclick="' + fnName + '(' + (totalPages - 1) + ')"' : 'disabled') + '>맨뒤 &gt;&gt;</button>');
+  return html.join('');
+}
+
 function renderPagerHtml_(res, fnName, fromCache) {
   res = normalizePagedResponse_(res);
   const pageText = res.total ? ((res.start + 1) + '-' + res.end + ' / 총 ' + res.total + '건') : '총 0건';
   const cacheText = fromCache ? '<span class="cache-note">캐시 표시</span>' : '<span class="cache-note">최신 조회</span>';
+  const numericPagerHtml = buildNumericPagerHtml_(res, fnName);
   return '<div class="pager">' +
     '<div class="pager-left"><strong>' + esc(pageText) + '</strong>' + cacheText + '</div>' +
-    '<div>' +
-      '<button class="secondary" ' + (res.hasPrev ? '' : 'disabled') + ' onclick="' + fnName + '(' + Math.max(0, res.page - 1) + ')">이전 20건</button> ' +
-      '<button class="secondary" ' + (res.hasNext ? '' : 'disabled') + ' onclick="' + fnName + '(' + (res.page + 1) + ')">다음 20건</button>' +
+    '<div class="pager-right">' +
+      '<div class="pager-button-row">' +
+        '<button class="secondary" ' + (res.hasPrev ? '' : 'disabled') + ' onclick="' + fnName + '(' + Math.max(0, res.page - 1) + ')">이전 20건</button> ' +
+        '<button class="secondary" ' + (res.hasNext ? '' : 'disabled') + ' onclick="' + fnName + '(' + (res.page + 1) + ')">다음 20건</button>' +
+      '</div>' +
+      (numericPagerHtml ? ('<div class="pager-number-row">' + numericPagerHtml + '</div>') : '') +
     '</div>' +
   '</div>';
 }

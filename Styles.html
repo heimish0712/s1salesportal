@@ -5485,3 +5485,40 @@ button[disabled], .portal-btn-pending {
 }
 
 </style>
+
+
+.pager-right { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+.pager-button-row, .pager-number-row { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+.pager-page-link {
+  min-width:32px;
+  height:32px;
+  padding:0 10px;
+  border:1px solid #d0d5dd;
+  background:#fff;
+  color:#344054;
+  border-radius:8px;
+  font-size:13px;
+  cursor:pointer;
+}
+.pager-page-link:hover:not(:disabled) { background:#f9fafb; }
+.pager-page-link.active {
+  background:#eff4ff;
+  border-color:#98a2b3;
+  color:#1d2939;
+  font-weight:700;
+  cursor:default;
+}
+.pager-page-link:disabled {
+  opacity:.45;
+  cursor:not-allowed;
+}
+.pager-page-ellipsis {
+  padding:0 4px;
+  color:#667085;
+  font-size:13px;
+}
+@media (max-width: 900px) {
+  .pager { flex-direction:column; align-items:stretch; }
+  .pager-right { align-items:stretch; }
+  .pager-button-row, .pager-number-row { justify-content:flex-start; }
+}
