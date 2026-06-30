@@ -102,6 +102,17 @@ const PORTAL_CONTRACT_ORDER_SYNC_KEYS_P450 = [
 ];
 
 
+// P452: 발주행 부분 생성/부분 보정 누락 방지용 강제 이관 키.
+// 실제 수주확정/계약완료 양식 컬럼 순서가 고정되어 있으므로, 헤더 매칭 실패 여부와 무관하게
+// H열 이후 고객/계약 기본정보를 직접 채워 부분 발주행을 복구합니다.
+const PORTAL_CONTRACT_ORDER_FORCE_FILL_KEYS_P452 = [
+  'region', 'referrer', 'contractRep', 'company', 'contactName', 'phone', 'email',
+  'area', 'grade', 'contractPrice', 'vat', 'vendor', 'businessNo', 'representativeName',
+  'businessType', 'customerAddress', 'contractPeriod', 'appointment', 'maintenance',
+  'performance', 'billingMemo'
+];
+
+
 
 function getContractCompleteSheetV69_(ss) {
   ss = ss || getMasterSpreadsheet_();
@@ -311,10 +322,23 @@ function createPortalCustomerOrderFromSearchP250(payload) {
 
     const existing = findContractCompleteExistingOrderP250_(completeSheet, headerMap, customerNo, company);
     if (existing && existing.contractNo) {
-      // P450: 과거 오류/중단으로 계약번호·고객번호·계약일자만 생긴 부분 이관 행도
-      // 다시 발주하기를 누르면 마스터시트 기준으로 나머지 고객/계약정보를 보정합니다.
+      // P452: 이미 계약번호만 생긴 부분 발주행도 반드시 마스터 기준으로 강제 보정합니다.
+      // 기존 P450 보정 실패가 사용자에게 묻히지 않도록 보정 결과를 다시 읽어서 반환합니다.
+      let syncedExisting = existing;
       try {
-        syncExistingContractOrderRowFromMasterP450_(completeSheet, headerMap, target, existing);
+        const syncRes = syncExistingContractOrderRowFromMasterP450_(completeSheet, headerMap, target, existing);
+        const syncedDisplayRow = completeSheet.getRange(existing.rowNo, 1, 1, lastCol).getDisplayValues()[0];
+        syncedExisting = buildContractCompleteRowV69_(syncedDisplayRow, headerMap, existing.rowNo);
+        try {
+          appendPortalActivityLog_({
+            actionType: '발주행보정',
+            screen: '고객 상세 검색',
+            customerNo: customerNo,
+            company: company,
+            summary: '기존 발주행 보정 #' + existing.contractNo,
+            detail: syncRes || { contractRowNo: existing.rowNo }
+          });
+        } catch (ignoreLogErr) {}
       } catch (syncErr) {
         try {
           appendPortalActivityLog_({
@@ -326,9 +350,25 @@ function createPortalCustomerOrderFromSearchP250(payload) {
             detail: { error: syncErr && syncErr.message ? syncErr.message : String(syncErr), contractRowNo: existing.rowNo }
           });
         } catch (ignoreErr) {}
+        throw new Error('기존 발주행 보정 실패: ' + (syncErr && syncErr.message ? syncErr.message : String(syncErr)));
       }
       markCustomerMasterStatusOrderedP250_(target);
-      return buildPortalCustomerOrderResultP250_(target, existing, true);
+
+      // P452: 기존 발주행이 이미 있어서 새 행을 만들지 않는 경우에도 발주메일 큐를 태웁니다.
+      // 형진컴퍼니처럼 이전 버전에서 부분 발주행만 생긴 케이스는 여기로 들어오기 때문입니다.
+      const queued = enqueuePortalOrderNotificationMailSafeP452_({
+        rowNo: target.rowNo,
+        customerNo: customerNo,
+        company: company,
+        contractNo: existing.contractNo,
+        salesRep: getMasterFieldValue_(target.obj, 'salesRep') || '',
+        contractRowNo: existing.rowNo
+      });
+
+      const existingResult = buildPortalCustomerOrderResultP250_(target, syncedExisting, true);
+      existingResult.orderMailAutoNotice = true;
+      existingResult.orderMailQueue = queued;
+      return existingResult;
     }
 
     const nextContractNo = getNextContractNumberP250_(completeSheet, headerMap);
@@ -344,6 +384,10 @@ function createPortalCustomerOrderFromSearchP250(payload) {
     // 헤더 매칭 + 실무 양식 컬럼 fallback을 함께 사용합니다.
     writeContractCompleteObjectToRowP450_(completeSheet, targetRow, lastCol, headerMap, rowObject, {
       mode: 'create'
+    });
+    // P452: 헤더 매칭/양식 차이와 무관하게 H열 이후 고객/계약 정보를 한 번 더 강제 반영합니다.
+    forceFillContractOrderRowFromMasterP452_(completeSheet, targetRow, lastCol, rowObject, {
+      preserveContractCore: true
     });
 
     markCustomerMasterStatusOrderedP250_(target);
@@ -363,34 +407,20 @@ function createPortalCustomerOrderFromSearchP250(payload) {
       });
     } catch (logErr) {}
 
-    // P447: 발주번호 생성 후 공용메일 자동 알림은 사용자 응답을 막지 않도록 큐에만 적재합니다.
-    // 실제 발송은 포탈 백그라운드 트리거가 메일 Worker에 위임합니다.
-    try {
-      if (typeof enqueuePortalOrderNotificationMailP447_ === 'function') {
-        enqueuePortalOrderNotificationMailP447_({
-          rowNo: target.rowNo,
-          customerNo: customerNo,
-          company: company,
-          contractNo: nextContractNo,
-          salesRep: rowObject.contractRep || getMasterFieldValue_(target.obj, 'salesRep') || '',
-          contractRowNo: targetRow
-        });
-      }
-    } catch (mailQueueErr) {
-      try {
-        appendPortalActivityLog_({
-          actionType: '발주메일큐실패',
-          screen: '고객 상세 검색',
-          customerNo: customerNo,
-          company: company,
-          summary: '발주메일 자동발송 큐 적재 실패 #' + nextContractNo,
-          detail: { error: mailQueueErr && mailQueueErr.message ? mailQueueErr.message : String(mailQueueErr) }
-        });
-      } catch (ignoreErr) {}
-    }
+    // P447/P452: 발주번호 생성 후 공용메일 자동 알림은 사용자 응답을 막지 않도록 큐에만 적재합니다.
+    // 실제 발송은 포탈 백그라운드 트리거 또는 화면의 즉시 queue processor가 메일 Worker에 위임합니다.
+    const queued = enqueuePortalOrderNotificationMailSafeP452_({
+      rowNo: target.rowNo,
+      customerNo: customerNo,
+      company: company,
+      contractNo: nextContractNo,
+      salesRep: rowObject.contractRep || getMasterFieldValue_(target.obj, 'salesRep') || '',
+      contractRowNo: targetRow
+    });
 
     const orderResult = buildPortalCustomerOrderResultP250_(target, appended, false);
     orderResult.orderMailAutoNotice = true;
+    orderResult.orderMailQueue = queued;
     return orderResult;
   });
 }
@@ -588,6 +618,10 @@ function syncExistingContractOrderRowFromMasterP450_(sheet, headerMap, target, e
     mode: 'merge',
     preserveKeys: preserve,
     onlyKeys: PORTAL_CONTRACT_ORDER_SYNC_KEYS_P450
+  });
+  // P452: 기존 부분 발주행은 헤더 매칭과 별개로 실제 양식 컬럼에 직접 한 번 더 채웁니다.
+  const forced = forceFillContractOrderRowFromMasterP452_(sheet, existing.rowNo, lastCol, rowObject, {
+    preserveContractCore: true
   });
 
   clearContractCompleteCacheV69_();

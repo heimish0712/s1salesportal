@@ -1529,6 +1529,32 @@ function saveCustomerMemoFast(rowNoOrPayload, memo) {
   });
 }
 
+
+// P451: 고객상세에서 연면적이 수정되면 관리등급도 같은 저장 트랜잭션에서 자동 재계산합니다.
+// 관리등급 필드는 화면에서 직접 수정 불가이지만, 연면적 변경에 따른 파생값은 마스터시트에 같이 반영해야 합니다.
+function applyPortalAutoGradeByAreaForSaveP451_(values) {
+  values = Object.assign({}, values || {});
+  if (!Object.prototype.hasOwnProperty.call(values, 'area')) return values;
+
+  const area = parsePortalDecimalNumberP433_(values.area);
+  if (area === '' || !(Number(area) > 0)) {
+    values.grade = '';
+    return values;
+  }
+
+  values.grade = calculateGradeByArea_(area);
+  return values;
+}
+
+function canWritePortalDetailFieldP451_(def, values) {
+  if (!def || !def.key) return false;
+  if (def.editable !== false) return true;
+
+  // 관리등급은 사용자가 직접 수정하는 필드가 아니라 연면적 변경의 파생값으로만 저장 허용.
+  if (def.key === 'grade' && Object.prototype.hasOwnProperty.call(values || {}, 'area')) return true;
+  return false;
+}
+
 function saveCustomerDetailCoreP202_(payload) {
   payload = payload || {};
   const target = assertCustomerTarget_(payload, '고객 상세정보 저장', { readObject: false });
@@ -1540,13 +1566,14 @@ function saveCustomerDetailCoreP202_(payload) {
   const sheet = target.sheet;
   assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload);
   values = preparePortalContractValuesForSaveP112_(values, { sheet: sheet, rowNo: rowNo, requireFull: false });
+  values = applyPortalAutoGradeByAreaForSaveP451_(values);
 
   const allDefs = getPortalCustomerAllDetailDefsP436_();
   let headerMap = getHeaderMap_(sheet);
   const changed = [];
 
   allDefs.forEach(def => {
-    if (!def || def.editable === false) return;
+    if (!canWritePortalDetailFieldP451_(def, values)) return;
     if (!Object.prototype.hasOwnProperty.call(values, def.key)) return;
     const col = findFirstExistingHeaderCol_(headerMap, def.headers || []) || ensureMasterColumn_(sheet, headerMap, (def.headers && def.headers[0]) || def.label);
     headerMap = getHeaderMap_(sheet);
@@ -1633,6 +1660,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   const sheet = target.sheet;
   assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload);
   values = preparePortalContractValuesForSaveP112_(values, { sheet: sheet, rowNo: rowNo, requireFull: false });
+  values = applyPortalAutoGradeByAreaForSaveP451_(values);
 
   const allDefs = getPortalCustomerAllDetailDefsP436_();
   let headerMap = getHeaderMap_(sheet);
@@ -1640,7 +1668,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   const appliedValues = {};
 
   allDefs.forEach(function(def) {
-    if (!def || def.editable === false) return;
+    if (!canWritePortalDetailFieldP451_(def, values)) return;
     if (!Object.prototype.hasOwnProperty.call(values, def.key)) return;
     const col = findFirstExistingHeaderCol_(headerMap, def.headers || []) || ensureMasterColumn_(sheet, headerMap, (def.headers && def.headers[0]) || def.label);
     headerMap = getHeaderMap_(sheet);

@@ -114,6 +114,7 @@ function renderDetail(d, options) {
     applyContractDefaultsOnRender_({ onlyBlank: true });
     bindContractDefaultHandlers_();
     bindPortalContractDateHandlersP420_();
+    bindPortalAreaGradeAutoUpdateP451_();
     bindCustomerAddressAutoRegionVendor_();
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
@@ -125,6 +126,7 @@ function renderDetail(d, options) {
     applyContractDefaultsOnRender_({ onlyBlank: true });
     bindContractDefaultHandlers_();
     bindPortalContractDateHandlersP420_();
+    bindPortalAreaGradeAutoUpdateP451_();
     bindCustomerAddressAutoRegionVendor_();
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
@@ -147,6 +149,44 @@ function collectCurrentDetailInputValues_() {
 function normalizeDetailSaveCompareValue_(value) {
   return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
 }
+
+function parseDetailAreaNumberP451_(value) {
+  const text = String(value == null ? '' : value).replace(/,/g, '').replace(/㎡/g, '').trim();
+  if (!text) return 0;
+  const n = Number(text.replace(/[^0-9.\-]/g, ''));
+  return isFinite(n) ? n : 0;
+}
+
+function calculateDetailGradeByAreaP451_(area) {
+  area = Number(area) || 0;
+  if (!area) return '';
+  if (area < 10000) return '초급(7년이상)';
+  if (area < 15000) return '초급';
+  if (area < 30000) return '중급';
+  return '고급';
+}
+
+function applyDetailAreaGradeAutoUpdateP451_() {
+  const areaEl = getDetailInputByKey_ ? getDetailInputByKey_('area') : document.querySelector('.detail-edit-input[data-key="area"]');
+  const gradeEl = getDetailInputByKey_ ? getDetailInputByKey_('grade') : document.querySelector('.detail-edit-input[data-key="grade"]');
+  if (!areaEl || !gradeEl) return '';
+  const nextGrade = calculateDetailGradeByAreaP451_(parseDetailAreaNumberP451_(areaEl.value));
+  if (String(gradeEl.value || '') !== String(nextGrade || '')) {
+    gradeEl.value = nextGrade || '';
+    try { gradeEl.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+    try { gradeEl.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+  }
+  return nextGrade || '';
+}
+
+function bindPortalAreaGradeAutoUpdateP451_() {
+  const areaEl = getDetailInputByKey_ ? getDetailInputByKey_('area') : document.querySelector('.detail-edit-input[data-key="area"]');
+  if (!areaEl || areaEl.__portalAreaGradeBoundP451) return;
+  areaEl.__portalAreaGradeBoundP451 = true;
+  areaEl.addEventListener('input', applyDetailAreaGradeAutoUpdateP451_);
+  areaEl.addEventListener('change', applyDetailAreaGradeAutoUpdateP451_);
+}
+
 function getDirtyDetailInputValues_() {
   const currentValues = collectCurrentDetailInputValues_();
   const baseline = detailEditBaselineValues || {};
@@ -567,6 +607,9 @@ function saveDetailFields() {
   let values = getDirtyDetailInputValues_();
   try {
     values = prepareDetailContractValuesForClientSaveP112_(values, { requireFull: false });
+    if (Object.prototype.hasOwnProperty.call(values, 'area')) {
+      values.grade = applyDetailAreaGradeAutoUpdateP451_();
+    }
   } catch (err) {
     showModalError(err);
     return;
@@ -629,6 +672,8 @@ function saveDetailFields() {
         if (res && res.detail && res.refreshedFromMaster) {
           applyServerDetailAfterSaveP112_(res.detail, rowNo);
         } else if (currentDetail && Number(currentDetail.rowNo) === rowNo) {
+          const confirmedValuesP451 = (res && res.values) ? res.values : values;
+          currentDetail = applyDetailValuesToDetailObject_(currentDetail, confirmedValuesP451);
           currentDetail.__pendingSave = false;
           // 서버 저장 성공 후에도 검색결과 행/상세 캐시를 한 번 더 확정 패치합니다.
           setCustomerDetailCache_(currentDetail, {
@@ -636,7 +681,7 @@ function saveDetailFields() {
             skipPendingMerge: true,
             source: 'saveResult',
             allowIndexPatch: true,
-            patchValues: values
+            patchValues: confirmedValuesP451
           });
           repaintCustomerResultsIfVisible_();
         }
