@@ -1,3 +1,4 @@
+var PORTAL_HEADER_MAP_CACHE_P463_ = {};
 /***************************************
  * S1 Sales Portal - 04_MasterRepository.gs
  * PATCH Q: 마스터시트 헤더 resolver 중앙화
@@ -91,10 +92,14 @@ function buildHeaderMapFromHeaders_(headers, baseIndex) {
 }
 
 function getHeaderMap_(sheet) {
+  const key = String(sheet && sheet.getSheetId && sheet.getSheetId() || 'master') + '|' + String(sheet.getLastColumn());
+  if (PORTAL_HEADER_MAP_CACHE_P463_ && PORTAL_HEADER_MAP_CACHE_P463_[key]) return PORTAL_HEADER_MAP_CACHE_P463_[key];
   const headers = sheet
     .getRange(PORTAL_CONFIG.HEADER_ROW, 1, 1, sheet.getLastColumn())
     .getDisplayValues()[0];
-  return buildHeaderMapFromHeaders_(headers, 1);
+  const map = buildHeaderMapFromHeaders_(headers, 1);
+  PORTAL_HEADER_MAP_CACHE_P463_[key] = map;
+  return map;
 }
 
 function getSimpleHeaderMapFromRow_(sheet, rowNo) {

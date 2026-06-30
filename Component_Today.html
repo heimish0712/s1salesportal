@@ -686,7 +686,11 @@ function saveTodayTodos(options) {
       baseTasks: baseTasks,
       deletedTasks: deletedSnapshotP461,
       hiddenTags: todayHiddenTagsP123_,
-      assigneeFilter: getTodayAssigneeFilterP350_()
+      assigneeFilter: getTodayAssigneeFilterP350_(),
+      // P463: 오늘 할 일 저장은 화면에서 이미 optimistic 반영되므로 서버는 변경된 행만 쓰고 로그/flush를 생략합니다.
+      fastMode: true,
+      skipActivityLog: true,
+      noFlush: true
     });
 }
 

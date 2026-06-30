@@ -1767,7 +1767,7 @@ function saveCustomerDetailThinCoreP462_(payload) {
     if (payload.skipMasterMeta !== true) {
       masterMeta = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-thin-save');
     }
-    indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, changedKeys, masterMeta, 'WEBAPP_CUSTOMER_THIN_SAVE');
+    if (payload.skipIndexQueue !== true) indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, changedKeys, masterMeta, 'WEBAPP_CUSTOMER_THIN_SAVE');
   }
 
   return {
@@ -1816,7 +1816,7 @@ function saveCustomerMemoThinCoreP462_(rowNoOrPayload, memo) {
   let indexUpdate = null;
   if (currentMemo !== nextMemo) {
     if (payload.skipMasterMeta !== true) masterMeta = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-memo-thin-save');
-    indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, ['memo'], masterMeta, 'WEBAPP_CUSTOMER_MEMO_THIN_SAVE');
+    if (payload.skipIndexQueue !== true) indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, ['memo'], masterMeta, 'WEBAPP_CUSTOMER_MEMO_THIN_SAVE');
   }
   return {
     ok: true,
@@ -2577,6 +2577,20 @@ function shouldRefreshIndexFromMasterAfterContractSaveP112_(changedKeys) {
 }
 
 
+
+function normalizePortalQuoteBasisMonthKeyP463_(value) {
+  const n = normalizePortalContractUnitMonthsP280_(value);
+  return n === '' ? '' : String(n);
+}
+function makePortalQuoteBasisObjectP463_(row, map, grade) {
+  return {
+    grade: String(grade || '').trim(),
+    appointmentUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_선임', '선임단가', '관리자선임단가'])),
+    maintenanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_유지', '유지단가', '유지점검단가'])),
+    performanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_성능', '성능단가', '성능점검단가']))
+  };
+}
+
 function getPortalQuoteBasisMapP462() {
   const cache = CacheService.getScriptCache();
   const cacheKey = 'PORTAL_QUOTE_BASIS_MAP_P462';
@@ -2589,7 +2603,7 @@ function getPortalQuoteBasisMapP462() {
   if (!sheet) throw new Error('계약기준 시트를 찾지 못했습니다.');
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
-  const result = { ok: true, loadedAt: new Date().toISOString(), basis: {} };
+  const result = { ok: true, loadedAt: new Date().toISOString(), basis: {}, byGradeMonth: {} };
   if (lastRow < 2) return result;
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h){ return String(h || '').trim(); });
   const map = {};
@@ -2599,12 +2613,11 @@ function getPortalQuoteBasisMapP462() {
     const grade = cellByHeaderIndex_(row, map, ['등급', '관리등급']);
     const norm = normalizeGrade_(grade);
     if (!norm) return;
-    result.basis[norm] = {
-      grade: String(grade || '').trim(),
-      appointmentUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_선임', '선임단가', '관리자선임단가'])),
-      maintenanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_유지', '유지단가', '유지점검단가'])),
-      performanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_성능', '성능단가', '성능점검단가']))
-    };
+    const basis = makePortalQuoteBasisObjectP463_(row, map, grade);
+    const monthValue = cellByHeaderIndex_(row, map, ['계약단위', '계약개월', '개월', '계약기간']);
+    const monthKey = normalizePortalQuoteBasisMonthKeyP463_(monthValue);
+    if (monthKey) result.byGradeMonth[norm + '|' + monthKey] = basis;
+    if (!result.basis[norm]) result.basis[norm] = basis;
   });
   try { cache.put(cacheKey, JSON.stringify(result), 21600); } catch (err) {}
   return result;
@@ -2660,7 +2673,7 @@ function calculateQuoteDiscount(payload) {
     };
   }
 
-  const basis = getContractBasisForGrade_(grade);
+  const basis = getContractBasisForGrade_(grade, contractUnitText || String(months));
   if (!basis) throw new Error('계약기준 시트에서 관리등급 [' + (grade || '-') + '] 기준단가를 찾지 못했습니다.');
 
   const months = normalizedContractMonthsP280 || 12;
@@ -2716,7 +2729,7 @@ function calculateQuoteDiscount(payload) {
   };
 }
 
-function getContractBasisForGrade_(grade) {
+function getContractBasisForGrade_(grade, contractUnit) {
   grade = String(grade || '').trim();
   if (!grade) return null;
   const ss = getMasterSpreadsheet_();
@@ -2732,16 +2745,17 @@ function getContractBasisForGrade_(grade) {
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
 
   const gradeNorm = normalizeGrade_(grade);
+  const requestedMonth = normalizePortalQuoteBasisMonthKeyP463_(contractUnit);
+  let fallback = null;
   for (const row of values) {
     const rowGrade = cellByHeaderIndex_(row, map, ['등급', '관리등급']);
     if (normalizeGrade_(rowGrade) !== gradeNorm) continue;
-    return {
-      appointmentUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_선임', '선임단가', '관리자선임단가'])),
-      maintenanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_유지', '유지단가', '유지점검단가'])),
-      performanceUnit: parseMoney_(cellByHeaderIndex_(row, map, ['단가_성능', '성능단가', '성능점검단가']))
-    };
+    const basis = makePortalQuoteBasisObjectP463_(row, map, rowGrade);
+    const rowMonth = normalizePortalQuoteBasisMonthKeyP463_(cellByHeaderIndex_(row, map, ['계약단위', '계약개월', '개월', '계약기간']));
+    if (requestedMonth && rowMonth && rowMonth === requestedMonth) return basis;
+    if (!fallback) fallback = basis;
   }
-  return null;
+  return fallback;
 }
 
 function getNewCustomerTemplate() {

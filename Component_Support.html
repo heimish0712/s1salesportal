@@ -51,18 +51,24 @@ function applyPendingSupportCustomerPrefillP461_(reason) {
   const input = document.getElementById('supportInlineCustomerNo');
   const name = document.getElementById('supportInlineCustomerName');
   if (!input || !name) return false;
+  const currentNo = String(input.value || '').trim();
+  const pendingNo = String(info.customerNo || info.customerNumber || '').trim();
+  // P463: 사용자가 다른 고객번호를 직접 입력한 경우에는 강제로 덮지 않습니다.
+  // 단, 고객상세검색에서 넘어온 sticky prefill이 비었거나 같은 고객번호라면 support 재렌더 뒤에도 반드시 복구합니다.
+  if (currentNo && pendingNo && currentNo !== pendingNo && input.getAttribute('data-prefill-sticky-p462') !== 'Y') return false;
   if (typeof fillSupportInlineCustomerInfo_ === 'function') fillSupportInlineCustomerInfo_(info, { pendingPrefill: true, reason: reason || '' });
   else {
-    input.value = info.customerNo || '';
-    name.value = info.customerName || '';
+    input.value = pendingNo || '';
+    name.value = info.customerName || info.company || '';
   }
   input.setAttribute('data-prefill-sticky-p462', 'Y');
   if (name) name.setAttribute('data-prefill-sticky-p462', 'Y');
+  try { sessionStorage.setItem(SUPPORT_PREFILL_STORAGE_KEY_P462, JSON.stringify(Object.assign({}, info, { createdAt: info.createdAt || Date.now(), stickyP462: true }))); } catch (err) {}
   return true;
 }
 
 function scheduleSupportPrefillReapplyP462_(reason) {
-  [0, 80, 250, 700, 1500, 3000].forEach(function(delay) {
+  [0, 80, 250, 700, 1500, 3000, 5000, 8000, 12000].forEach(function(delay) {
     setTimeout(function(){ try { applyPendingSupportCustomerPrefillP461_(reason || ('delay' + delay)); } catch (err) {} }, delay);
   });
 }
@@ -402,13 +408,17 @@ function renderSupportInlineEntryPanel_() {
 function renderSupportInlineEntryRow_() {
   const types = (supportCurrentData && supportCurrentData.requestTypes) || ['수기견적','자료제출','약속잡기','확인하기','기타요청'];
   const requesters = getSupportRequesterOptions_();
+  const pendingPrefillP463 = getPendingSupportCustomerPrefillP461_ && getPendingSupportCustomerPrefillP461_();
+  const prefillNoP463 = pendingPrefillP463 ? String(pendingPrefillP463.customerNo || pendingPrefillP463.customerNumber || '').trim() : '';
+  const prefillNameP463 = pendingPrefillP463 ? String(pendingPrefillP463.customerName || pendingPrefillP463.company || '').trim() : '';
+  const stickyAttrP463 = prefillNoP463 ? ' data-prefill-sticky-p462="Y"' : '';
   const typeOptions = '<option value="">선택</option>' + types.map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
   const requesterOptions = requesters.map(function(v){ return '<option value="' + escAttr(v) + '">' + esc(v) + '</option>'; }).join('');
   return '<tr class="support-inline-entry">' +
     '<td><select id="supportInlineRequestType">' + typeOptions + '</select></td>' +
     '<td><select id="supportInlineRequester">' + requesterOptions + '</select></td>' +
-    '<td><div class="support-inline-customer-cell"><input id="supportInlineCustomerNo" placeholder="고객번호" onkeydown="if(event.key===\'Enter\') applySupportInlineCustomer()"><button type="button" class="secondary" onclick="applySupportInlineCustomer()">적용</button></div></td>' +
-    '<td><input id="supportInlineCustomerName" disabled placeholder="고객번호 적용 시 자동"></td>' +
+    '<td><div class="support-inline-customer-cell"><input id="supportInlineCustomerNo" placeholder="고객번호" value="' + escAttr(prefillNoP463) + '"' + stickyAttrP463 + ' onkeydown="if(event.key===\'Enter\') applySupportInlineCustomer()"><button type="button" class="secondary" onclick="applySupportInlineCustomer()">적용</button></div></td>' +
+    '<td><input id="supportInlineCustomerName" disabled placeholder="고객번호 적용 시 자동" value="' + escAttr(prefillNameP463) + '"' + stickyAttrP463 + '></td>' +
     '<td><textarea id="supportInlineRequestText" placeholder="요청업무 입력"></textarea></td>' +
     '<td><button id="supportInlineSaveBtn" class="support-inline-save" onclick="saveSupportInlineRequest()">저장</button></td>' +
   '</tr>' +

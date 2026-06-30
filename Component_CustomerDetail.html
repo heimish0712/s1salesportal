@@ -1294,7 +1294,8 @@ function saveDetailFields() {
         requireAuditLog: false,
         fastMode: true,
         noSynchronousRefresh: true,
-        thinSave: true
+        thinSave: true,
+        skipIndexQueue: true
       }))
       .then(function(res){
         const detailModalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo);
@@ -1460,11 +1461,18 @@ function normalizeInspectionCountClientP462_(value) {
   const n = Number(m[0]);
   return n >= 0 && n <= 12 ? n : '';
 }
-function getPortalQuoteBasisClientP462_(grade) {
-  const basisMap = portalQuoteBasisMapP462 && portalQuoteBasisMapP462.basis || portalQuoteBasisMapP462 || null;
-  if (!basisMap) return null;
+function getPortalQuoteBasisClientP462_(grade, months) {
+  const rawMap = portalQuoteBasisMapP462 || null;
+  if (!rawMap) return null;
   const key = normalizeGradeClientP462_(grade);
-  return basisMap[key] || basisMap[String(grade || '').trim()] || null;
+  const m = normalizeContractMonthsClientP462_(months);
+  const byGradeMonth = rawMap.byGradeMonth || rawMap.monthlyBasis || null;
+  if (byGradeMonth && key && m !== '') {
+    const mk = key + '|' + String(m);
+    if (byGradeMonth[mk]) return byGradeMonth[mk];
+  }
+  const basisMap = rawMap.basis || rawMap;
+  return (basisMap && (basisMap[key] || basisMap[String(grade || '').trim()])) || null;
 }
 function preloadPortalQuoteBasisP462_() {
   if (portalQuoteBasisMapP462 || portalQuoteBasisLoadingP462) return;
@@ -1496,9 +1504,9 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
   const grade = values.grade || calculateDetailGradeByAreaP451_(area);
   if (!area || !grade) return { ok: false, reason: 'missing' };
   if (normalizeGradeClientP462_(grade) === '특급') return { ok: true, special: true, grade: grade, finalPriceText: '특급 별도 문의', discountRate: values.discountRate || '' };
-  const basis = getPortalQuoteBasisClientP462_(grade);
-  if (!basis) return { ok: false, reason: 'basisMissing', grade: grade };
   const months = normalizeContractMonthsClientP462_(values.contractUnit);
+  const basis = getPortalQuoteBasisClientP462_(grade, months);
+  if (!basis) return { ok: false, reason: 'basisMissing', grade: grade, months: months };
   const maintenanceCount = normalizeInspectionCountClientP462_(values.maintenance);
   const performanceCount = normalizeInspectionCountClientP462_(values.performance);
   const appointmentText = String(values.appointment || '').trim();
@@ -1841,8 +1849,8 @@ function applyContractUnitDefaults_(contractUnit, options) {
   if (unit === '6') {
     setInputValueByKeyIfExists_('appointment', '선임', options);
     setInputValueByKeyIfExists_('maintenance', '1', options);
-    // 6개월은 성능점검 0회/1회가 모두 쓰이므로 미리 선택하지 않습니다.
-    setInputValueByKeyIfExists_('performance', '', options);
+    // P463: 6개월 표준조건은 선임/유지1/성능1 기준으로 즉시 계산합니다.
+    setInputValueByKeyIfExists_('performance', '1', options);
     setInputValueByKeyIfExists_('vat', '별도', options.onlyBlank ? { onlyBlank: true } : options);
   }
 }
@@ -1870,6 +1878,8 @@ function bindContractDefaultHandlers_() {
   unitEl.addEventListener('change', function() {
     applyContractUnitDefaults_(unitEl.value, { onlyBlank: false });
     updatePortalContractEndDateClientP420_({ force: true });
+    try { recalcDetailQuoteRealtimeP462_({ reason: 'contractUnitDefaultsApplied' }); } catch (e) {}
+    setTimeout(function(){ try { recalcDetailQuoteRealtimeP462_({ reason: 'contractUnitDefaultsAppliedAfterDom' }); } catch(e){} }, 0);
     toast('계약단위 기준 표준 조건과 계약종료일을 자동 기입했습니다. 필요 시 직접 수정하세요.');
   });
 }

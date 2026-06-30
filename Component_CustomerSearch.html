@@ -760,6 +760,7 @@ function makeCustomerSavePayloadP202_(rowNo, customerNo, values, options) {
   if (Object.prototype.hasOwnProperty.call(options, 'noSynchronousRefresh')) payload.noSynchronousRefresh = !!options.noSynchronousRefresh;
   if (Object.prototype.hasOwnProperty.call(options, 'thinSave')) payload.thinSave = !!options.thinSave;
   if (Object.prototype.hasOwnProperty.call(options, 'skipMasterMeta')) payload.skipMasterMeta = !!options.skipMasterMeta;
+  if (Object.prototype.hasOwnProperty.call(options, 'skipIndexQueue')) payload.skipIndexQueue = !!options.skipIndexQueue;
   if (options.clientOperationId) payload.clientOperationId = String(options.clientOperationId || '');
   if (options.expectedValues) payload.expectedValues = Object.assign({}, options.expectedValues || {});
   if (options.clientSavedAt) payload.clientSavedAt = String(options.clientSavedAt || '');
@@ -866,6 +867,7 @@ function makeCustomerMemoSavePayloadP220_(rowNo, customerNo, memoValue, options)
   if (options.clientOperationId) payload.clientOperationId = String(options.clientOperationId || '');
   if (Object.prototype.hasOwnProperty.call(options, 'thinSave')) payload.thinSave = !!options.thinSave;
   if (Object.prototype.hasOwnProperty.call(options, 'skipMasterMeta')) payload.skipMasterMeta = !!options.skipMasterMeta;
+  if (Object.prototype.hasOwnProperty.call(options, 'skipIndexQueue')) payload.skipIndexQueue = !!options.skipIndexQueue;
   return payload;
 }
 
@@ -942,13 +944,13 @@ function commitCustomerInlineEdit_(inputId, options) {
   enqueueCustomerSaveP220_(rowNo, customerNo, function() {
     let request;
     if (key === 'memo') {
-      request = runCustomerSaveRequestP220_('saveCustomerMemoFast', makeCustomerMemoSavePayloadP220_(rowNo, customerNo, nextValue, { expectedMemo: originalValue, thinSave: true }));
+      request = runCustomerSaveRequestP220_('saveCustomerMemoFast', makeCustomerMemoSavePayloadP220_(rowNo, customerNo, nextValue, { expectedMemo: originalValue, thinSave: true, skipMasterMeta: true, skipIndexQueue: true }));
     } else {
       const values = {};
       values[key] = nextValue;
       const expected = {};
       expected[key] = originalValue;
-      request = runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, values, { clientSaveSource: 'inlineEdit', requireAuditLog: false, expectedValues: expected, fastMode: true, noSynchronousRefresh: true, thinSave: true }));
+      request = runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, values, { clientSaveSource: 'inlineEdit', requireAuditLog: false, expectedValues: expected, fastMode: true, noSynchronousRefresh: true, thinSave: true, skipMasterMeta: true, skipIndexQueue: true }));
     }
     return request.then(function(res) {
       applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
@@ -2012,7 +2014,9 @@ function saveBusinessRegistrationModalP436_() {
       fastMode: true,
       noSynchronousRefresh: true,
       thinSave: true,
-      clientSavedAt: new Date().toISOString()
+      clientSavedAt: new Date().toISOString(),
+      skipMasterMeta: true,
+      skipIndexQueue: true
     })).then(function(res) {
       applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
       if (res && res.values) applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, res.values);

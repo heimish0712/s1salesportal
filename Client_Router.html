@@ -1,4 +1,6 @@
 <script>
+let portalBootOverlayHideTimerP463_ = null;
+let portalRouteLoadingNonceP463_ = 0;
 window.onload = function() {
   try { setPortalBootLoadingP462_(true, '영업전산 HOME과 고객검색 기본 데이터를 준비하고 있습니다.'); } catch (err) {}
   try { initPortalFontScale_(); } catch (err) { console.warn('글자 크기 설정 시작 실패', err); }
@@ -21,8 +23,9 @@ window.onload = function() {
   setTimeout(function() {
     try { startPortalDataVersionWatcherP201_(); } catch (err) { console.warn('데이터 버전 감시 시작 실패', err); }
   }, 2600);
-  setTimeout(function() { try { finishPortalBootP462_(); } catch (err) {} }, 4200);
-  setTimeout(function() { try { schedulePortalIdlePrewarmP461_(); } catch (err) { console.warn('idle prewarm 실패', err); } }, 20000);
+  setTimeout(function() { try { finishPortalBootP462_(); } catch (err) {} }, 1800);
+  setTimeout(function() { try { setPortalBootLoadingP462_(false); portalBootReadyP462 = true; } catch (err) {} }, 4200);
+  setTimeout(function() { try { schedulePortalIdlePrewarmP461_(); } catch (err) { console.warn('idle prewarm 실패', err); } }, 60000);
   // v31 FIX 유지: 고객 상세 검색 메뉴 진입 시 searchCustomerPage(0)가 실행됩니다.
   // v46: notice 전체 목록은 공지사항 메뉴 진입 시에만 조회합니다.
 };
@@ -39,11 +42,24 @@ function ensurePortalBootOverlayP462_() {
   document.body.appendChild(el);
   return el;
 }
-function setPortalBootLoadingP462_(on, text) {
+function setPortalBootLoadingP462_(on, text, options) {
+  options = options || {};
   const el = ensurePortalBootOverlayP462_();
   const txt = document.getElementById('portalBootOverlayTextP462');
   if (txt && text) txt.textContent = text;
+  if (portalBootOverlayHideTimerP463_) {
+    clearTimeout(portalBootOverlayHideTimerP463_);
+    portalBootOverlayHideTimerP463_ = null;
+  }
   el.style.display = on ? 'flex' : 'none';
+  // P463: 로딩 오버레이가 무한 똥글뱅이로 멈추는 상황을 원천 차단합니다.
+  // 초기 부팅/메뉴 전환/서버 지연 어느 경우든 지정 시간 후에는 반드시 숨깁니다.
+  if (on) {
+    const maxMs = Number(options.maxMs || 3500);
+    portalBootOverlayHideTimerP463_ = setTimeout(function() {
+      try { el.style.display = 'none'; } catch (err) {}
+    }, Math.max(900, maxMs));
+  }
 }
 function finishPortalBootP462_() {
   if (portalBootReadyP462) return;
@@ -56,12 +72,24 @@ function finishPortalBootP462_() {
   if (queued && queued !== 'home') setTimeout(function(){ switchPage(queued, skip); }, 60);
 }
 function deferPortalRouteLoadP462_(label, fn) {
-  const areaText = '화면 데이터를 불러오는 중입니다...';
-  try { setPortalBootLoadingP462_(true, areaText); } catch (e) {}
+  // P463: 메뉴 전환 때 전역 로딩 오버레이를 띄우지 않습니다.
+  // 오버레이가 input focus와 클릭 흐름을 막고, 비동기 화면에서 무한 spinner처럼 보이는 문제가 있었습니다.
+  const nonce = ++portalRouteLoadingNonceP463_;
+  try { markPortalRouteLoadingP463_(label, true); } catch (e) {}
   setTimeout(function() {
     try { fn(); }
-    finally { setTimeout(function(){ try { setPortalBootLoadingP462_(false); } catch(e){} }, 200); }
-  }, 40);
+    finally {
+      setTimeout(function(){
+        try { if (nonce === portalRouteLoadingNonceP463_) markPortalRouteLoadingP463_(label, false); } catch(e){}
+      }, 80);
+    }
+  }, 16);
+}
+function markPortalRouteLoadingP463_(label, on) {
+  const area = document.getElementById('portalRouteInlineLoadingP463');
+  if (!area) return;
+  area.style.display = on ? 'inline-flex' : 'none';
+  area.textContent = on ? '화면 준비 중...' : '';
 }
 
 function schedulePortalIdlePrewarmP461_() {
@@ -198,10 +226,11 @@ function switchPage(page, skipSearch) {
   if (page === 'dashboard') page = 'home';
   if (page !== 'home') window.__portalUserNavigatedP462 = true;
   if (!portalBootReadyP462 && page !== 'home' && page !== 'settings' && page !== 'systemHealth') {
-    portalBootQueuedPageP462 = page;
-    portalBootQueuedSkipSearchP462 = !!skipSearch;
-    setPortalBootLoadingP462_(true, '초기 로딩 중입니다. 준비가 끝나면 선택한 메뉴로 이동합니다.');
-    return;
+    // P463: 초기 부팅 중에도 메뉴 진입을 막지 않습니다.
+    // 이전 P462 방식은 메뉴를 큐에 넣고 전역 spinner를 띄워 랜덤 무한 로딩처럼 보였습니다.
+    portalBootQueuedPageP462 = '';
+    portalBootQueuedSkipSearchP462 = false;
+    try { setPortalBootLoadingP462_(false); } catch (e) {}
   }
   if (typeof warnIfCustomerDetailSavePendingP430_ === 'function' && !warnIfCustomerDetailSavePendingP430_('switchPage')) return;
   if (typeof confirmLeaveTodayPageP350_ === 'function' && !confirmLeaveTodayPageP350_(page)) return;

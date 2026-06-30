@@ -337,7 +337,7 @@ function carryOverPortalTodayOpenTasksP360_(selectedDate, access) {
   const now = new Date();
   sheet.getRangeList(rowsToMove.map(function(r) { return 'B' + r; })).setValue(todayStr);
   sheet.getRangeList(rowsToMove.map(function(r) { return 'G' + r; })).setValue(now);
-  SpreadsheetApp.flush();
+  if (!payload.noFlush) SpreadsheetApp.flush();
   return { moved: rowsToMove.length, deleted: 0 };
 }
 
@@ -347,14 +347,16 @@ function savePortalTodosForDate(payload) {
     return savePortalTodosForDateCoreP360_(payload || {});
   });
 
-  try {
-    appendPortalActivityLog_({
-      actionType: '오늘할일',
-      screen: '오늘 할 일',
-      summary: '오늘 할 일 저장: ' + writeMeta.selectedDate + ' / 저장 ' + writeMeta.upsertedCount + '건 / 삭제 ' + writeMeta.deletedCount + '건',
-      detail: writeMeta
-    });
-  } catch (err) {}
+  if (!payload.skipActivityLog && !payload.fastMode) {
+    try {
+      appendPortalActivityLog_({
+        actionType: '오늘할일',
+        screen: '오늘 할 일',
+        summary: '오늘 할 일 저장: ' + writeMeta.selectedDate + ' / 저장 ' + writeMeta.upsertedCount + '건 / 삭제 ' + writeMeta.deletedCount + '건',
+        detail: writeMeta
+      });
+    } catch (err) {}
+  }
 
   // STEP36: 저장 직후 다시 컨택이력/원장 전체를 조회하면 체감 저장 시간이 길어집니다.
   // 방금 저장한 payload를 기준으로 화면에 필요한 응답을 즉시 구성하고, 다음 메뉴 진입/백그라운드 갱신에서 서버 현재값을 맞춥니다.
@@ -422,6 +424,21 @@ function runPortalTodayWriteLockedP360_(label, callback) {
   }
 }
 
+
+function portalTodayRowValuesEquivalentP463_(a, b) {
+  a = Array.isArray(a) ? a : [];
+  b = Array.isArray(b) ? b : [];
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    // updatedAt(G열, index 6)은 저장 시각이라 내용 비교에서 제외합니다.
+    if (i === 6) continue;
+    const av = a[i] instanceof Date ? formatDateTimeText_(a[i]) : String(a[i] == null ? '' : a[i]).trim();
+    const bv = b[i] instanceof Date ? formatDateTimeText_(b[i]) : String(b[i] == null ? '' : b[i]).trim();
+    if (av !== bv) return false;
+  }
+  return true;
+}
+
 function savePortalTodosForDateCoreP360_(payload) {
   payload = payload || {};
   const selectedDate = normalizePortalTodoDate_(payload.date || new Date());
@@ -479,11 +496,15 @@ function savePortalTodosForDateCoreP360_(payload) {
       deleted: ''
     });
     if (prevRowInfo && prevRowInfo.rowNo) {
-      sheet.getRange(prevRowInfo.rowNo, 1, 1, headerLen).setValues([rowValues]);
+      // P463: 기존값과 실질적으로 달라진 행만 씁니다. 이전에는 매 저장마다 모든 할 일을 다시 setValues 해서 느렸습니다.
+      if (!portalTodayRowValuesEquivalentP463_(rowValues, prevRowInfo.values || [])) {
+        sheet.getRange(prevRowInfo.rowNo, 1, 1, headerLen).setValues([rowValues]);
+        upsertedCount++;
+      }
     } else {
       appendRows.push(rowValues);
+      upsertedCount++;
     }
-    upsertedCount++;
   });
 
   const deleteRowNos = duplicateDeleteRows.slice();
@@ -546,7 +567,7 @@ function savePortalTodosForDateCoreP360_(payload) {
     sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAppend.length, headerLen).setValues(rowsToAppend);
   }
 
-  SpreadsheetApp.flush();
+  if (!payload.noFlush) SpreadsheetApp.flush();
   return {
     ok: true,
     selectedDate: selectedDate,
