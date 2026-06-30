@@ -302,18 +302,26 @@ function resolveCustomerTarget_(payloadOrCustomerNo, fallbackRowNo, options) {
   let rowCustomerNo = '';
 
   if (inputCustomerNo) {
-    resolvedRowNo = findMasterRowNoByCustomerNoSafe_(sheet, inputCustomerNo);
-    resolvedBy = 'customerNo';
+    // P461: 저장/메모/상태 변경 시 rowNo+customerNo가 같이 넘어오면 전체 고객번호 열을 스캔하지 않습니다.
+    // 기존 findMasterRowNoByCustomerNoSafe_는 매 저장마다 마스터 고객번호 열 전체를 훑어 6~12초 저장 지연의 주 원인이었습니다.
+    // rowNo가 유효하고 해당 행 고객번호가 요청 고객번호와 맞으면 그 행을 즉시 사용하고, 불일치/rowNo 없음일 때만 안전 스캔으로 fallback합니다.
+    if (hasValidInputRowNo) {
+      rowCustomerNo = getCustomerNoFromMasterRow_(sheet, inputRowNo);
+      if (rowCustomerNo && rowCustomerNo === inputCustomerNo) {
+        resolvedRowNo = inputRowNo;
+        resolvedBy = 'rowNo_verified_customerNo';
+      } else if (rowCustomerNo && rowCustomerNo !== inputCustomerNo) {
+        throw new Error(actionLabel + ' 대상 불일치: 화면 행의 고객번호(' + rowCustomerNo + ')와 요청 고객번호(' + inputCustomerNo + ')가 다릅니다. 새로고침 후 다시 시도하세요.');
+      }
+    }
+
+    if (!resolvedRowNo) {
+      resolvedRowNo = findMasterRowNoByCustomerNoSafe_(sheet, inputCustomerNo);
+      resolvedBy = 'customerNo_scan';
+    }
 
     if (!resolvedRowNo) {
       throw new Error(actionLabel + ' 대상 고객번호를 마스터시트에서 찾지 못했습니다: ' + inputCustomerNo);
-    }
-
-    if (hasValidInputRowNo) {
-      rowCustomerNo = getCustomerNoFromMasterRow_(sheet, inputRowNo);
-      if (rowCustomerNo && rowCustomerNo !== inputCustomerNo) {
-        throw new Error(actionLabel + ' 대상 불일치: 화면 행의 고객번호(' + rowCustomerNo + ')와 요청 고객번호(' + inputCustomerNo + ')가 다릅니다. 새로고침 후 다시 시도하세요.');
-      }
     }
   } else if (hasValidInputRowNo) {
     resolvedRowNo = inputRowNo;

@@ -852,13 +852,17 @@ function runCustomerSaveRequestP220_(methodName, payload) {
   return runOnce();
 }
 
-function makeCustomerMemoSavePayloadP220_(rowNo, customerNo, memoValue) {
-  return {
+function makeCustomerMemoSavePayloadP220_(rowNo, customerNo, memoValue, options) {
+  options = options || {};
+  const payload = {
     rowNo: Number(rowNo) || 0,
     customerNo: normalizeCustomerNoForKey_(customerNo || ''),
     memo: memoValue == null ? '' : String(memoValue),
     baseMasterVersion: getBaseMasterVersionForCustomerSaveP202_(rowNo, customerNo)
   };
+  if (Object.prototype.hasOwnProperty.call(options, 'expectedMemo')) payload.expectedValues = { memo: String(options.expectedMemo == null ? '' : options.expectedMemo) };
+  if (options.clientOperationId) payload.clientOperationId = String(options.clientOperationId || '');
+  return payload;
 }
 
 function applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res) {
@@ -934,11 +938,13 @@ function commitCustomerInlineEdit_(inputId, options) {
   enqueueCustomerSaveP220_(rowNo, customerNo, function() {
     let request;
     if (key === 'memo') {
-      request = runCustomerSaveRequestP220_('saveCustomerMemoFast', makeCustomerMemoSavePayloadP220_(rowNo, customerNo, nextValue));
+      request = runCustomerSaveRequestP220_('saveCustomerMemoFast', makeCustomerMemoSavePayloadP220_(rowNo, customerNo, nextValue, { expectedMemo: originalValue }));
     } else {
       const values = {};
       values[key] = nextValue;
-      request = runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, values, { clientSaveSource: 'inlineEdit', requireAuditLog: false }));
+      const expected = {};
+      expected[key] = originalValue;
+      request = runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, values, { clientSaveSource: 'inlineEdit', requireAuditLog: false, expectedValues: expected, fastMode: true, noSynchronousRefresh: true }));
     }
     return request.then(function(res) {
       applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
@@ -2181,6 +2187,8 @@ function openSupportRequestForCustomerExpand_(rowNo) {
   rowNo = Number(rowNo) || 0;
   if (!rowNo) return;
   const info = buildSupportCustomerInfoFromExpand_(rowNo);
+  // P461: support 페이지가 늦게 렌더/재렌더되어도 고객번호 prefill을 유지합니다.
+  window.__supportPendingCustomerPrefillP461 = Object.assign({}, info || {}, { createdAt: Date.now(), source: 'customerExpand' });
   switchPage('support');
 
   let tries = 0;
@@ -2239,7 +2247,7 @@ function saveExpandedCustomerMemo(rowNo) {
   toast('메모를 화면에 먼저 반영했습니다. 뒤에서 저장 중입니다.');
 
   enqueueCustomerSaveP220_(rowNo, targetCustomerNo, function() {
-    return runCustomerSaveRequestP220_('saveCustomerMemoFast', makeCustomerMemoSavePayloadP220_(rowNo, targetCustomerNo, memoValue))
+    return runCustomerSaveRequestP220_('saveCustomerMemoFast', makeCustomerMemoSavePayloadP220_(rowNo, targetCustomerNo, memoValue, { expectedMemo: prevMemo }))
       .then(function(res) {
         if (btn) { btn.disabled = false; btn.textContent = '저장'; }
         applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res);

@@ -14,6 +14,7 @@ let todayDeletedTasksP360_ = [];
 let todayCustomerLinkTargetRowP123_ = null;
 let todayCustomerLinkCandidatesP123_ = [];
 let todaySummaryTimerP370_ = null;
+let todaySavePendingAfterCurrentP461_ = false;
 const TODAY_DEFAULT_TAGS_P123_ = ['전화','메일','견적','컨택','계약','서류','영업지원','재확인','긴급','내부처리'];
 
 function isTodaySectionActiveV57_() {
@@ -620,20 +621,40 @@ function collectTodayTaskFromRowP120_(row) {
 
 function saveTodayTodos(options) {
   options = options || {};
-  if (todaySaveInProgressP350_) return;
+  if (todaySaveInProgressP350_) {
+    // P461: 저장 중 추가/수정한 할 일이 서버 응답 렌더에 씹히지 않도록 다음 저장을 예약합니다.
+    todaySavePendingAfterCurrentP461_ = true;
+    todayHasLocalDraftP120_ = true;
+    if (!options.silent) toast('현재 저장이 끝난 뒤 한 번 더 저장합니다. 입력은 계속하셔도 됩니다.');
+    return;
+  }
   const tasks = collectTodayTodos_({ includeEmpty: false }).map(normalizeTodayTaskP117_);
   const baseTasks = (todayLastLoadedBaseTasksP360_ || []).map(function(t) { return Object.assign({}, normalizeTodayTaskP117_(t)); });
   const baseTaskIds = baseTasks.map(function(t) { return t.id; }).filter(Boolean);
+  const deletedSnapshotP461 = (todayDeletedTasksP360_ || []).slice();
   const saveSeq = ++todaySaveSeqP120_;
   todaySaveInProgressP350_ = true;
+  todaySavePendingAfterCurrentP461_ = false;
+  // 여기부터 발생한 수정만 새 draft로 봅니다.
+  todayHasLocalDraftP120_ = false;
   setTodaySavingUiP360_(true);
-  if (!options.silent) toast('오늘 할 일을 저장 중입니다.');
+  if (!options.silent) toast('오늘 할 일을 저장 중입니다. 입력은 계속할 수 있습니다.');
   google.script.run
     .withSuccessHandler(function(data) {
       if (saveSeq !== todaySaveSeqP120_) return;
       data = normalizeTodayDataP117_(data || { selectedDate: todaySelectedDate, tasks: [] });
       todaySaveInProgressP350_ = false;
       setTodaySavingUiP360_(false);
+
+      if (todayHasLocalDraftP120_ || todaySavePendingAfterCurrentP461_) {
+        // 저장 중 사용자가 새로 입력한 내용이 있으면 서버 응답으로 DOM을 다시 그리지 않습니다.
+        // 현재 화면값을 보존하고 이어서 한 번 더 저장합니다.
+        todaySavePendingAfterCurrentP461_ = false;
+        if (!options.silent) toast('이전 저장 완료 · 새 입력분을 이어서 저장합니다.');
+        setTimeout(function(){ try { saveTodayTodos({ silent: true, reason: 'queued-after-current' }); } catch(e) {} }, 250);
+        return;
+      }
+
       todayHasLocalDraftP120_ = false;
       todayDeletedTasksP360_ = [];
       todayPreloadMemoryP360_ = {};
@@ -644,8 +665,6 @@ function saveTodayTodos(options) {
       todayCacheByDateV57[key] = data;
       todayLastLoadAtByDateV57[key] = Date.now();
       renderTodayDataV57_(data, { forceRender: true });
-      // STEP36: 저장 응답은 빠른 화면 반영용입니다. 실제 원장/컨택예정 합성값은
-      // 화면을 막지 않고 뒤에서 한 번 더 맞춥니다.
       setTimeout(function() {
         try { if (!todayHasLocalDraftP120_) refreshTodayPageInBackgroundP360_(data.selectedDate || todaySelectedDate); } catch (err) {}
       }, 1200);
@@ -656,7 +675,8 @@ function saveTodayTodos(options) {
       todaySaveInProgressP350_ = false;
       setTodaySavingUiP360_(false);
       todayHasLocalDraftP120_ = true;
-      alert('오늘 할 일 저장 실패: ' + getErrorMessage_(err));
+      todayDeletedTasksP360_ = deletedSnapshotP461.concat(todayDeletedTasksP360_ || []);
+      toast('오늘 할 일 저장 실패. 입력 내용은 유지됩니다: ' + getErrorMessage_(err));
     })
     .savePortalTodosForDate({
       date: todaySelectedDate,
@@ -664,18 +684,31 @@ function saveTodayTodos(options) {
       todos: tasks,
       baseTaskIds: baseTaskIds,
       baseTasks: baseTasks,
-      deletedTasks: todayDeletedTasksP360_,
+      deletedTasks: deletedSnapshotP461,
       hiddenTags: todayHiddenTagsP123_,
       assigneeFilter: getTodayAssigneeFilterP350_()
     });
 }
 
 function setTodaySavingUiP360_(saving) {
-  const btns = Array.from(document.querySelectorAll('#todaySection button, #todaySection input, #todaySection select'));
-  btns.forEach(function(el) {
-    if (el.classList && (el.classList.contains('todayTodoText') || el.classList.contains('todayTodoDetail'))) return;
-    if (el.id === 'todayAssigneeFilterP350') el.disabled = !!saving;
+  // P461: 저장 중에도 할 일 추가/입력/체크를 막지 않습니다. 저장 버튼과 담당자 조건만 상태 표시합니다.
+  const saveBtns = Array.from(document.querySelectorAll('#todaySection button')).filter(function(btn) {
+    const text = String(btn.textContent || '');
+    const oc = String(btn.getAttribute('onclick') || '');
+    return oc.indexOf('saveTodayTodos') >= 0 || text.trim() === '저장';
   });
+  saveBtns.forEach(function(btn) {
+    btn.disabled = !!saving;
+    if (saving) {
+      if (!btn.getAttribute('data-original-text')) btn.setAttribute('data-original-text', btn.textContent || '저장');
+      btn.textContent = '저장 중';
+    } else if (btn.getAttribute('data-original-text')) {
+      btn.textContent = btn.getAttribute('data-original-text');
+      btn.removeAttribute('data-original-text');
+    }
+  });
+  const assignee = document.getElementById('todayAssigneeFilterP350');
+  if (assignee) assignee.disabled = !!saving;
 }
 
 function refreshTodayVisibleRowsP120_() {

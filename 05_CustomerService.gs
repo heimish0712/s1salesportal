@@ -1280,7 +1280,7 @@ function getPortalDetailDefByKeyP458_(key) {
 function isPortalExpectedValuesStillFreshP458_(sheet, rowNo, payload) {
   payload = payload || {};
   const expected = payload.expectedValues || {};
-  const values = payload.values || {};
+  const values = payload.values || (Object.prototype.hasOwnProperty.call(payload, 'memo') ? { memo: payload.memo } : {});
   const keys = Object.keys(values).filter(function(k) { return Object.prototype.hasOwnProperty.call(expected, k); });
   if (!keys.length) return false;
   const headerMap = getHeaderMap_(sheet);
@@ -1621,7 +1621,9 @@ function getPortalCustomerAllDetailDefsP436_() {
 
 function runPortalCustomerWriteLockedP202_(label, callback) {
   const startedP460 = new Date().getTime();
-  const lockOptionsP460 = { attempts: 4, waitMs: 700, sleepBaseMs: 180 };
+  // P461: 고객 저장은 실패를 빨리 감지하고 클라이언트 큐/재시도에 맡깁니다.
+  // 서버에서 4~5초씩 lock을 기다리면 한 번의 busy가 전체 UX를 30초 이상 끌고 갑니다.
+  const lockOptionsP460 = { attempts: 1, waitMs: 250, sleepBaseMs: 80 };
   const finishP460 = function(res, error) {
     const elapsed = new Date().getTime() - startedP460;
     if (res && typeof res === 'object') {
@@ -1632,17 +1634,9 @@ function runPortalCustomerWriteLockedP202_(label, callback) {
         lockAttempts: Number(lockOptionsP460.__lockAttemptsP459 || lockOptionsP460.__lockAttemptsP460 || 0) || 0
       };
     }
-    try {
-      if (typeof appendPortalServerPerfLogP460_ === 'function' && (elapsed >= 1500 || error)) {
-        appendPortalServerPerfLogP460_({
-          event: 'server.' + String(label || 'write'),
-          durationMs: elapsed,
-          status: error ? 'error' : 'ok',
-          error: error ? (error && error.message ? error.message : String(error)) : '',
-          detail: res && res.timingP460 ? res.timingP460 : { label: String(label || '') }
-        });
-      }
-    } catch (logErr) {}
+    // P461: 저장 함수 안에서 성능로그_DB에 직접 append하지 않습니다.
+    // P460에서는 모든 느린 저장이 서버 로그 시트 append까지 기다려 체감 저장 시간이 더 늘었습니다.
+    // 서버는 timingP460만 응답에 실어 보내고, 시트 기록은 클라이언트 배치 flush가 담당합니다.
     return res;
   };
   try {
@@ -1662,13 +1656,7 @@ function runPortalCustomerWriteLockedP202_(label, callback) {
         lockWaitMs: Number(lockOptionsP460.__lockWaitMsP459 || lockOptionsP460.__lockWaitMsP460 || 0) || 0,
         lockAttempts: Number(lockOptionsP460.__lockAttemptsP459 || lockOptionsP460.__lockAttemptsP460 || 0) || 0
       };
-      if (typeof appendPortalServerPerfLogP460_ === 'function') appendPortalServerPerfLogP460_({
-        event: 'server.' + String(label || 'write'),
-        durationMs: elapsed,
-        status: 'error',
-        error: err && err.message ? err.message : String(err),
-        detail: err.timingP460
-      });
+      // P461: 오류도 우선 응답으로 돌려보냅니다. 오류 로그는 클라이언트 perf buffer가 시트에 배치 저장합니다.
     } catch (logErr) {}
     throw err;
   }
@@ -2349,26 +2337,32 @@ function isPortalContractSaveTouchedP112_(values) {
 function preparePortalContractValuesForSaveP112_(values, options) {
   options = options || {};
   values = normalizePortalContractPayloadFieldsP280_(Object.assign({}, values || {}));
+  const requireFull = !!options.requireFull;
+  const touchedContractP461 = isPortalContractSaveTouchedP112_(values);
+  const touchedContractDateP461 = requireFull || Object.prototype.hasOwnProperty.call(values, 'contractStartDate') || Object.prototype.hasOwnProperty.call(values, 'contractEndDate') || Object.prototype.hasOwnProperty.call(values, 'contractUnit');
+
+  // P461: 상태/메모/주소 같은 일반 필드 저장에서 계약조건 보정을 위해 마스터 row 전체를 읽지 않습니다.
+  // P460 로그상 status 1칸 저장도 6~12초 걸렸는데, 불필요한 readMasterRowObject_가 주요 병목이었습니다.
   let currentForDatesP420 = null;
-  if (options && options.sheet && options.rowNo) {
+  let currentObjP461 = null;
+  if (touchedContractDateP461 && options && options.sheet && options.rowNo) {
     try {
-      const curObjP420 = readMasterRowObject_(options.sheet, Number(options.rowNo));
+      currentObjP461 = readMasterRowObject_(options.sheet, Number(options.rowNo));
       currentForDatesP420 = {
-        contractStartDate: getCustomerMasterHeaderValueK2_(curObjP420, 'contractStartDate'),
-        contractEndDate: getCustomerMasterHeaderValueK2_(curObjP420, 'contractEndDate'),
-        contractUnit: getCustomerMasterHeaderValueK2_(curObjP420, 'contractUnit')
+        contractStartDate: getCustomerMasterHeaderValueK2_(currentObjP461, 'contractStartDate'),
+        contractEndDate: getCustomerMasterHeaderValueK2_(currentObjP461, 'contractEndDate'),
+        contractUnit: getCustomerMasterHeaderValueK2_(currentObjP461, 'contractUnit')
       };
     } catch (err) {}
   }
-  values = normalizePortalContractDatePayloadFieldsP420_(values, { requireFull: !!(options && options.requireFull), current: currentForDatesP420 });
-  const requireFull = !!options.requireFull;
-  const shouldValidate = requireFull || isPortalContractSaveTouchedP112_(values);
+  values = normalizePortalContractDatePayloadFieldsP420_(values, { requireFull: requireFull, current: currentForDatesP420 });
+  const shouldValidate = requireFull || touchedContractP461;
   if (!shouldValidate) return values;
 
   const effective = {};
   if (options.sheet && options.rowNo) {
     try {
-      const obj = readMasterRowObject_(options.sheet, Number(options.rowNo));
+      const obj = currentObjP461 || readMasterRowObject_(options.sheet, Number(options.rowNo));
       PORTAL_CONTRACT_REQUIRED_KEYS_P112.concat(['discountRate']).forEach(function(key) {
         effective[key] = getCustomerMasterHeaderValueK2_(obj, key);
       });

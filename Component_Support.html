@@ -17,6 +17,27 @@ function isSupportSectionActiveV57_() {
   const section = document.getElementById('supportSection');
   return !!(section && section.classList && section.classList.contains('active'));
 }
+function getPendingSupportCustomerPrefillP461_() {
+  const info = window.__supportPendingCustomerPrefillP461;
+  if (!info || (!info.customerNo && !info.rowNo)) return null;
+  if (info.createdAt && Date.now() - Number(info.createdAt) > 120000) return null;
+  return info;
+}
+
+function applyPendingSupportCustomerPrefillP461_(reason) {
+  const info = getPendingSupportCustomerPrefillP461_();
+  if (!info) return false;
+  const input = document.getElementById('supportInlineCustomerNo');
+  const name = document.getElementById('supportInlineCustomerName');
+  if (!input || !name) return false;
+  if (typeof fillSupportInlineCustomerInfo_ === 'function') fillSupportInlineCustomerInfo_(info, { pendingPrefill: true, reason: reason || '' });
+  else {
+    input.value = info.customerNo || '';
+    name.value = info.customerName || '';
+  }
+  return true;
+}
+
 
 function renderSupportDataV57_(data) {
   data = data || { rows: [], requestTypes: [], statusOptions: [], currentUser: '' };
@@ -344,6 +365,8 @@ function renderSupportInlineEntryPanel_() {
     '</tr></thead><tbody>' + renderSupportInlineEntryRow_() + '</tbody></table>';
   area.innerHTML = html;
   initSupportInlineEntryDefaults_();
+  // P461: 고객상세검색 → 영업지원요청 이동 직후 support 데이터 보강이 inline 폼을 다시 그려도 고객번호를 즉시 재적용합니다.
+  try { applyPendingSupportCustomerPrefillP461_('renderInlinePanel'); } catch (err) {}
 }
 
 function renderSupportInlineEntryRow_() {
@@ -410,6 +433,7 @@ function resetSupportInlineEntry() {
   if (summary) { summary.textContent = '고객번호 입력 후 적용을 누르면 계약조건과 고객 정보가 자동으로 표시됩니다.'; summary.className = 'support-inline-placeholder'; }
   renderSupportInlineCustomerHistoryP19_(null);
   window.__supportInlineCustomer = null;
+  window.__supportPendingCustomerPrefillP461 = null;
 }
 
 function applySupportInlineCustomer() {

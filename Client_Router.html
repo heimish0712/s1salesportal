@@ -12,36 +12,43 @@ window.onload = function() {
   // HOME 최초 표시를 막지 않도록 시간차를 두고 시작합니다.
   // STEP36: HOME은 즉시 띄우고, 실제 업무 화면 데이터는 뒤에서 순차 예열합니다.
   // 사용자가 메뉴를 눌렀을 때 다시 로딩 화면을 보지 않게 하기 위한 캐시 워밍입니다.
-  setTimeout(function() {
-    try { loadCustomerFavoriteMap_({ silent: true }); } catch (err) { console.warn('고객 즐겨찾기 프리로드 실패', err); }
-  }, 450);
-  setTimeout(function() {
-    try { preloadSupportPageV57_({ silent: true }); } catch (err) { console.warn('영업지원 요청 프리로드 실패', err); }
-  }, 650);
-  setTimeout(function() {
-    try { if (typeof preloadTodayPageV57_ === 'function') preloadTodayPageV57_({ silent: true, reason: 'home-prewarm' }); } catch (err) { console.warn('오늘 할 일 프리로드 실패', err); }
-  }, 900);
+  // P461: 초기 3~5초 구간에 여러 메뉴 데이터를 동시에 예열하면 GAS 호출과 브라우저 렌더가 겹쳐 첫 로딩이 심하게 버벅입니다.
+  // HOME/검색인덱스만 먼저 준비하고, 무거운 업무 화면은 사용자가 입력하지 않는 idle 구간에 순차 예열합니다.
   setTimeout(function() {
     try { if (typeof prewarmCustomerSearchDefaultP360_ === 'function') prewarmCustomerSearchDefaultP360_({ silent: true }); } catch (err) { console.warn('고객검색 기본 데이터 예열 실패', err); }
-  }, 1250);
-  setTimeout(function() {
-    try { if (typeof preloadContractCompletePageP360_ === 'function') preloadContractCompletePageP360_({ silent: true }); } catch (err) { console.warn('계약종합관리 프리로드 실패', err); }
-  }, 2300);
+  }, 900);
   setTimeout(function() {
     try { startPortalDataVersionWatcherP201_(); } catch (err) { console.warn('데이터 버전 감시 시작 실패', err); }
   }, 2600);
-  setTimeout(function() {
-    try {
-      if (typeof preloadFocusCustomerDefaultP330_ === 'function') {
-        preloadFocusCustomerDefaultP330_({ silent: true, reason: 'home-idle-prewarm' });
-      }
-    } catch (err) {
-      console.warn('중점고객관리 프리로드 실패', err);
-    }
-  }, 3600);
+  setTimeout(function() { try { schedulePortalIdlePrewarmP461_(); } catch (err) { console.warn('idle prewarm 실패', err); } }, 6000);
   // v31 FIX 유지: 고객 상세 검색 메뉴 진입 시 searchCustomerPage(0)가 실행됩니다.
   // v46: notice 전체 목록은 공지사항 메뉴 진입 시에만 조회합니다.
 };
+
+function schedulePortalIdlePrewarmP461_() {
+  const jobs = [
+    function(){ try { loadCustomerFavoriteMap_({ silent: true }); } catch (err) { console.warn('고객 즐겨찾기 프리로드 실패', err); } },
+    function(){ try { preloadSupportPageV57_({ silent: true }); } catch (err) { console.warn('영업지원 요청 프리로드 실패', err); } },
+    function(){ try { if (typeof preloadTodayPageV57_ === 'function') preloadTodayPageV57_({ silent: true, reason: 'home-idle-prewarm' }); } catch (err) { console.warn('오늘 할 일 프리로드 실패', err); } },
+    function(){ try { if (typeof preloadContractCompletePageP360_ === 'function') preloadContractCompletePageP360_({ silent: true }); } catch (err) { console.warn('계약종합관리 프리로드 실패', err); } },
+    function(){ try { if (typeof preloadFocusCustomerDefaultP330_ === 'function') preloadFocusCustomerDefaultP330_({ silent: true, reason: 'home-idle-prewarm' }); } catch (err) { console.warn('중점고객관리 프리로드 실패', err); } }
+  ];
+  let i = 0;
+  const runNext = function() {
+    if (i >= jobs.length) return;
+    // 사용자가 입력/저장 중이면 예열을 뒤로 미룹니다.
+    if (document.body && document.body.classList && document.body.classList.contains('portal-user-editing')) {
+      setTimeout(runNext, 2500);
+      return;
+    }
+    const job = jobs[i++];
+    const exec = function(){ try { job(); } finally { setTimeout(runNext, 3200); } };
+    if (window.requestIdleCallback) requestIdleCallback(exec, { timeout: 2500 });
+    else setTimeout(exec, 400);
+  };
+  runNext();
+}
+
 const keywordInput = document.getElementById('keyword');
 if (keywordInput) keywordInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') search(); });
 

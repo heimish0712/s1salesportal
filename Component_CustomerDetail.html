@@ -222,9 +222,26 @@ function bindPortalAreaGradeAutoUpdateP451_() {
   areaEl.addEventListener('change', applyDetailAreaGradeAutoUpdateP451_);
 }
 
+function buildDetailBaselineFallbackP461_() {
+  const base = {};
+  const source = (detailSessionP457 && detailSessionP457.serverSnapshot) || currentDetail || {};
+  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
+    const key = el.getAttribute('data-key');
+    if (!key) return;
+    let value = '';
+    if (Object.prototype.hasOwnProperty.call(source, key)) value = source[key];
+    else if (source.basic && Object.prototype.hasOwnProperty.call(source.basic, key)) value = source.basic[key];
+    else if (source.contract && Object.prototype.hasOwnProperty.call(source.contract, key)) value = source.contract[key];
+    base[key] = value == null ? '' : String(value);
+  });
+  return base;
+}
+
 function getDirtyDetailInputValues_() {
   const currentValues = collectCurrentDetailInputValues_();
-  const baseline = detailEditBaselineValues || {};
+  // P461: baseline이 비어 있으면 모든 input을 dirty로 보는 사고가 납니다.
+  // 로그상 detailModal 저장이 전체 필드 20개 이상을 보내 stale 충돌을 만들었으므로, baseline fallback을 반드시 둡니다.
+  const baseline = detailEditBaselineValues || buildDetailBaselineFallbackP461_();
   const dirty = {};
   Object.keys(currentValues).forEach(function(key) {
     const cur = normalizeDetailSaveCompareValue_(currentValues[key]);
@@ -1844,6 +1861,8 @@ function buildSupportCustomerInfoFromCurrentDetailP19_() {
 function goToSupportForCurrentDetailP19_() {
   const info = buildSupportCustomerInfoFromCurrentDetailP19_();
   if (!info.rowNo && !info.customerNo) return toast('고객 정보를 찾지 못했습니다.');
+  // P461: 영업지원 화면 로딩/보강 렌더가 뒤늦게 inline 입력폼을 다시 그리더라도 고객번호가 사라지지 않게 pending prefill로 보존합니다.
+  window.__supportPendingCustomerPrefillP461 = Object.assign({}, info || {}, { createdAt: Date.now(), source: 'customerDetail' });
   closeModal();
   switchPage('support');
   let tries = 0;

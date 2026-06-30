@@ -13,9 +13,12 @@ function withPortalScriptLockP201_(label, callback, options) {
   const waitMs = Math.max(100, Number(options.waitMs) || 700);
   const sleepBaseMs = Math.max(100, Number(options.sleepBaseMs) || 180);
   const lock = LockService.getScriptLock();
+  const lockStartedP461 = new Date().getTime();
   let locked = false;
   let lastErr = null;
+  let attemptUsedP461 = 0;
   for (let i = 0; i < attempts; i++) {
+    attemptUsedP461 = i + 1;
     try {
       locked = lock.tryLock(waitMs);
       if (locked) break;
@@ -24,6 +27,10 @@ function withPortalScriptLockP201_(label, callback, options) {
     }
     Utilities.sleep(sleepBaseMs * (i + 1));
   }
+  try {
+    options.__lockWaitMsP460 = new Date().getTime() - lockStartedP461;
+    options.__lockAttemptsP460 = attemptUsedP461;
+  } catch (e) {}
   if (!locked) {
     const err = new Error('다른 작업 처리 중입니다. 잠시 후 자동으로 다시 시도해 주세요.');
     err.code = 'PORTAL_LOCK_BUSY';
