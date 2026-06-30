@@ -526,6 +526,7 @@ function addDetailPendingOperationP457_(op) {
     Object.keys(op.patch || {}).forEach(function(k) { session.dirtyFields[k] = true; });
     session.syncStatus = 'local';
   }
+  try { if (typeof persistDetailDurableOperationP458_ === 'function') persistDetailDurableOperationP458_(op); } catch (err) {}
 }
 
 function updateGlobalPendingOperationP457_(op) {
@@ -546,6 +547,7 @@ function markDetailOperationQueuedP457_(op) {
   op.status = 'SERVER_QUEUED';
   op.queuedAt = Date.now();
   updateGlobalPendingOperationP457_(op);
+  try { if (typeof persistDetailDurableOperationP458_ === 'function') persistDetailDurableOperationP458_(op); } catch (err) {}
   if (detailSessionP457) detailSessionP457.syncStatus = 'queued';
 }
 
@@ -553,6 +555,7 @@ function markDetailOperationApplyingP457_(op) {
   if (!op) return;
   op.status = 'APPLYING';
   updateGlobalPendingOperationP457_(op);
+  try { if (typeof persistDetailDurableOperationP458_ === 'function') persistDetailDurableOperationP458_(op); } catch (err) {}
   if (detailSessionP457) detailSessionP457.syncStatus = 'applying';
 }
 
@@ -565,6 +568,7 @@ function markDetailOperationAppliedP457_(op, confirmedValues, result) {
   if (key && customerDetailPendingOpMapP457) {
     customerDetailPendingOpMapP457[key] = (customerDetailPendingOpMapP457[key] || []).filter(function(item) { return item && item.opId !== op.opId; });
   }
+  try { if (typeof removeDetailDurableOperationP458_ === 'function') removeDetailDurableOperationP458_(op.opId); } catch (err) {}
   if (detailSessionP457 && detailSessionP457.key === key) {
     detailSessionP457.serverSnapshot = applyDetailValuesToDetailObject_(cloneDetailP457_(detailSessionP457.serverSnapshot || currentDetail || {}), confirmedValues);
     if (result) {
@@ -592,7 +596,13 @@ function markDetailOperationFailedP457_(op, err, conflict) {
   if (!op) return;
   op.status = conflict ? 'CONFLICT' : 'FAILED';
   op.lastError = getErrorMessage_(err);
+  if (!conflict) {
+    op.attemptCount = Number(op.attemptCount || 0) + 1;
+    op.nextRetryAt = Date.now() + (typeof getRetryDelayForDetailDurableOpP458_ === 'function' ? getRetryDelayForDetailDurableOpP458_(op.attemptCount) : 30000);
+  }
   updateGlobalPendingOperationP457_(op);
+  try { if (typeof persistDetailDurableOperationP458_ === 'function') persistDetailDurableOperationP458_(op); } catch (err2) {}
+  try { if (!conflict && typeof scheduleDetailDurableFlushP458_ === 'function') scheduleDetailDurableFlushP458_(op.nextRetryAt - Date.now()); } catch (err3) {}
   if (detailSessionP457 && detailSessionP457.key === getDetailSessionKeyP457_(op.rowNo, op.customerNo)) {
     detailSessionP457.syncStatus = conflict ? 'conflict' : 'retrying';
     // 실패해도 사용자가 입력한 draft는 절대 지우지 않습니다.
@@ -632,6 +642,179 @@ function getDetailValueByKeyP457_(detail, key) {
   }
   return '';
 }
+
+
+// P458: 가벼운 내구 저장 큐 -------------------------------------------------
+// 목적: 사용자가 저장 버튼을 누른 operation을 브라우저 localStorage에 남겨,
+// 일시 오류/새로고침이 있어도 재시도할 수 있게 합니다. 입력 DOM은 절대 건드리지 않습니다.
+function getDetailDurableOpsP458_() {
+  try {
+    const raw = localStorage.getItem(DETAIL_DURABLE_OPS_STORAGE_KEY_P458);
+    const arr = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(arr)) return [];
+    const now = Date.now();
+    return arr.filter(function(op) {
+      if (!op || !op.opId) return false;
+      if (op.status === 'APPLIED') return false;
+      if (now - Number(op.createdAt || now) > DETAIL_DURABLE_OP_MAX_AGE_MS_P458) return false;
+      return true;
+    });
+  } catch (err) {
+    return [];
+  }
+}
+
+function setDetailDurableOpsP458_(ops) {
+  try {
+    const now = Date.now();
+    const safe = (ops || []).filter(function(op) {
+      return op && op.opId && op.status !== 'APPLIED' && (now - Number(op.createdAt || now) <= DETAIL_DURABLE_OP_MAX_AGE_MS_P458);
+    });
+    localStorage.setItem(DETAIL_DURABLE_OPS_STORAGE_KEY_P458, JSON.stringify(safe));
+  } catch (err) {}
+}
+
+function compactDetailOperationForStorageP458_(op) {
+  op = op || {};
+  return {
+    opId: String(op.opId || ''),
+    seq: Number(op.seq || 0) || 0,
+    rowNo: Number(op.rowNo || 0) || 0,
+    customerNo: normalizeCustomerNoForKey_(op.customerNo || ''),
+    patch: Object.assign({}, op.patch || {}),
+    baseValues: Object.assign({}, op.baseValues || {}),
+    status: String(op.status || 'LOCAL_PENDING'),
+    createdAt: Number(op.createdAt || Date.now()) || Date.now(),
+    queuedAt: Number(op.queuedAt || 0) || 0,
+    appliedAt: Number(op.appliedAt || 0) || 0,
+    attemptCount: Number(op.attemptCount || 0) || 0,
+    nextRetryAt: Number(op.nextRetryAt || 0) || 0,
+    lastError: String(op.lastError || '')
+  };
+}
+
+function persistDetailDurableOperationP458_(op) {
+  if (!op || !op.opId) return;
+  const compact = compactDetailOperationForStorageP458_(op);
+  const ops = getDetailDurableOpsP458_();
+  let found = false;
+  for (let i = 0; i < ops.length; i++) {
+    if (ops[i] && ops[i].opId === compact.opId) {
+      ops[i] = compact;
+      found = true;
+      break;
+    }
+  }
+  if (!found) ops.push(compact);
+  setDetailDurableOpsP458_(ops);
+}
+
+function removeDetailDurableOperationP458_(opId) {
+  opId = String(opId || '');
+  if (!opId) return;
+  setDetailDurableOpsP458_(getDetailDurableOpsP458_().filter(function(op) { return op && op.opId !== opId; }));
+}
+
+function scheduleDetailDurableFlushP458_(delayMs) {
+  try { if (detailDurableFlushTimerP458) clearTimeout(detailDurableFlushTimerP458); } catch (err) {}
+  detailDurableFlushTimerP458 = setTimeout(function() {
+    flushDetailDurableSaveQueueP458_('timer');
+  }, Math.max(500, Number(delayMs || 0) || 0));
+}
+
+function shouldRetryDetailDurableOpP458_(op, now) {
+  if (!op || !op.opId) return false;
+  if (op.status === 'APPLIED' || op.status === 'CONFLICT') return false;
+  if (!op.patch || !Object.keys(op.patch).length) return false;
+  if (op.status === 'APPLYING' || op.status === 'SERVER_QUEUED' || op.status === 'RETRYING') {
+    const lastActive = Number(op.queuedAt || op.createdAt || now) || now;
+    if (now - lastActive < DETAIL_DURABLE_OP_APPLYING_RETRY_MS_P458) return false;
+  }
+  if (Number(op.nextRetryAt || 0) && now < Number(op.nextRetryAt || 0)) return false;
+  return true;
+}
+
+function getRetryDelayForDetailDurableOpP458_(attemptCount) {
+  const base = DETAIL_DURABLE_RETRY_BASE_MS_P458;
+  const pow = Math.min(5, Math.max(0, Number(attemptCount || 0)));
+  return Math.min(DETAIL_DURABLE_RETRY_MAX_MS_P458, base * Math.pow(2, pow));
+}
+
+function attachRecoveredOperationToSessionP458_(op) {
+  if (!op || !op.opId) return;
+  const key = getDetailSessionKeyP457_(op.rowNo, op.customerNo);
+  if (key) {
+    if (!customerDetailPendingOpMapP457) customerDetailPendingOpMapP457 = {};
+    const list = prunePendingOpsP457_(customerDetailPendingOpMapP457[key] || []);
+    if (!list.some(function(item) { return item && item.opId === op.opId; })) list.push(op);
+    customerDetailPendingOpMapP457[key] = list;
+  }
+  if (detailSessionP457 && detailSessionP457.key === key) {
+    if (!detailSessionP457.pendingOps.some(function(item) { return item && item.opId === op.opId; })) detailSessionP457.pendingOps.push(op);
+    detailSessionP457.syncStatus = 'retrying';
+    try { renderDetailSyncStatusP457_(); } catch (err) {}
+  }
+}
+
+function flushDetailDurableSaveQueueP458_(reason) {
+  if (detailDurableFlushRunningP458) return Promise.resolve({ ok: true, skipped: true, reason: 'already-running' });
+  const allOps = getDetailDurableOpsP458_();
+  const now = Date.now();
+  const due = allOps.filter(function(op) { return shouldRetryDetailDurableOpP458_(op, now); }).slice(0, 3);
+  if (!due.length) return Promise.resolve({ ok: true, processed: 0 });
+
+  detailDurableFlushRunningP458 = true;
+  let chain = Promise.resolve();
+  due.forEach(function(storedOp) {
+    chain = chain.then(function() {
+      const op = compactDetailOperationForStorageP458_(storedOp);
+      op.status = 'RETRYING';
+      op.attemptCount = Number(op.attemptCount || 0) + 1;
+      op.queuedAt = Date.now();
+      persistDetailDurableOperationP458_(op);
+      attachRecoveredOperationToSessionP458_(op);
+      return enqueueCustomerSaveP220_(op.rowNo, op.customerNo, function() {
+        return runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(op.rowNo, op.customerNo, op.patch, {
+          clientSaveSource: 'detailModalRetryP458',
+          clientRequestId: op.opId,
+          clientSavedAt: new Date(op.createdAt || Date.now()).toISOString(),
+          clientOperationId: op.opId,
+          expectedValues: op.baseValues || {},
+          requireAuditLog: false,
+          fastMode: true,
+          noSynchronousRefresh: true
+        }));
+      }, { silentQueued: true }).then(function(res) {
+        try { applyCustomerMasterMetaFromSaveP202_(op.rowNo, op.customerNo, res); } catch(e) {}
+        try { markDetailOperationAppliedP457_(op, (res && (res.changedValues || res.values)) || op.patch, res || {}); } catch(e) {}
+        removeDetailDurableOperationP458_(op.opId);
+      }).catch(function(err) {
+        const conflict = typeof isCustomerStaleSaveErrorP202_ === 'function' && isCustomerStaleSaveErrorP202_(err);
+        op.status = conflict ? 'CONFLICT' : 'FAILED';
+        op.lastError = getErrorMessage_(err);
+        op.nextRetryAt = conflict ? 0 : (Date.now() + getRetryDelayForDetailDurableOpP458_(op.attemptCount));
+        persistDetailDurableOperationP458_(op);
+        try { markDetailOperationFailedP457_(op, err, conflict); } catch(e) {}
+      });
+    });
+  });
+  return chain.finally(function() {
+    detailDurableFlushRunningP458 = false;
+    const remain = getDetailDurableOpsP458_().filter(function(op) { return shouldRetryDetailDurableOpP458_(op, Date.now()); });
+    if (remain.length) scheduleDetailDurableFlushP458_(1500);
+  });
+}
+
+function startDetailDurableQueueP458_() {
+  const ops = getDetailDurableOpsP458_();
+  if (!ops.length) return;
+  ops.forEach(function(op) { attachRecoveredOperationToSessionP458_(op); });
+  scheduleDetailDurableFlushP458_(1200);
+}
+
+setTimeout(function() {
+  try { startDetailDurableQueueP458_(); } catch (err) {}
+}, 1800);
 
 function renderDetailSyncStatusP457_() {
   const footer = document.getElementById('modalActionFooter');
@@ -1083,6 +1266,7 @@ function saveDetailFields() {
         clientRequestId: detailSaveGuardIdP430,
         clientSavedAt: clientSavedAtP430,
         clientOperationId: opP457 && opP457.opId ? opP457.opId : '',
+        expectedValues: baseValuesP457,
         requireAuditLog: false,
         fastMode: true,
         noSynchronousRefresh: true

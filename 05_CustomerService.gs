@@ -1267,12 +1267,99 @@ function makePortalStaleCustomerErrorP202_(currentMeta, baseVersion) {
   return err;
 }
 
+
+function getPortalDetailDefByKeyP458_(key) {
+  key = String(key || '');
+  const defs = (typeof getPortalCustomerAllDetailDefsP436_ === 'function') ? getPortalCustomerAllDetailDefsP436_() : [];
+  for (let i = 0; i < defs.length; i++) {
+    if (defs[i] && defs[i].key === key) return defs[i];
+  }
+  return null;
+}
+
+function isPortalExpectedValuesStillFreshP458_(sheet, rowNo, payload) {
+  payload = payload || {};
+  const expected = payload.expectedValues || {};
+  const values = payload.values || {};
+  const keys = Object.keys(values).filter(function(k) { return Object.prototype.hasOwnProperty.call(expected, k); });
+  if (!keys.length) return false;
+  const headerMap = getHeaderMap_(sheet);
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  const currentDisplayRow = sheet.getRange(rowNo, 1, 1, lastCol).getDisplayValues()[0];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const def = getPortalDetailDefByKeyP458_(key);
+    if (!def) return false;
+    const col = findFirstExistingHeaderCol_(headerMap, def.headers || []);
+    if (!col) return false;
+    const expectedText = getPortalMasterCompareTextP280_(key, expected[key]);
+    const currentText = String(currentDisplayRow[col - 1] || '').trim();
+    if (currentText !== expectedText) return false;
+  }
+  return true;
+}
+
+function getPortalOperationCacheKeyP458_(payload, suffix) {
+  payload = payload || {};
+  const opId = String(payload.clientOperationId || '').trim();
+  if (!opId) return '';
+  const customerNo = String(payload.customerNo || '').trim();
+  const rowNo = String(payload.rowNo || '').trim();
+  return 'P458_OP_' + (suffix || 'RESULT') + '_' + opId + '_' + rowNo + '_' + customerNo;
+}
+
+function getPortalCachedOperationResultP458_(payload) {
+  const key = getPortalOperationCacheKeyP458_(payload, 'RESULT');
+  if (!key) return null;
+  try {
+    const raw = CacheService.getScriptCache().get(key);
+    if (!raw) return null;
+    const res = JSON.parse(raw);
+    if (res && typeof res === 'object') {
+      res.ok = true;
+      res.duplicateOperation = true;
+      return res;
+    }
+  } catch (err) {}
+  return null;
+}
+
+function putPortalCachedOperationResultP458_(payload, result) {
+  const key = getPortalOperationCacheKeyP458_(payload, 'RESULT');
+  if (!key || !result) return;
+  try {
+    const compact = {
+      ok: true,
+      rowNo: result.rowNo || payload.rowNo || '',
+      customerNo: result.customerNo || payload.customerNo || '',
+      changedFields: result.changedFields || [],
+      changedKeys: result.changedKeys || [],
+      values: result.values || {},
+      changedValues: result.changedValues || {},
+      masterVersion: result.masterVersion || '',
+      masterUpdatedAt: result.masterUpdatedAt || '',
+      masterEditor: result.masterEditor || '',
+      savedAt: result.savedAt || new Date().toISOString(),
+      verified: result.verified === true,
+      fastPatch: result.fastPatch !== false,
+      clientOperationId: result.clientOperationId || payload.clientOperationId || '',
+      noSynchronousRefresh: result.noSynchronousRefresh === true,
+      message: result.message || '저장 완료'
+    };
+    CacheService.getScriptCache().put(key, JSON.stringify(compact), 21600);
+  } catch (err) {}
+}
+
 function assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload) {
   const baseVersion = getPortalBaseMasterVersionFromPayloadP202_(payload);
   const currentMeta = getPortalCustomerMasterMetaP202_(sheet, rowNo);
   // 기존 데이터/구버전 클라이언트/수정버전 미기록 행은 우선 허용합니다.
-  // 한 번 저장되면 수정버전이 기록되고 이후부터 충돌 검사가 작동합니다.
+  // P458: rowVersion이 달라도 사용자가 바꾸려는 필드의 expectedValue가 그대로면 저장을 살립니다.
+  // 예: 메모 저장 후 상태값 저장처럼 서로 다른 필드의 연속 수정은 stale로 막지 않습니다.
   if (baseVersion && currentMeta.version && baseVersion !== currentMeta.version) {
+    if (isPortalExpectedValuesStillFreshP458_(sheet, rowNo, payload)) {
+      return currentMeta;
+    }
     throw makePortalStaleCustomerErrorP202_(currentMeta, baseVersion);
   }
   return currentMeta;
@@ -1546,8 +1633,15 @@ function saveCustomerDetail(payload) {
 }
 
 function saveCustomerDetailFast(payload) {
+  payload = payload || {};
+  const cachedP458 = getPortalCachedOperationResultP458_(payload);
+  if (cachedP458) return cachedP458;
   return runPortalCustomerWriteLockedP202_('customer-detail-fast-save', function() {
-    return saveCustomerDetailFastCoreP202_(payload);
+    const cachedInsideLockP458 = getPortalCachedOperationResultP458_(payload);
+    if (cachedInsideLockP458) return cachedInsideLockP458;
+    const res = saveCustomerDetailFastCoreP202_(payload);
+    putPortalCachedOperationResultP458_(payload, res);
+    return res;
   });
 }
 

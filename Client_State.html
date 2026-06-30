@@ -393,6 +393,15 @@ let detailSessionP457 = null;
 let detailOperationSeqP457 = 0;
 let customerDetailPendingOpMapP457 = {};
 const DETAIL_PENDING_OPERATION_TTL_MS_P457 = 5 * 60 * 1000;
+// P458: 서버 응답 지연/새로고침/일시 오류에도 저장 operation을 잃지 않기 위한 가벼운 내구 큐.
+// 실제 입력 DOM은 P457 원칙대로 건드리지 않고, 실패/재시도 상태만 조용히 추적합니다.
+const DETAIL_DURABLE_OPS_STORAGE_KEY_P458 = 's1portal:detailDurableOps:P458:v1';
+const DETAIL_DURABLE_OP_MAX_AGE_MS_P458 = 30 * 60 * 1000;
+const DETAIL_DURABLE_OP_APPLYING_RETRY_MS_P458 = 45 * 1000;
+const DETAIL_DURABLE_RETRY_BASE_MS_P458 = 12 * 1000;
+const DETAIL_DURABLE_RETRY_MAX_MS_P458 = 3 * 60 * 1000;
+let detailDurableFlushTimerP458 = null;
+let detailDurableFlushRunningP458 = false;
 // STEP4/P220: 같은 고객에 대한 상세/목록/확장메모 저장이 동시에 서버로 나가지 않도록
 // 고객번호(rowNo fallback) 단위 저장 큐를 둡니다. 서버 버전 체크와 함께 쓰여 저장 충돌 체감을 줄입니다.
 let customerSaveQueueMapP220 = {};
