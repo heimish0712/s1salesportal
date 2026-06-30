@@ -1,8 +1,95 @@
 <script>
+function beginCustomerDetailModalSessionP456_(mode, rowNo, customerNo) {
+  if (typeof activeCustomerDetailModalTokenP456 === 'undefined') window.activeCustomerDetailModalTokenP456 = 0;
+  const token = ++activeCustomerDetailModalTokenP456;
+  const normalizedCustomerNo = (typeof normalizeCustomerNoForKey_ === 'function') ? normalizeCustomerNoForKey_(customerNo || '') : String(customerNo || '').trim();
+  activeCustomerDetailModalStateP456 = {
+    open: true,
+    token: token,
+    mode: String(mode || ''),
+    rowNo: Number(rowNo) || 0,
+    customerNo: normalizedCustomerNo,
+    startedAt: Date.now()
+  };
+  return token;
+}
+
+function isCustomerDetailModalVisibleP456_() {
+  const backdrop = document.getElementById('modalBackdrop');
+  if (!backdrop) return false;
+  return backdrop.style.display !== 'none' && backdrop.style.display !== '';
+}
+
+function isCustomerDetailResponseStillRelevantP456_(token, rowNo, customerNo, options) {
+  options = options || {};
+  const state = (typeof activeCustomerDetailModalStateP456 !== 'undefined') ? activeCustomerDetailModalStateP456 : null;
+  if (!state || !state.open) return false;
+  if (!isCustomerDetailModalVisibleP456_()) return false;
+  if (token && Number(token) !== Number(state.token || 0)) return false;
+
+  const expectedRowNo = Number(state.rowNo || 0);
+  const actualRowNo = Number(rowNo || 0);
+  if (!options.allowNew && expectedRowNo && actualRowNo && expectedRowNo !== actualRowNo) return false;
+
+  const expectedCustomerNo = (typeof normalizeCustomerNoForKey_ === 'function') ? normalizeCustomerNoForKey_(state.customerNo || '') : String(state.customerNo || '').trim();
+  const actualCustomerNo = (typeof normalizeCustomerNoForKey_ === 'function') ? normalizeCustomerNoForKey_(customerNo || '') : String(customerNo || '').trim();
+  if (!options.allowNew && expectedCustomerNo && actualCustomerNo && expectedCustomerNo !== actualCustomerNo) return false;
+
+  return true;
+}
+
+function renderCustomerDetailIfActiveP456_(detail, renderOptions, token) {
+  if (!detail) return false;
+  const allowNew = !!(detail && detail.isNew);
+  const rowNo = Number(detail && detail.rowNo) || 0;
+  const customerNo = detail && detail.customerNo;
+  if (!isCustomerDetailResponseStillRelevantP456_(token || 0, rowNo, customerNo, { allowNew: allowNew })) return false;
+  if (typeof renderDetail === 'function') renderDetail(detail, renderOptions || {});
+  return true;
+}
+
+function cleanupCustomerDetailModalStateP456_() {
+  try { if (typeof customerDetailModalRequestSeq !== 'undefined') customerDetailModalRequestSeq++; } catch (err) {}
+  try { if (typeof activeCustomerDetailModalTokenP456 !== 'undefined') activeCustomerDetailModalTokenP456++; } catch (err) {}
+  try { activeCustomerDetailModalStateP456 = { open: false, token: activeCustomerDetailModalTokenP456 || 0, mode: '', rowNo: 0, customerNo: '', startedAt: 0 }; } catch (err) {}
+
+  try { currentDetail = null; } catch (err) {}
+  try { currentDetailCustomerNo = ''; } catch (err) {}
+  try { isDetailEditMode = false; } catch (err) {}
+  try { lastCalcResult = null; } catch (err) {}
+  try { discountTargetMode = false; } catch (err) {}
+  try { registrationMode = false; } catch (err) {}
+  try { savedRegistrationMode = false; } catch (err) {}
+  try { registrationApplied = false; } catch (err) {}
+  try { registrationCalcResult = null; } catch (err) {}
+  try { if (typeof clearDetailEditBaseline_ === 'function') clearDetailEditBaseline_(); } catch (err) {}
+
+  try {
+    const body = document.getElementById('modalBody');
+    if (body) body.innerHTML = '';
+  } catch (err) {}
+  try {
+    const footer = document.getElementById('modalActionFooter');
+    if (footer) footer.innerHTML = '<button class="secondary" onclick="closeModal()">닫기</button>';
+  } catch (err) {}
+  try {
+    const title = document.getElementById('modalTitle');
+    if (title) {
+      title.classList.remove('company-title-mode');
+      title.textContent = '고객 상세';
+    }
+  } catch (err) {}
+  try { document.body.classList.remove('portal-user-editing'); } catch (err) {}
+}
+
 function closeModal(options){
   options = options || {};
   if (!options.force && typeof warnIfCustomerDetailSavePendingP430_ === 'function' && !warnIfCustomerDetailSavePendingP430_('closeModal')) return false;
-  modalBackdrop.style.display='none'; modalActionFooter.style.display='none'; registrationMode=false; savedRegistrationMode=false; registrationApplied=false; registrationCalcResult=null;
+  const backdrop = document.getElementById('modalBackdrop');
+  const footer = document.getElementById('modalActionFooter');
+  if (backdrop) backdrop.style.display='none';
+  if (footer) footer.style.display='none';
+  cleanupCustomerDetailModalStateP456_();
   return true;
 }
 function toast(msg, options){

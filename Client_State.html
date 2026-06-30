@@ -383,6 +383,10 @@ let customerDetailPendingSaveMap = {};
 let customerDetailSaveSeq = 0;
 // PATCH P430: 고객상세 저장이 서버 완료 전 화면 이동/닫기/새로고침으로 씹히지 않도록 진행 중 저장을 추적합니다.
 let customerDetailServerSaveGuardMapP430 = {};
+// P456: 고객상세 모달 세션 guard.
+// 늦게 도착한 서버 응답이 이미 닫힌 모달 또는 다른 고객 화면을 덮어쓰지 못하게 현재 모달 세션을 고정합니다.
+let activeCustomerDetailModalTokenP456 = 0;
+let activeCustomerDetailModalStateP456 = { open: false, token: 0, mode: '', rowNo: 0, customerNo: '', startedAt: 0 };
 // STEP4/P220: 같은 고객에 대한 상세/목록/확장메모 저장이 동시에 서버로 나가지 않도록
 // 고객번호(rowNo fallback) 단위 저장 큐를 둡니다. 서버 버전 체크와 함께 쓰여 저장 충돌 체감을 줄입니다.
 let customerSaveQueueMapP220 = {};

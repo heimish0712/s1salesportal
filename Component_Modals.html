@@ -16,7 +16,20 @@ function saveTempMemo() {
   if(!memoAt)return toast('임시메모 날짜/시간을 입력하세요.');
   if(!memo.trim()){toast('임시메모 내용을 입력하세요.'); tempMemoText.focus(); return;}
   saveTempBtn.disabled=true; saveTempBtn.textContent='저장 중...';
-  google.script.run.withSuccessHandler(function(){ toast('임시메모가 저장되었습니다.'); fetchCustomerDetailFromServer_(currentDetail.rowNo, function(detail){ renderDetail(detail); }, function(){}, { customerNo: normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo) }); }).withFailureHandler(function(err){ saveTempBtn.disabled=false; saveTempBtn.textContent='임시메모 저장'; showModalError(err); }).addTempMemo({rowNo:currentDetail.rowNo,customerNo:normalizeCustomerNoForKey_(currentDetail.customerNo||currentDetailCustomerNo),memoAt:memoAt,memo:memo});
+  const rowNoP456 = Number(currentDetail.rowNo) || 0;
+  const customerNoP456 = normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo);
+  const modalTokenP456 = (typeof activeCustomerDetailModalStateP456 !== 'undefined' && activeCustomerDetailModalStateP456) ? activeCustomerDetailModalStateP456.token : 0;
+  google.script.run.withSuccessHandler(function(){
+    if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, rowNoP456, customerNoP456)) return;
+    toast('임시메모가 저장되었습니다.');
+    fetchCustomerDetailFromServer_(rowNoP456, function(detail){
+      if (typeof renderCustomerDetailIfActiveP456_ === 'function') renderCustomerDetailIfActiveP456_(detail, {}, modalTokenP456);
+      else renderDetail(detail);
+    }, function(){}, { customerNo: customerNoP456 });
+  }).withFailureHandler(function(err){
+    if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, rowNoP456, customerNoP456)) return;
+    saveTempBtn.disabled=false; saveTempBtn.textContent='임시메모 저장'; showModalError(err);
+  }).addTempMemo({rowNo:rowNoP456,customerNo:customerNoP456,memoAt:memoAt,memo:memo});
 }
 
 function renderTimeline(logs) {

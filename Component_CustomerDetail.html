@@ -5,12 +5,25 @@ let contactSelectedTagsP11 = [];
 let contactNextActionTagsP119 = [];
 
 function openNewCustomer() {
+  const modalTokenP456 = (typeof beginCustomerDetailModalSessionP456_ === 'function') ? beginCustomerDetailModalSessionP456_('new', 0, '') : 0;
   document.getElementById('modalBackdrop').style.display = 'flex';
   const modalTitleEl = document.getElementById('modalTitle');
   modalTitleEl.classList.remove('company-title-mode');
   modalTitleEl.textContent = '신규 고객 등록';
   document.getElementById('modalBody').innerHTML = '<div class="loading">등록 화면 불러오는 중...</div>';
-  google.script.run.withSuccessHandler(renderDetail).withFailureHandler(showModalError).getNewCustomerTemplate();
+  google.script.run
+    .withSuccessHandler(function(detail) {
+      if (typeof renderCustomerDetailIfActiveP456_ === 'function') {
+        renderCustomerDetailIfActiveP456_(detail, {}, modalTokenP456);
+        return;
+      }
+      renderDetail(detail);
+    })
+    .withFailureHandler(function(err) {
+      if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, 0, '', { allowNew: true })) return;
+      showModalError(err);
+    })
+    .getNewCustomerTemplate();
 }
 
 function openDetail(rowNo, customerNo, options) {
@@ -19,6 +32,7 @@ function openDetail(rowNo, customerNo, options) {
   const rowSummary = findCustomerRowSummary_(rowNo, customerNo) || {};
   const targetCustomerNo = normalizeCustomerNoForKey_(customerNo || rowSummary.customerNo);
   currentDetailCustomerNo = targetCustomerNo;
+  const modalTokenP456 = (typeof beginCustomerDetailModalSessionP456_ === 'function') ? beginCustomerDetailModalSessionP456_('detail', rowNo, targetCustomerNo) : 0;
   const requestSeq = ++customerDetailModalRequestSeq;
   const forceEditMode = !!options.forceEdit;
 
@@ -40,6 +54,7 @@ function openDetail(rowNo, customerNo, options) {
     // 캐시 표시 후 전체 상세가 도착하면 조용히 갱신합니다.
     // 단, 사용자가 그 사이 '정보 수정'을 눌렀다면 수정 모드와 입력 중인 값을 절대 되돌리지 않습니다.
     if (requestSeq !== customerDetailModalRequestSeq) return;
+    if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, rowNo, targetCustomerNo)) return;
     if (!detail || Number(detail.rowNo) !== rowNo) return;
     if (targetCustomerNo && normalizeCustomerNoForKey_(detail.customerNo) && normalizeCustomerNoForKey_(detail.customerNo) !== targetCustomerNo) return;
     if (currentDetail && Number(currentDetail.rowNo) !== rowNo) return;
@@ -52,7 +67,10 @@ function openDetail(rowNo, customerNo, options) {
       draftValues: draftValues,
       reason: 'asyncDetailHydration'
     });
-  }, showModalError, { forceFull: true, customerNo: targetCustomerNo });
+  }, function(err) {
+    if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, rowNo, targetCustomerNo)) return;
+    showModalError(err);
+  }, { forceFull: true, customerNo: targetCustomerNo });
 }
 
 function openDetailReadOnly(rowNo, customerNo) {
@@ -590,9 +608,12 @@ function applyServerDetailAfterSaveP112_(detail, rowNo) {
     allowPagePatch: true,
     allowStorageWrite: true
   });
-  currentDetail = detail;
-  renderDetail(detail);
-  toggleDetailEdit(false);
+  const modalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo || detail.rowNo, detail.customerNo);
+  if (modalStillActiveP456) {
+    currentDetail = detail;
+    renderDetail(detail);
+    toggleDetailEdit(false);
+  }
   repaintCustomerResultsIfVisible_();
   try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
   return true;
@@ -663,8 +684,9 @@ function saveDetailFields() {
         fastMode: true
       }))
       .then(function(res){
+        const detailModalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo);
         try { applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res); } catch(e) {}
-        if (res && (res.masterVersion || res.masterUpdatedAt || res.masterEditor) && currentDetail && Number(currentDetail.rowNo) === rowNo) {
+        if (detailModalStillActiveP456 && res && (res.masterVersion || res.masterUpdatedAt || res.masterEditor) && currentDetail && Number(currentDetail.rowNo) === rowNo) {
           if (res.masterVersion) currentDetail.__masterVersion = currentDetail.masterVersion = res.masterVersion;
           if (res.masterUpdatedAt) currentDetail.__masterUpdatedAt = currentDetail.masterUpdatedAt = res.masterUpdatedAt;
           if (res.masterEditor) currentDetail.__masterEditor = currentDetail.masterEditor = res.masterEditor;
@@ -672,7 +694,7 @@ function saveDetailFields() {
         // 저장 성공 후에도 잠시 pending을 유지하여 저장 전에 출발한 상세보강/프리패치 응답이 최신값을 되돌리지 못하게 합니다.
         if (res && res.detail && res.refreshedFromMaster) {
           applyServerDetailAfterSaveP112_(res.detail, rowNo);
-        } else if (currentDetail && Number(currentDetail.rowNo) === rowNo) {
+        } else if (detailModalStillActiveP456 && currentDetail && Number(currentDetail.rowNo) === rowNo) {
           const confirmedValuesP451 = (res && res.values) ? res.values : values;
           currentDetail = applyDetailValuesToDetailObject_(currentDetail, confirmedValuesP451);
           currentDetail.__pendingSave = false;
@@ -688,23 +710,24 @@ function saveDetailFields() {
         }
         setTimeout(function(){ clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq); }, 20000);
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, res || { message: '마스터시트 저장 완료' });
-        toast((res && res.message) || '마스터시트 저장 완료', { force: true, duration: 3200 });
+        if (detailModalStillActiveP456) toast((res && res.message) || '마스터시트 저장 완료', { force: true, duration: 3200 });
         setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
         return res;
       }, function(err){
+        const detailModalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo);
         clearCustomerDetailPendingSave_(rowNo, targetCustomerNo, saveSeq);
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, null);
         try { setCustomerDetailSaveUiP430_(false); } catch(e) {}
         if (typeof isCustomerStaleSaveErrorP202_ === 'function' && isCustomerStaleSaveErrorP202_(err)) {
           if (prevDetail) {
             setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
-            if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
+            if (detailModalStillActiveP456 && currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
             repaintCustomerResultsIfVisible_();
           }
-          showModalError('다른 사용자가 이 고객 정보를 먼저 수정했습니다. 최신 내용을 다시 불러옵니다.');
+          if (detailModalStillActiveP456) showModalError('다른 사용자가 이 고객 정보를 먼저 수정했습니다. 최신 내용을 다시 불러옵니다.');
           try {
             fetchCustomerDetailFromServer_(rowNo, function(detail){
-              if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
+              if (detailModalStillActiveP456 && currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
               if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
             }, function(){}, { customerNo: targetCustomerNo });
           } catch(e) {}
@@ -713,10 +736,10 @@ function saveDetailFields() {
         }
         if (prevDetail) {
           setCustomerDetailCache_(prevDetail, { force: true, skipPendingMerge: true });
-          if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
+          if (detailModalStillActiveP456 && currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(prevDetail);
           repaintCustomerResultsIfVisible_();
         }
-        showModalError(err);
+        if (detailModalStillActiveP456) showModalError(err);
         alert('상세정보 저장 실패: ' + getErrorMessage_(err));
         throw err;
       });
@@ -1100,9 +1123,11 @@ function applyRegistrationCalculation() {
   clearModalErrorBox();
   const values = gatherRegistrationValues();
   const applyBtn = document.getElementById('registrationApplyBtn');
+  const modalTokenP456 = (typeof activeCustomerDetailModalStateP456 !== 'undefined' && activeCustomerDetailModalStateP456) ? activeCustomerDetailModalStateP456.token : 0;
   if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = '적용 중...'; }
 
   google.script.run.withSuccessHandler(function(res) {
+    if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, 0, '', { allowNew: true })) return;
     registrationApplied = true;
     registrationCalcResult = res;
     setInputValueByKey('grade', res.grade || '');
@@ -1111,6 +1136,7 @@ function applyRegistrationCalculation() {
     if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '적용'; }
     toast(res.message || '계산값을 적용했습니다.');
   }).withFailureHandler(function(err) {
+    if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, 0, '', { allowNew: true })) return;
     if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '적용'; }
     showModalError(err);
   }).applyCustomerRegistrationCalculation({ values: values });
@@ -1126,9 +1152,11 @@ function saveRegistrationCustomerFromModal() {
     return;
   }
   const saveBtn = document.getElementById('registrationSaveBtn');
+  const modalTokenP456 = (typeof activeCustomerDetailModalStateP456 !== 'undefined' && activeCustomerDetailModalStateP456) ? activeCustomerDetailModalStateP456.token : 0;
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '계산 및 저장 중...'; }
 
   google.script.run.withSuccessHandler(function(res) {
+    if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, 0, '', { allowNew: true })) return;
     alert('저장했습니다.');
     registrationMode = false;
     savedRegistrationMode = true;
@@ -1140,11 +1168,15 @@ function saveRegistrationCustomerFromModal() {
     }
     loadDashboard();
     search();
+    if (res && res.detail && res.detail.rowNo && typeof beginCustomerDetailModalSessionP456_ === 'function') {
+      beginCustomerDetailModalSessionP456_('detail', res.detail.rowNo, res.detail.customerNo || '');
+    }
     renderDetail(res.detail || currentDetail);
     // 신규 저장 직후에는 바로 다시 저장되지 않도록 읽기 전용 + 수정 버튼 상태로 전환합니다.
     toggleDetailEdit(false);
     renderRegistrationFooter('saved');
   }).withFailureHandler(function(err) {
+    if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, 0, '', { allowNew: true })) return;
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '저장'; }
     showModalError(err);
   }).saveRegistrationCustomer({
@@ -1445,13 +1477,13 @@ function saveContactHistoryFromModal() {
       const updatedMemo = res && res.updatedMemo ? res.updatedMemo : '';
       if (updatedMemo) applyCustomerMemoOptimistic_(rowNo, updatedMemo);
       if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-      if (currentDetail && Number(currentDetail.rowNo) === rowNo && updatedMemo) {
+      if (currentDetail && Number(currentDetail.rowNo) === rowNo && updatedMemo && (!(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo))) {
         currentDetail.memo = updatedMemo;
         renderDetail(currentDetail);
       }
       fetchCustomerDetailFromServer_(rowNo, function(detail){
         if (customerExpandedRowNo === rowNo) renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-        if (currentDetail && Number(currentDetail.rowNo) === rowNo) renderDetail(detail);
+        if (currentDetail && Number(currentDetail.rowNo) === rowNo && (!(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo))) renderDetail(detail);
       }, function(){}, { customerNo: targetCustomerNo });
       setTimeout(function(){ try { loadDashboard(); } catch(e) {} }, 1200);
       if (document.getElementById('todaySection') && document.getElementById('todaySection').classList.contains('active')) loadTodayPage({ force: true });
