@@ -2360,6 +2360,9 @@ function buildNumericPagerHtml_(res, fnName) {
   }
 
   const html = [];
+  html.push('<button type="button" class="pager-page-link pager-page-first" ' + (currentPage > 0 ? 'onclick="' + fnName + '(0)"' : 'disabled') + '>&lt;&lt; 맨앞</button>');
+  html.push('<button type="button" class="pager-page-link pager-page-prev" ' + (res.hasPrev ? 'onclick="' + fnName + '(' + Math.max(0, currentPage - 1) + ')"' : 'disabled') + '>&lt; 이전</button>');
+
   for (let page = startPage; page <= endPage; page += 1) {
     if (page === currentPage) {
       html.push('<button type="button" class="pager-page-link active" aria-current="page">' + (page + 1) + '</button>');
