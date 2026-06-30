@@ -2,17 +2,28 @@
 let portalSystemHealthLastP208 = null;
 let portalSystemHealthLoadingP208 = false;
 
+function renderSystemHealthPerfToolbarP460_() {
+  return '<div class="system-health-toolbar-p208">' +
+    '<div><div class="system-health-title-p208">성능/저장 진단</div><div class="system-health-sub-p208">저장·로딩 속도 로그를 성능로그_DB 시트에 남깁니다. 입력 중인 화면을 방해하지 않습니다.</div></div>' +
+    '<div class="system-health-actions-p208">' +
+    '<button class="secondary" onclick="flushPortalPerfLogsP460_({silent:false})">성능로그 시트 저장</button>' +
+    '<button class="secondary" onclick="copyPortalPerfLogsP460_()">브라우저 로그 복사</button>' +
+    '<button class="secondary" onclick="loadPortalPerfLogSummaryP460_()">시트 로그 요약</button>' +
+    '<button class="secondary" onclick="clearPortalPerfLogsP460_()">브라우저 로그 비우기</button>' +
+    '</div></div>';
+}
+
 function loadSystemHealthPageP208(force) {
   const area = document.getElementById('systemHealthAreaP208');
   if (!area) return;
   const p = getPortalPermission_ ? getPortalPermission_() : null;
   if (!(p && p.canUseAdminHome)) {
-    area.innerHTML = '<div class="system-health-denied-p208">시스템 점검은 관리자/서무 권한에서만 사용할 수 있습니다.</div>';
+    area.innerHTML = renderSystemHealthPerfToolbarP460_() + '<div class="system-health-denied-p208">시스템 점검 상세는 관리자/서무 권한에서만 사용할 수 있습니다. 성능로그 저장/복사는 사용할 수 있습니다.</div>';
     return;
   }
   if (portalSystemHealthLoadingP208 && !force) return;
   portalSystemHealthLoadingP208 = true;
-  area.innerHTML = '<div class="loading">시스템 상태를 점검하는 중입니다...</div>';
+  area.innerHTML = renderSystemHealthPerfToolbarP460_() + '<div class="loading">시스템 상태를 점검하는 중입니다...</div>';
   google.script.run
     .withSuccessHandler(function(res) {
       portalSystemHealthLoadingP208 = false;
@@ -21,7 +32,7 @@ function loadSystemHealthPageP208(force) {
     })
     .withFailureHandler(function(err) {
       portalSystemHealthLoadingP208 = false;
-      area.innerHTML = '<div class="system-health-denied-p208">점검 정보를 불러오지 못했습니다.<br>' + escapeHtml_(getSystemHealthErrorP208_(err, '시스템 점검 정보를 불러오지 못했습니다.')) + '</div>';
+      area.innerHTML = renderSystemHealthPerfToolbarP460_() + '<div class="system-health-denied-p208">점검 정보를 불러오지 못했습니다.<br>' + escapeHtml_(getSystemHealthErrorP208_(err, '시스템 점검 정보를 불러오지 못했습니다.')) + '</div>';
     })
     .getPortalSystemHealthP208();
 }
@@ -43,6 +54,7 @@ function renderSystemHealthP208_(res) {
   });
 
   let html = '';
+  html += renderSystemHealthPerfToolbarP460_();
   html += '<div class="system-health-toolbar-p208">';
   html += '<div><div class="system-health-title-p208">시스템 점검</div><div class="system-health-sub-p208">동시작업, 마스터 동기화, 검색인덱스, DB 상태를 한 번에 확인합니다.</div></div>';
   html += '<div class="system-health-actions-p208">';
@@ -52,8 +64,6 @@ function renderSystemHealthP208_(res) {
   html += '<button class="secondary" onclick="clearPermissionCacheP350_()">권한 캐시 무효화</button>';
   html += '<button class="danger-light-p208" onclick="repairBlankMasterMetaP208_()">빈 행 수정메타 정리</button>';
   html += '<button class="secondary" onclick="processChangeQueueP209_()">변경큐 재처리</button>';
-  html += '<button class="secondary" onclick="copyPortalPerfLogsP459_()">성능로그 복사</button>';
-  html += '<button class="secondary" onclick="clearPortalPerfLogsP459_()">성능로그 비우기</button>';
   html += '</div></div>';
 
   html += '<div class="system-health-summary-p208">';

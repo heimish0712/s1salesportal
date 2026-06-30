@@ -9,16 +9,13 @@ const PORTAL_MASTER_SYNC_HANDLER_P201 = 'onMasterSheetEditSyncP201';
 
 function withPortalScriptLockP201_(label, callback, options) {
   options = options || {};
-  const lockStartedP459 = new Date().getTime();
   const attempts = Math.max(1, Number(options.attempts) || 4);
   const waitMs = Math.max(100, Number(options.waitMs) || 700);
   const sleepBaseMs = Math.max(100, Number(options.sleepBaseMs) || 180);
   const lock = LockService.getScriptLock();
   let locked = false;
   let lastErr = null;
-  let usedAttemptsP459 = 0;
   for (let i = 0; i < attempts; i++) {
-    usedAttemptsP459 = i + 1;
     try {
       locked = lock.tryLock(waitMs);
       if (locked) break;
@@ -27,15 +24,11 @@ function withPortalScriptLockP201_(label, callback, options) {
     }
     Utilities.sleep(sleepBaseMs * (i + 1));
   }
-  options.__lockWaitMsP459 = new Date().getTime() - lockStartedP459;
-  options.__lockAttemptsP459 = usedAttemptsP459;
   if (!locked) {
     const err = new Error('다른 작업 처리 중입니다. 잠시 후 자동으로 다시 시도해 주세요.');
     err.code = 'PORTAL_LOCK_BUSY';
     err.label = label || '';
     err.detail = lastErr && lastErr.message ? lastErr.message : '';
-    err.lockWaitMsP459 = options.__lockWaitMsP459;
-    err.lockAttemptsP459 = options.__lockAttemptsP459;
     throw err;
   }
   try {

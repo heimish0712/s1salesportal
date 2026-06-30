@@ -1620,25 +1620,58 @@ function getPortalCustomerAllDetailDefsP436_() {
 
 
 function runPortalCustomerWriteLockedP202_(label, callback) {
-  const startedP459 = new Date().getTime();
-  const lockOptionsP459 = { attempts: 4, waitMs: 700, sleepBaseMs: 180 };
-  const attachTimingP459 = function(res) {
+  const startedP460 = new Date().getTime();
+  const lockOptionsP460 = { attempts: 4, waitMs: 700, sleepBaseMs: 180 };
+  const finishP460 = function(res, error) {
+    const elapsed = new Date().getTime() - startedP460;
     if (res && typeof res === 'object') {
-      res.timingP459 = Object.assign({}, res.timingP459 || {}, {
-        label: label || '',
-        totalMs: new Date().getTime() - startedP459,
-        lockWaitMs: Number(lockOptionsP459.__lockWaitMsP459 || 0) || 0,
-        lockAttempts: Number(lockOptionsP459.__lockAttemptsP459 || 0) || 0
-      });
+      res.timingP460 = {
+        label: String(label || ''),
+        totalMs: elapsed,
+        lockWaitMs: Number(lockOptionsP460.__lockWaitMsP459 || lockOptionsP460.__lockWaitMsP460 || 0) || 0,
+        lockAttempts: Number(lockOptionsP460.__lockAttemptsP459 || lockOptionsP460.__lockAttemptsP460 || 0) || 0
+      };
     }
+    try {
+      if (typeof appendPortalServerPerfLogP460_ === 'function' && (elapsed >= 1500 || error)) {
+        appendPortalServerPerfLogP460_({
+          event: 'server.' + String(label || 'write'),
+          durationMs: elapsed,
+          status: error ? 'error' : 'ok',
+          error: error ? (error && error.message ? error.message : String(error)) : '',
+          detail: res && res.timingP460 ? res.timingP460 : { label: String(label || '') }
+        });
+      }
+    } catch (logErr) {}
     return res;
   };
-  if (typeof withPortalScriptLockP201_ === 'function') {
-    return attachTimingP459(withPortalScriptLockP201_(label, function() {
-      return callback({ startedAt: startedP459, lockOptions: lockOptionsP459 });
-    }, lockOptionsP459));
+  try {
+    let res;
+    if (typeof withPortalScriptLockP201_ === 'function') {
+      res = withPortalScriptLockP201_(label, callback, lockOptionsP460);
+    } else {
+      res = callback();
+    }
+    return finishP460(res, null);
+  } catch (err) {
+    try {
+      const elapsed = new Date().getTime() - startedP460;
+      err.timingP460 = {
+        label: String(label || ''),
+        totalMs: elapsed,
+        lockWaitMs: Number(lockOptionsP460.__lockWaitMsP459 || lockOptionsP460.__lockWaitMsP460 || 0) || 0,
+        lockAttempts: Number(lockOptionsP460.__lockAttemptsP459 || lockOptionsP460.__lockAttemptsP460 || 0) || 0
+      };
+      if (typeof appendPortalServerPerfLogP460_ === 'function') appendPortalServerPerfLogP460_({
+        event: 'server.' + String(label || 'write'),
+        durationMs: elapsed,
+        status: 'error',
+        error: err && err.message ? err.message : String(err),
+        detail: err.timingP460
+      });
+    } catch (logErr) {}
+    throw err;
   }
-  return attachTimingP459(callback({ startedAt: startedP459, lockOptions: lockOptionsP459 }));
 }
 
 function saveCustomerDetail(payload) {

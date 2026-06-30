@@ -158,7 +158,11 @@ const PORTAL_CONFIG = {
     '마스터메모반영',
     '클라이언트요청ID'
   ],
-  CONTACT_HISTORY_MAX_PER_CUSTOMER: 30
+  CONTACT_HISTORY_MAX_PER_CUSTOMER: 30,
+
+  // P460: 웹앱 성능/저장 안정성 로그. 웹앱 DB 스프레드시트에 기록합니다.
+  PERF_LOG_SHEET_NAME: '성능로그_DB',
+  PERF_LOG_HEADERS: ['기록일시','사용자','세션ID','이벤트','구간','소요ms','rowNo','고객번호','화면','상태','오류','상세JSON']
 };
 
 const PORTAL_NEXT_ACTION_OPTIONS = ['전화하기', '자료 발송', '견적서 발송', '재확인', '방문/미팅', '계약서류 요청', '보류 확인', '기타'];

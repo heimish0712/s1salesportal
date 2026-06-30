@@ -178,6 +178,180 @@ function parseDateInput_(dateStr) {
   return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date();
 }
 // PATCH P1-5: 표 헤더 클릭 정렬 공통 유틸
+
+// P460: lightweight performance logger. UI를 막지 않고 메모리 버퍼에 모은 뒤 시트로 비동기 배치 저장합니다.
+window.portalPerfSessionIdP460 = window.portalPerfSessionIdP460 || ('P460-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+window.portalPerfBufferP460 = window.portalPerfBufferP460 || [];
+window.portalPerfLastFlushP460 = window.portalPerfLastFlushP460 || 0;
+window.portalPerfFlushTimerP460 = window.portalPerfFlushTimerP460 || null;
+window.portalPerfFlushInFlightP460 = window.portalPerfFlushInFlightP460 || false;
+window.portalPerfLastSavedSummaryP460 = window.portalPerfLastSavedSummaryP460 || null;
+
+function portalNowP460_() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+
+function portalPerfCompactDetailP460_(detail) {
+  detail = detail || {};
+  const out = {};
+  ['rowNo','customerNo','page','source','methodName','key','keys','queuedCount','attempt','transient','fromCache','count','keyword','serverTiming','clientOperationId'].forEach(function(k){
+    if (Object.prototype.hasOwnProperty.call(detail, k)) out[k] = detail[k];
+  });
+  return out;
+}
+
+function portalPerfLogP460_(eventName, detail) {
+  try {
+    const d = portalPerfCompactDetailP460_(detail || {});
+    const row = {
+      sessionId: window.portalPerfSessionIdP460,
+      event: String(eventName || ''),
+      durationMs: Number(detail && detail.durationMs || 0) || 0,
+      rowNo: d.rowNo || '',
+      customerNo: d.customerNo || '',
+      page: d.page || (typeof currentPage !== 'undefined' ? currentPage : ''),
+      status: String(detail && detail.status || ''),
+      error: String(detail && detail.error || '').slice(0, 500),
+      detail: d
+    };
+    window.portalPerfBufferP460.push(row);
+    if (window.portalPerfBufferP460.length > 250) window.portalPerfBufferP460.splice(0, window.portalPerfBufferP460.length - 250);
+    const slowMs = (typeof PORTAL_PERF_LOG_SLOW_MS_P460 !== 'undefined') ? PORTAL_PERF_LOG_SLOW_MS_P460 : 1200;
+    if (window.portalPerfBufferP460.length >= ((typeof PORTAL_PERF_LOG_SHEET_BATCH_MAX_P460 !== 'undefined') ? PORTAL_PERF_LOG_SHEET_BATCH_MAX_P460 : 30) || row.durationMs >= slowMs || row.error) {
+      schedulePortalPerfFlushP460_(row.durationMs >= slowMs || row.error ? 100 : 1200);
+    } else {
+      schedulePortalPerfFlushP460_((typeof PORTAL_PERF_LOG_AUTO_FLUSH_MS_P460 !== 'undefined') ? PORTAL_PERF_LOG_AUTO_FLUSH_MS_P460 : 8000);
+    }
+    return row;
+  } catch (err) { return null; }
+}
+
+function portalPerfStartP460_(eventName, detail) {
+  return { event: String(eventName || ''), start: portalNowP460_(), detail: portalPerfCompactDetailP460_(detail || {}) };
+}
+
+function portalPerfEndP460_(mark, extra) {
+  if (!mark) return null;
+  const ms = Math.round(portalNowP460_() - Number(mark.start || portalNowP460_()));
+  return portalPerfLogP460_(mark.event, Object.assign({}, mark.detail || {}, extra || {}, { durationMs: ms, status: 'ok' }));
+}
+
+function portalPerfErrorP460_(mark, err, extra) {
+  const ms = mark ? Math.round(portalNowP460_() - Number(mark.start || portalNowP460_())) : 0;
+  const msg = (typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : (err && err.message ? err.message : String(err || ''));
+  return portalPerfLogP460_(mark ? mark.event : 'unknown', Object.assign({}, (mark && mark.detail) || {}, extra || {}, { durationMs: ms, status: 'error', error: msg }));
+}
+
+function schedulePortalPerfFlushP460_(delay) {
+  try {
+    clearTimeout(window.portalPerfFlushTimerP460);
+    window.portalPerfFlushTimerP460 = setTimeout(function(){ flushPortalPerfLogsP460_({ silent: true }); }, Math.max(100, Number(delay) || 1000));
+  } catch (err) {}
+}
+
+function flushPortalPerfLogsP460_(options) {
+  options = options || {};
+  if (window.portalPerfFlushInFlightP460) return;
+  const buffer = window.portalPerfBufferP460 || [];
+  if (!buffer.length) {
+    if (!options.silent) toast('보낼 성능로그가 없습니다.');
+    return;
+  }
+  const batch = buffer.splice(0, Math.min(buffer.length, 80));
+  window.portalPerfFlushInFlightP460 = true;
+  try {
+    google.script.run
+      .withSuccessHandler(function(res){
+        window.portalPerfFlushInFlightP460 = false;
+        window.portalPerfLastSavedSummaryP460 = res || null;
+        if (!options.silent) toast('성능로그 시트 저장 완료: ' + ((res && res.appended) || batch.length) + '건');
+        if ((window.portalPerfBufferP460 || []).length) schedulePortalPerfFlushP460_(800);
+      })
+      .withFailureHandler(function(err){
+        window.portalPerfFlushInFlightP460 = false;
+        // 실패 시 버퍼 앞쪽에 복구하되 너무 커지지 않게 제한합니다.
+        window.portalPerfBufferP460 = batch.concat(window.portalPerfBufferP460 || []).slice(-250);
+        if (!options.silent) toast('성능로그 시트 저장 실패: ' + ((typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : String(err || '')));
+      })
+      .appendPortalPerfLogsP460(batch);
+  } catch (err) {
+    window.portalPerfFlushInFlightP460 = false;
+    window.portalPerfBufferP460 = batch.concat(window.portalPerfBufferP460 || []).slice(-250);
+    if (!options.silent) toast('성능로그 전송 실패: ' + (err && err.message ? err.message : err));
+  }
+}
+
+function copyPortalPerfLogsP460_() {
+  const logs = (window.portalPerfBufferP460 || []).slice(-120);
+  const text = JSON.stringify({ sessionId: window.portalPerfSessionIdP460, bufferCount: (window.portalPerfBufferP460 || []).length, lastSaved: window.portalPerfLastSavedSummaryP460 || null, logs: logs }, null, 2);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function(){ toast('성능로그를 클립보드에 복사했습니다.'); }, function(){ console.log(text); toast('클립보드 복사 실패. 콘솔에 출력했습니다.'); });
+  } else {
+    console.log(text);
+    toast('성능로그를 콘솔에 출력했습니다.');
+  }
+}
+
+function clearPortalPerfLogsP460_() {
+  window.portalPerfBufferP460 = [];
+  toast('브라우저 성능로그 버퍼를 비웠습니다. 시트 로그는 삭제하지 않습니다.');
+}
+
+function loadPortalPerfLogSummaryP460_() {
+  try {
+    google.script.run
+      .withSuccessHandler(function(res){
+        const msg = res && res.ok ? ('성능로그_DB 총 ' + (res.count || 0) + '건 · 최근 로그를 콘솔에 출력했습니다.') : '성능로그 요약을 불러오지 못했습니다.';
+        console.log('[P460 PERF SUMMARY]', res);
+        toast(msg, { force: true });
+      })
+      .withFailureHandler(function(err){ toast('성능로그 요약 실패: ' + ((typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : String(err || ''))); })
+      .getPortalPerfLogSummaryP460(50);
+  } catch (err) { toast('성능로그 요약 호출 실패: ' + (err && err.message ? err.message : err)); }
+}
+
+function isPortalTransientWriteErrorP460_(err) {
+  const msg = (typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : (err && err.message ? err.message : String(err || ''));
+  return /LOCK|잠금|다른 작업 처리 중|Service invoked too many times|Exceeded maximum execution|timed out|timeout|일시|서버 사용량/i.test(String(msg || ''));
+}
+
+function getPortalSaveRetryDelayP460_(attempt) {
+  const base = (typeof PORTAL_SAVE_RETRY_BASE_MS_P460 !== 'undefined') ? PORTAL_SAVE_RETRY_BASE_MS_P460 : 650;
+  const max = (typeof PORTAL_SAVE_RETRY_MAX_MS_P460 !== 'undefined') ? PORTAL_SAVE_RETRY_MAX_MS_P460 : 5000;
+  return Math.min(max, Math.round(base * Math.pow(1.6, Math.max(0, Number(attempt || 1) - 1))));
+}
+
+function waitPortalMsP460_(ms) { return new Promise(function(resolve){ setTimeout(resolve, Math.max(0, Number(ms) || 0)); }); }
+
+function runPortalPromiseWithTransientRetryP460_(workFn, meta, options) {
+  options = options || {};
+  const maxAttempts = Math.max(1, Number(options.maxAttempts || ((typeof PORTAL_SAVE_RETRY_MAX_ATTEMPTS_P460 !== 'undefined') ? PORTAL_SAVE_RETRY_MAX_ATTEMPTS_P460 : 4)) || 4);
+  let attempt = 0;
+  function runNext() {
+    attempt++;
+    const mark = portalPerfStartP460_(String(meta && meta.event || 'save'), Object.assign({}, meta || {}, { attempt: attempt }));
+    return Promise.resolve().then(workFn).then(function(res){
+      portalPerfEndP460_(mark, { serverTiming: res && (res.timingP460 || res.timingP459 || res.timing) || null });
+      return res;
+    }, function(err){
+      const transient = isPortalTransientWriteErrorP460_(err);
+      portalPerfErrorP460_(mark, err, { transient: transient, attempt: attempt });
+      if (transient && attempt < maxAttempts) {
+        const delay = getPortalSaveRetryDelayP460_(attempt);
+        try { toast('저장 재시도 중입니다. 입력값은 유지됩니다.'); } catch (e) {}
+        return waitPortalMsP460_(delay).then(runNext);
+      }
+      throw err;
+    });
+  }
+  return runNext();
+}
+
+// unload/숨김 전 마지막으로 버퍼 전송 시도. 입력 흐름을 막지 않습니다.
+try {
+  window.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'hidden') flushPortalPerfLogsP460_({ silent: true }); });
+  window.addEventListener('beforeunload', function(){ try { flushPortalPerfLogsP460_({ silent: true }); } catch(e) {} });
+} catch (err) {}
+
+
 function normalizePortalSortTextP15_(value) {
   return String(value == null ? '' : value).replace(/\u00a0/g, ' ').trim();
 }
@@ -246,124 +420,6 @@ function makePortalSortableThP15_(label, key, activeKey, activeDir, handlerName,
   return '<th class="portal-sortable-th" ' + (styleText ? 'style="' + escAttr(styleText) + '" ' : '') +
     'onclick="' + escAttr(handlerName) + '(\'' + escAttr(key) + '\')">' +
     esc(label || key) + '<span class="portal-sort-arrow">' + esc(arrow) + '</span></th>';
-}
-
-
-// P459: client-side performance and save-stability instrumentation.
-// Keeps a small local ring buffer only; this must never block the user flow.
-function portalNowP459_() {
-  try { return (window.performance && performance.now) ? performance.now() : Date.now(); } catch (err) { return Date.now(); }
-}
-
-function portalPerfSafeJsonP459_(value) {
-  try { return JSON.parse(JSON.stringify(value || {})); } catch (err) { return {}; }
-}
-
-function portalPerfLogP459_(eventName, detail) {
-  try {
-    const key = (typeof PORTAL_PERF_LOG_STORAGE_KEY_P459 !== 'undefined') ? PORTAL_PERF_LOG_STORAGE_KEY_P459 : 's1portal:perfLog:P459:v1';
-    const max = (typeof PORTAL_PERF_LOG_MAX_ITEMS_P459 !== 'undefined') ? PORTAL_PERF_LOG_MAX_ITEMS_P459 : 500;
-    const raw = localStorage.getItem(key);
-    const arr = raw ? JSON.parse(raw) : [];
-    const item = {
-      at: new Date().toISOString(),
-      t: Math.round(portalNowP459_()),
-      event: String(eventName || ''),
-      route: (typeof currentRoute !== 'undefined' ? currentRoute : ''),
-      detail: portalPerfSafeJsonP459_(detail || {})
-    };
-    arr.push(item);
-    while (arr.length > max) arr.shift();
-    localStorage.setItem(key, JSON.stringify(arr));
-    return item;
-  } catch (err) {
-    return null;
-  }
-}
-
-function portalPerfStartP459_(eventName, detail) {
-  const started = portalNowP459_();
-  portalPerfLogP459_(String(eventName || '') + ':start', Object.assign({ started: Math.round(started) }, detail || {}));
-  return {
-    event: String(eventName || ''),
-    started: started,
-    detail: portalPerfSafeJsonP459_(detail || {})
-  };
-}
-
-function portalPerfEndP459_(mark, extra) {
-  try {
-    if (!mark || !mark.event) return null;
-    const ended = portalNowP459_();
-    const ms = Math.round(ended - Number(mark.started || ended));
-    return portalPerfLogP459_(mark.event + ':end', Object.assign({}, mark.detail || {}, extra || {}, { durationMs: ms }));
-  } catch (err) {
-    return null;
-  }
-}
-
-function portalPerfErrorP459_(mark, err, extra) {
-  try {
-    const ended = portalNowP459_();
-    const base = mark && mark.event ? mark.event : 'operation';
-    const ms = mark ? Math.round(ended - Number(mark.started || ended)) : 0;
-    return portalPerfLogP459_(base + ':error', Object.assign({}, (mark && mark.detail) || {}, extra || {}, {
-      durationMs: ms,
-      error: getErrorMessage_(err)
-    }));
-  } catch (e) {
-    return null;
-  }
-}
-
-function getPortalPerfLogsP459_() {
-  try {
-    const key = (typeof PORTAL_PERF_LOG_STORAGE_KEY_P459 !== 'undefined') ? PORTAL_PERF_LOG_STORAGE_KEY_P459 : 's1portal:perfLog:P459:v1';
-    const raw = localStorage.getItem(key);
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch (err) {
-    return [];
-  }
-}
-
-function copyPortalPerfLogsP459_() {
-  const logs = getPortalPerfLogsP459_();
-  const text = JSON.stringify(logs, null, 2);
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text);
-      toast('성능 로그를 클립보드에 복사했습니다.');
-      return;
-    }
-  } catch (err) {}
-  console.log('[P459 PERF LOG]', logs);
-  toast('성능 로그를 콘솔에 출력했습니다.');
-}
-
-function clearPortalPerfLogsP459_() {
-  try {
-    const key = (typeof PORTAL_PERF_LOG_STORAGE_KEY_P459 !== 'undefined') ? PORTAL_PERF_LOG_STORAGE_KEY_P459 : 's1portal:perfLog:P459:v1';
-    localStorage.removeItem(key);
-    toast('성능 로그를 비웠습니다.');
-  } catch (err) {}
-}
-
-function isPortalTransientWriteErrorP459_(err) {
-  const msg = getErrorMessage_(err);
-  if (typeof isTransientPortalWriteError_ === 'function' && isTransientPortalWriteError_(err)) return true;
-  return /PORTAL_LOCK_BUSY|다른 작업 처리 중|LOCK|잠금|LockService|timeout|timed out|Exceeded maximum execution|Service invoked too many times/i.test(msg);
-}
-
-function getPortalSaveRetryDelayP459_(attempt) {
-  const base = (typeof PORTAL_SAVE_RETRY_BASE_MS_P459 !== 'undefined') ? PORTAL_SAVE_RETRY_BASE_MS_P459 : 900;
-  const max = (typeof PORTAL_SAVE_RETRY_MAX_MS_P459 !== 'undefined') ? PORTAL_SAVE_RETRY_MAX_MS_P459 : 12000;
-  const n = Math.max(1, Number(attempt || 1));
-  return Math.min(max, base * Math.pow(1.7, n - 1));
-}
-
-function waitPortalMsP459_(ms) {
-  return new Promise(function(resolve) { setTimeout(resolve, Math.max(0, Number(ms || 0) || 0)); });
 }
 
 </script>

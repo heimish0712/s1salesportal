@@ -71,6 +71,14 @@ function renderPortalSettingsPageP310_() {
     html += '<div class="portal-settings-denied-p310">이 기능은 서무/admin 계정에서만 사용할 수 있습니다.</div>';
   }
   html += '</div>';
+  html += '<div class="portal-settings-card-p310">';
+  html += '<div class="portal-settings-card-title-p310">성능/저장 진단</div>';
+  html += '<div class="portal-settings-card-desc-p310">현재 브라우저에 쌓인 로딩/저장 성능 로그를 웹앱 DB의 성능로그_DB 시트에 저장합니다. 입력 중인 화면을 방해하지 않습니다.</div>';
+  html += '<button type="button" class="secondary" onclick="flushPortalPerfLogsP460_({silent:false})">성능로그 시트 저장</button> ';
+  html += '<button type="button" class="secondary" onclick="copyPortalPerfLogsP460_()">브라우저 로그 복사</button> ';
+  html += '<button type="button" class="secondary" onclick="loadPortalPerfLogSummaryP460_()">시트 로그 요약</button> ';
+  html += '<button type="button" class="secondary" onclick="clearPortalPerfLogsP460_()">브라우저 로그 비우기</button>';
+  html += '</div>';
   html += '</div>';
   html += '</div>';
   panel.innerHTML = html;
@@ -137,7 +145,7 @@ function forceMasterSearchIndexRefreshP310_() {
 }
 
 function switchPage(page, skipSearch) {
-  const perfMarkP459 = (typeof portalPerfStartP459_ === 'function') ? portalPerfStartP459_('route.switch', { page: page || 'home', skipSearch: !!skipSearch }) : null;
+  const __routePerfP460 = (typeof portalPerfStartP460_ === 'function') ? portalPerfStartP460_('route.switch', { page: page || 'home' }) : null;
   page = page || 'home';
   if (page === 'dashboard') page = 'home';
   if (typeof warnIfCustomerDetailSavePendingP430_ === 'function' && !warnIfCustomerDetailSavePendingP430_('switchPage')) return;
@@ -155,6 +163,8 @@ function switchPage(page, skipSearch) {
     if (el) el.classList.remove('active');
   });
 
+  if (typeof portalPerfEndP460_ === 'function') setTimeout(function(){ portalPerfEndP460_(__routePerfP460, { page: page }); }, 0);
+
   const pageTitle = document.getElementById('pageTitle');
   const pageSubtitle = document.getElementById('pageSubtitle');
   const keyword = document.getElementById('keyword');
@@ -164,7 +174,6 @@ function switchPage(page, skipSearch) {
     pageTitle.textContent = '영업전산 HOME';
     pageSubtitle.textContent = '영업 현황 및 공지사항을 볼 수 있습니다.';
     loadDashboard();
-    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
@@ -174,7 +183,6 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '공지사항 세부 내용 확인 및 공지사항 작성이 가능합니다.';
     loadNoticeTable();
     setTimeout(function(){ try { applyPortalPermissionToUi_(); } catch (err) {} }, 50);
-    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
@@ -184,7 +192,6 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '고객사 기본정보와 상세 계약조건을 조회하고 수정합니다.';
     if (!skipSearch) search();
     setTimeout(() => { if (keyword) keyword.focus(); }, 80);
-    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
@@ -195,7 +202,6 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '내가 즐겨찾기한 고객만 빠르게 조회합니다.';
     refreshFavoriteCustomers(false);
     setTimeout(function() { const el = document.getElementById('favoriteKeyword'); if (el) el.focus(); }, 80);
-    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
@@ -206,7 +212,6 @@ function switchPage(page, skipSearch) {
     if (typeof renderFocusCustomerShellP290_ === 'function') renderFocusCustomerShellP290_();
     if (typeof loadFocusCustomerPageP290 === 'function') loadFocusCustomerPageP290(false);
     setTimeout(function() { const el = document.getElementById('focusKeywordP290'); if (el) el.focus(); }, 80);
-    if (typeof portalPerfEndP459_ === 'function') portalPerfEndP459_(perfMarkP459, { page: page });
     return;
   }
 
