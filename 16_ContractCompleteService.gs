@@ -910,7 +910,7 @@ function normalizeContractOrderVendorP250_(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
   const norm = raw.replace(/\s+/g, '').toLowerCase();
-  if (norm === 'kj' || norm.indexOf('케이제이') >= 0 || norm.indexOf('기술사') >= 0) return '케이제이';
+  if (norm === 'kj' || norm.indexOf('케이제이') >= 0 || norm.indexOf('기술사') >= 0) return 'KJ';
   return raw;
 }
 
