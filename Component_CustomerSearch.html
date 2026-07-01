@@ -780,6 +780,168 @@ function getCustomerSaveQueueSizeP220_(rowNo, customerNo) {
   return Number(customerSaveQueueMapP220[key].size || 0) || 0;
 }
 
+
+// P468: 고객 저장 공통 내구 재시도 큐
+// - "다른 작업 처리 중" 같은 일시 busy는 사용자 실패로 확정하지 않고 localStorage에 남겨 자동 재시도합니다.
+// - 새로고침 후에도 저장 operation을 잃지 않게 하기 위한 얇은 안전망입니다.
+const CUSTOMER_SAVE_DURABLE_OPS_KEY_P468 = 's1portal:customerSaveDurableOps:P468:v1';
+const CUSTOMER_SAVE_DURABLE_MAX_AGE_MS_P468 = 45 * 60 * 1000;
+const CUSTOMER_SAVE_DURABLE_BASE_DELAY_MS_P468 = 15000;
+const CUSTOMER_SAVE_DURABLE_MAX_DELAY_MS_P468 = 3 * 60 * 1000;
+let customerSaveDurableFlushTimerP468 = null;
+let customerSaveDurableFlushRunningP468 = false;
+
+function normalizeCustomerSavePayloadForStorageP468_(payload) {
+  payload = Object.assign({}, payload || {});
+  if (!payload.clientOperationId) payload.clientOperationId = 'COP_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+  return payload;
+}
+
+function getCustomerSaveDurableOpsP468_() {
+  try {
+    const raw = localStorage.getItem(CUSTOMER_SAVE_DURABLE_OPS_KEY_P468);
+    const arr = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(arr)) return [];
+    const now = Date.now();
+    return arr.filter(function(op) {
+      return op && op.id && op.methodName && op.payload && (now - Number(op.createdAt || now) <= CUSTOMER_SAVE_DURABLE_MAX_AGE_MS_P468);
+    });
+  } catch (err) { return []; }
+}
+
+function setCustomerSaveDurableOpsP468_(ops) {
+  try {
+    const now = Date.now();
+    const safe = (ops || []).filter(function(op) {
+      return op && op.id && op.methodName && op.payload && (now - Number(op.createdAt || now) <= CUSTOMER_SAVE_DURABLE_MAX_AGE_MS_P468);
+    }).slice(-80);
+    localStorage.setItem(CUSTOMER_SAVE_DURABLE_OPS_KEY_P468, JSON.stringify(safe));
+  } catch (err) {}
+}
+
+function getCustomerSaveRetryDelayP468_(attemptCount) {
+  const n = Math.max(0, Number(attemptCount || 0));
+  return Math.min(CUSTOMER_SAVE_DURABLE_MAX_DELAY_MS_P468, Math.round(CUSTOMER_SAVE_DURABLE_BASE_DELAY_MS_P468 * Math.pow(1.7, n)));
+}
+
+function persistCustomerSaveDurableOperationP468_(methodName, payload, options) {
+  options = options || {};
+  payload = normalizeCustomerSavePayloadForStorageP468_(payload || {});
+  const id = String(payload.clientOperationId || ('COP_' + Date.now() + '_' + Math.floor(Math.random() * 1000000)));
+  payload.clientOperationId = id;
+  const op = {
+    id: id,
+    methodName: String(methodName || ''),
+    payload: payload,
+    rowNo: Number(payload.rowNo || 0) || 0,
+    customerNo: normalizeCustomerNoForKey_(payload.customerNo || ''),
+    source: String(options.source || payload.clientSaveSource || ''),
+    key: String(options.key || ''),
+    createdAt: Number(options.createdAt || Date.now()) || Date.now(),
+    attemptCount: Number(options.attemptCount || 0) || 0,
+    nextRetryAt: Number(options.nextRetryAt || (Date.now() + getCustomerSaveRetryDelayP468_(0))) || 0,
+    lastError: String(options.lastError || '')
+  };
+  const ops = getCustomerSaveDurableOpsP468_();
+  let found = false;
+  for (let i = 0; i < ops.length; i++) {
+    if (ops[i] && ops[i].id === op.id) {
+      ops[i] = Object.assign({}, ops[i], op, { attemptCount: Math.max(Number(ops[i].attemptCount || 0), op.attemptCount) });
+      found = true;
+      break;
+    }
+  }
+  if (!found) ops.push(op);
+  setCustomerSaveDurableOpsP468_(ops);
+  scheduleCustomerSaveDurableFlushP468_(op.nextRetryAt - Date.now());
+  return op;
+}
+
+function removeCustomerSaveDurableOperationP468_(id) {
+  id = String(id || '');
+  if (!id) return;
+  setCustomerSaveDurableOpsP468_(getCustomerSaveDurableOpsP468_().filter(function(op) { return op && op.id !== id; }));
+}
+
+function scheduleCustomerSaveDurableFlushP468_(delayMs) {
+  try { if (customerSaveDurableFlushTimerP468) clearTimeout(customerSaveDurableFlushTimerP468); } catch (err) {}
+  customerSaveDurableFlushTimerP468 = setTimeout(function() {
+    flushCustomerSaveDurableQueueP468_('timer');
+  }, Math.max(1000, Number(delayMs || 0) || 0));
+}
+
+function runCustomerSaveRequestOnceP468_(methodName, payload) {
+  return new Promise(function(resolve, reject) {
+    try {
+      const runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+      if (methodName === 'saveCustomerMemoFast') runner.saveCustomerMemoFast(payload);
+      else if (methodName === 'saveCustomerDetailFast') runner.saveCustomerDetailFast(payload);
+      else reject(new Error('지원하지 않는 고객 저장 메서드입니다: ' + methodName));
+    } catch (err) { reject(err); }
+  });
+}
+
+function applyCustomerSaveDurableSuccessP468_(op, res) {
+  try { applyCustomerMasterMetaFromSaveP202_(op.rowNo, op.customerNo, res); } catch(e) {}
+  try {
+    if (op.methodName === 'saveCustomerMemoFast') {
+      const memo = res && Object.prototype.hasOwnProperty.call(res, 'memo') ? res.memo : op.payload && op.payload.memo;
+      if (memo != null) applyCustomerInlinePatchOptimistic_(op.rowNo, { memo: memo });
+    } else if (res && res.values) {
+      applyCustomerInlinePatchOptimistic_(op.rowNo, res.values);
+    } else if (op.payload && op.payload.values) {
+      applyCustomerInlinePatchOptimistic_(op.rowNo, op.payload.values);
+    }
+  } catch(e) {}
+}
+
+function flushCustomerSaveDurableQueueP468_(reason) {
+  if (customerSaveDurableFlushRunningP468) return Promise.resolve({ ok: true, skipped: true });
+  const now = Date.now();
+  const due = getCustomerSaveDurableOpsP468_().filter(function(op) {
+    return op && (!Number(op.nextRetryAt || 0) || now >= Number(op.nextRetryAt || 0));
+  }).slice(0, 2);
+  if (!due.length) return Promise.resolve({ ok: true, processed: 0 });
+
+  customerSaveDurableFlushRunningP468 = true;
+  let chain = Promise.resolve();
+  due.forEach(function(op) {
+    chain = chain.then(function() {
+      return runCustomerSaveRequestOnceP468_(op.methodName, op.payload).then(function(res) {
+        applyCustomerSaveDurableSuccessP468_(op, res || {});
+        removeCustomerSaveDurableOperationP468_(op.id);
+        return res;
+      }, function(err) {
+        if (typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err)) {
+          op.attemptCount = Number(op.attemptCount || 0) + 1;
+          op.lastError = (typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : String(err || '');
+          op.nextRetryAt = Date.now() + getCustomerSaveRetryDelayP468_(op.attemptCount);
+          persistCustomerSaveDurableOperationP468_(op.methodName, op.payload, op);
+          return null;
+        }
+        // 비일시 오류는 무한 반복하지 않되, 사용자가 원인을 확인할 수 있게 1회 보존 후 다음 수동 저장에 맡깁니다.
+        op.lastError = (typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : String(err || '');
+        op.nextRetryAt = Date.now() + CUSTOMER_SAVE_DURABLE_MAX_DELAY_MS_P468;
+        persistCustomerSaveDurableOperationP468_(op.methodName, op.payload, op);
+        return null;
+      });
+    });
+  });
+  return chain.finally(function() {
+    customerSaveDurableFlushRunningP468 = false;
+    const remain = getCustomerSaveDurableOpsP468_().filter(function(op) { return op && (!Number(op.nextRetryAt || 0) || Date.now() >= Number(op.nextRetryAt || 0)); });
+    if (remain.length) scheduleCustomerSaveDurableFlushP468_(2000);
+  });
+}
+
+setTimeout(function() {
+  try { flushCustomerSaveDurableQueueP468_('startup'); } catch (err) {}
+}, 2500);
+try {
+  window.addEventListener('online', function() { try { flushCustomerSaveDurableQueueP468_('online'); } catch(e) {} });
+  window.addEventListener('visibilitychange', function() { if (document.visibilityState === 'visible') { try { flushCustomerSaveDurableQueueP468_('visible'); } catch(e) {} } });
+} catch(e) {}
+
 function enqueueCustomerSaveP220_(rowNo, customerNo, workFn, options) {
   options = options || {};
   const key = getCustomerSaveQueueKeyP220_(rowNo, customerNo);
@@ -971,11 +1133,19 @@ function commitCustomerInlineEdit_(inputId, options) {
         throw err;
       }
       const transientP460 = typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err);
-      if (!transientP460) {
-        applyCustomerInlinePatchOptimistic_(rowNo, rollback);
-        refreshCustomerInlineCellDisplay_(rowNo, key);
+      if (transientP460) {
+        try {
+          persistCustomerSaveDurableOperationP468_(key === 'memo' ? 'saveCustomerMemoFast' : 'saveCustomerDetailFast', key === 'memo'
+            ? makeCustomerMemoSavePayloadP220_(rowNo, customerNo, nextValue, { expectedMemo: originalValue, thinSave: true, skipMasterMeta: true, skipIndexQueue: true })
+            : makeCustomerSavePayloadP202_(rowNo, customerNo, patch, { clientSaveSource: 'inlineEditRetryP468', requireAuditLog: false, expectedValues: (function(){ const e = {}; e[key] = originalValue; return e; })(), fastMode: true, noSynchronousRefresh: true, thinSave: true, skipMasterMeta: true, skipIndexQueue: true }),
+            { source: 'inlineEdit', key: key, lastError: getErrorMessage_(err) });
+        } catch(e) {}
+        try { toast('저장이 대기 중입니다. 입력값은 유지되고 자동으로 다시 저장됩니다.'); } catch(e) {}
+        return { ok: true, queuedRetryP468: true, rowNo: rowNo, customerNo: customerNo, values: patch, message: '저장 대기 중' };
       }
-      try { toast(transientP460 ? '저장 재시도 후에도 지연되었습니다. 입력값은 유지됩니다.' : ('목록 즉시수정 저장 실패: ' + getErrorMessage_(err))); } catch(e) {}
+      applyCustomerInlinePatchOptimistic_(rowNo, rollback);
+      refreshCustomerInlineCellDisplay_(rowNo, key);
+      try { toast('목록 즉시수정 저장 실패: ' + getErrorMessage_(err)); } catch(e) {}
       throw err;
     });
   }, { source: 'inlineEdit', key: key });
@@ -2031,10 +2201,24 @@ function saveBusinessRegistrationModalP436_() {
       try { applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, dirty); } catch (patchErr) {}
       renderBusinessRegistrationModalP436_(allValues, false);
       const msg = getErrorMessage_(err);
+      const transientP460 = typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err);
       if (isCustomerStaleSaveErrorP202_(err)) {
         toast('저장 보류: 다른 저장과 충돌했습니다. 입력값은 유지됩니다. 그대로 다시 저장하거나 최신정보 확인 후 저장하세요.');
-      } else if (typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err)) {
-        toast('저장 지연: 서버가 바쁩니다. 입력값은 유지됩니다. 잠시 뒤 다시 저장하세요.');
+      } else if (transientP460) {
+        try {
+          persistCustomerSaveDurableOperationP468_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, dirty, {
+            clientSaveSource: 'businessRegistrationModalRetryP468',
+            requireAuditLog: false,
+            fastMode: true,
+            noSynchronousRefresh: true,
+            thinSave: true,
+            clientSavedAt: new Date().toISOString(),
+            skipMasterMeta: true,
+            skipIndexQueue: true
+          }), { source: 'businessRegistrationModal', lastError: msg });
+        } catch(e) {}
+        toast('저장 대기 중입니다. 입력값은 유지되고 자동으로 다시 저장됩니다.');
+        return { ok: true, queuedRetryP468: true, rowNo: rowNo, customerNo: customerNo, values: dirty, message: '저장 대기 중' };
       } else {
         toast('사업자등록증 저장 실패: 입력값은 유지됩니다. ' + msg);
       }

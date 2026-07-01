@@ -3,6 +3,28 @@
 let customerDetailModalRequestSeq = 0;
 let contactSelectedTagsP11 = [];
 let contactNextActionTagsP119 = [];
+let customerDetailFullRequestMapP468 = {};
+
+function getCustomerDetailFastDedupeP468_(rowNo, customerNo) {
+  rowNo = Number(rowNo) || 0;
+  const normalizedCustomerNo = (typeof normalizeCustomerNoForKey_ === 'function') ? normalizeCustomerNoForKey_(customerNo || '') : String(customerNo || '').trim();
+  const key = rowNo + '::' + normalizedCustomerNo;
+  if (!rowNo) return Promise.reject(new Error('상세조회 대상 rowNo가 없습니다.'));
+  if (customerDetailFullRequestMapP468 && customerDetailFullRequestMapP468[key]) {
+    return customerDetailFullRequestMapP468[key];
+  }
+  const promise = new Promise(function(resolve, reject) {
+    try {
+      getCustomerDetailFast_(rowNo, resolve, reject, { customerNo: normalizedCustomerNo });
+    } catch (err) {
+      reject(err);
+    }
+  }).finally(function() {
+    try { delete customerDetailFullRequestMapP468[key]; } catch (e) {}
+  });
+  customerDetailFullRequestMapP468[key] = promise;
+  return promise;
+}
 
 function openNewCustomer() {
   const modalTokenP456 = (typeof beginCustomerDetailModalSessionP456_ === 'function') ? beginCustomerDetailModalSessionP456_('new', 0, '') : 0;
@@ -52,7 +74,7 @@ function openDetail(rowNo, customerNo, options) {
     document.getElementById('modalBody').innerHTML = '<div class="loading">상세정보 불러오는 중...</div>';
   }
 
-  getCustomerDetailFast_(rowNo, function(detail) {
+  getCustomerDetailFastDedupeP468_(rowNo, targetCustomerNo).then(function(detail) {
     // 캐시 표시 후 전체 상세가 도착하면 조용히 갱신합니다.
     // 단, 사용자가 그 사이 '정보 수정'을 눌렀다면 수정 모드와 입력 중인 값을 절대 되돌리지 않습니다.
     if (requestSeq !== customerDetailModalRequestSeq) return;
@@ -65,7 +87,7 @@ function openDetail(rowNo, customerNo, options) {
     if (protectActiveInputP457 && typeof applyServerDetailSafelyP457_ === 'function') {
       applyServerDetailSafelyP457_(detail, { reason: 'asyncDetailHydration', source: 'master', neverRender: true });
       try { renderDetailSyncStatusP457_(); } catch (e) {}
-      if (typeof portalPerfEndP460_ === 'function') portalPerfEndP460_(__detailPerfP460, { fullHydrated: true, protectedInput: true, rowNo: rowNo, customerNo: targetCustomerNo });
+      if (typeof portalPerfEndP460_ === 'function') portalPerfEndP460_(__detailPerfP460, { fullHydrated: true, protectedInput: true, dedupedP468: true, rowNo: rowNo, customerNo: targetCustomerNo });
       return;
     }
     const preserveEditMode = !!isDetailEditMode || forceEditMode;
@@ -76,12 +98,12 @@ function openDetail(rowNo, customerNo, options) {
       draftValues: draftValues,
       reason: 'asyncDetailHydration'
     });
-    if (typeof portalPerfEndP460_ === 'function') portalPerfEndP460_(__detailPerfP460, { fullHydrated: true, rowNo: rowNo, customerNo: targetCustomerNo });
-  }, function(err) {
+    if (typeof portalPerfEndP460_ === 'function') portalPerfEndP460_(__detailPerfP460, { fullHydrated: true, dedupedP468: true, rowNo: rowNo, customerNo: targetCustomerNo });
+  }).catch(function(err) {
     if (typeof isCustomerDetailResponseStillRelevantP456_ === 'function' && !isCustomerDetailResponseStillRelevantP456_(modalTokenP456, rowNo, targetCustomerNo)) return;
     if (typeof portalPerfErrorP460_ === 'function') portalPerfErrorP460_(__detailPerfP460, err, { rowNo: rowNo, customerNo: targetCustomerNo });
     showModalError(err);
-  }, { forceFull: true, customerNo: targetCustomerNo });
+  });
 }
 
 function openDetailReadOnly(rowNo, customerNo) {
@@ -1344,8 +1366,11 @@ function saveDetailFields() {
         if (detailModalStillActiveP456) {
           const transientP460 = typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err);
           if (isStaleP457) showModalError('다른 사용자가 같은 고객 정보를 먼저 수정했습니다. 입력값은 보존했습니다. 최신값 확인 후 다시 저장해 주세요.');
-          else if (transientP460) { try { toast('상세정보 저장이 지연되었습니다. 입력값은 유지됩니다.'); } catch(e) {} }
+          else if (transientP460) { try { toast('상세정보 저장이 대기 중입니다. 입력값은 유지되고 자동으로 다시 저장됩니다.'); } catch(e) {} }
           else showModalError('상세정보 저장이 실패했습니다. 입력값은 화면에 보존했습니다: ' + getErrorMessage_(err));
+        }
+        if (typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err)) {
+          return { ok: true, queuedRetryP468: true, rowNo: rowNo, customerNo: targetCustomerNo, values: values, clientOperationId: opP457 && opP457.opId || '', message: '저장 대기 중' };
         }
         throw err;
       });
