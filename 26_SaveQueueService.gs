@@ -98,6 +98,25 @@ function getPortalSavePatchP473_(methodName, payload) {
   return {};
 }
 
+
+function normalizePortalSaveQueueSourceP474_(methodName, payload) {
+  payload = payload || {};
+  const raw = String(payload.clientSaveSource || payload.source || payload.saveSource || '').trim();
+  if (raw) return raw;
+  methodName = String(methodName || '').trim();
+  if (methodName === 'saveCustomerMemoFast') return 'customer.expandedMemo';
+  if (methodName === 'saveCustomerDetailFast') return 'customer.detailPatch';
+  return 'unknown.' + (methodName || 'save');
+}
+
+function buildPortalSaveConflictInfoForResponseP474_(methodName, payload, err) {
+  if (typeof getPortalDirectSaveConflictInfoP474_ === 'function') {
+    const direct = getPortalDirectSaveConflictInfoP474_(err);
+    if (direct) return direct;
+  }
+  return null;
+}
+
 function stringifyPortalSaveQueueJsonP473_(value) {
   try { return JSON.stringify(value == null ? null : value); } catch (e) { return String(value || ''); }
 }
@@ -111,9 +130,10 @@ function parsePortalSaveQueueJsonP473_(text, fallback) {
 }
 
 function isPortalServerStaleErrorP473_(err) {
+  if (typeof isPortalFieldConflictErrorP474_ === 'function' && isPortalFieldConflictErrorP474_(err)) return true;
   const code = String(err && err.code || '').trim();
   const msg = String(err && err.message || err || '');
-  return code === 'PORTAL_STALE_CUSTOMER_VERSION' || msg.indexOf('다른 사용자가 이 고객 정보를 먼저 수정') >= 0;
+  return code === 'PORTAL_STALE_CUSTOMER_VERSION' || code === 'PORTAL_FIELD_CONFLICT_P474' || msg.indexOf('다른 사용자가') >= 0 || msg.indexOf('같은 항목을 먼저 수정') >= 0;
 }
 
 function isPortalServerTransientWriteErrorP473_(err) {
@@ -165,7 +185,7 @@ function enqueueSaveFallbackP473_(methodName, payload, reason, err, statusOverri
         if (idx['상태'] && currentStatus !== statusDone) sheet.getRange(rowNo, idx['상태']).setValue(status);
         if (idx['마지막오류'] && errText) sheet.getRange(rowNo, idx['마지막오류']).setValue(errText);
         ensureSaveQueueTriggerP473_();
-        return buildQueuedSaveResponseP473_(payload, methodName, status, reason || errText, rowNo);
+        return buildQueuedSaveResponseP473_(payload, methodName, status, reason || errText, rowNo, err);
       }
     }
   }
@@ -180,7 +200,7 @@ function enqueueSaveFallbackP473_(methodName, payload, reason, err, statusOverri
     '고객번호': String(payload.customerNo || ''),
     'rowNo': Number(payload.rowNo || 0) || '',
     'methodName': methodName,
-    'source': String(payload.clientSaveSource || payload.source || ''),
+    'source': normalizePortalSaveQueueSourceP474_(methodName, payload),
     '상태': status,
     '우선순위': Number(payload.priority || 5) || 5,
     '시도횟수': 0,
@@ -193,16 +213,19 @@ function enqueueSaveFallbackP473_(methodName, payload, reason, err, statusOverri
   };
   sheet.appendRow(headers.map(function(h) { return Object.prototype.hasOwnProperty.call(rowObj, h) ? rowObj[h] : ''; }));
   ensureSaveQueueTriggerP473_();
-  return buildQueuedSaveResponseP473_(payload, methodName, status, reason || errText, sheet.getLastRow());
+  return buildQueuedSaveResponseP473_(payload, methodName, status, reason || errText, sheet.getLastRow(), err);
 }
 
-function buildQueuedSaveResponseP473_(payload, methodName, status, message, queueRowNo) {
+function buildQueuedSaveResponseP473_(payload, methodName, status, message, queueRowNo, err) {
   const patch = getPortalSavePatchP473_(methodName, payload);
   const isConflict = status === PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT;
+  const conflictInfoP474 = isConflict ? buildPortalSaveConflictInfoForResponseP474_(methodName, payload, err) : null;
   return {
     ok: true,
     queuedFallbackP473: !isConflict,
     conflictP473: isConflict,
+    conflictP474: isConflict,
+    conflictInfoP474: conflictInfoP474,
     applied: false,
     rowNo: Number(payload && payload.rowNo || 0) || 0,
     customerNo: String(payload && payload.customerNo || ''),

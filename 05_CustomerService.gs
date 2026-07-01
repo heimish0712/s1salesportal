@@ -1722,12 +1722,22 @@ function saveCustomerDetailThinCoreP462_(payload) {
     if (Object.prototype.hasOwnProperty.call(expected, key)) {
       const expectedText = getPortalMasterCompareTextP280_(key, expected[key]);
       if (currentText !== expectedText && currentText !== nextValue) {
-        throw makePortalStaleCustomerErrorP202_(getPortalCustomerMasterMetaP202_(sheet, rowNo), payload.baseMasterVersion || '');
+        throw makePortalFieldConflictErrorP474_({
+          rowNo: rowNo,
+          customerNo: customerNo,
+          key: key,
+          label: def.label || key,
+          currentValue: currentText,
+          expectedValue: expectedText,
+          attemptedValue: nextValue,
+          payload: payload,
+          source: 'customer.detailThin'
+        });
       }
     }
     appliedValues[key] = nextValue;
     if (currentText !== nextValue) {
-      targets.push({ key: key, label: def.label || key, col: col, writeValue: writeValue, value: nextValue });
+      targets.push({ key: key, label: def.label || key, col: col, writeValue: writeValue, value: nextValue, oldValue: currentText });
       changed.push(def.label || key);
       changedKeys.push(key);
       changedValues[key] = nextValue;
@@ -1763,10 +1773,14 @@ function saveCustomerDetailThinCoreP462_(payload) {
 
   let masterMeta = null;
   let indexUpdate = null;
+  let fieldChangeLogP474 = null;
   if (targets.length) {
     if (payload.skipMasterMeta !== true) {
       masterMeta = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-thin-save');
     }
+    fieldChangeLogP474 = recordPortalFieldChangesP474_(targets.map(function(t) {
+      return { key: t.key, label: t.label, oldValue: t.oldValue, newValue: t.value };
+    }), Object.assign({}, payload, { rowNo: rowNo, customerNo: customerNo, source: normalizePortalSaveSourceP474_(payload, 'customer.detailThin') }));
     if (payload.skipIndexQueue !== true) indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, changedKeys, masterMeta, 'WEBAPP_CUSTOMER_THIN_SAVE');
   }
 
@@ -1779,6 +1793,7 @@ function saveCustomerDetailThinCoreP462_(payload) {
     values: appliedValues,
     changedValues: changedValues,
     indexUpdate: indexUpdate,
+    fieldChangeLogP474: fieldChangeLogP474,
     masterVersion: masterMeta && masterMeta.version || '',
     masterUpdatedAt: masterMeta && masterMeta.updatedAt || '',
     masterEditor: masterMeta && masterMeta.editor || '',
@@ -1808,14 +1823,26 @@ function saveCustomerMemoThinCoreP462_(rowNoOrPayload, memo) {
   if (payload.expectedValues && Object.prototype.hasOwnProperty.call(payload.expectedValues, 'memo')) {
     const expectedMemo = String(payload.expectedValues.memo == null ? '' : payload.expectedValues.memo);
     if (currentMemo !== expectedMemo && currentMemo !== nextMemo) {
-      throw makePortalStaleCustomerErrorP202_(getPortalCustomerMasterMetaP202_(sheet, rowNo), payload.baseMasterVersion || '');
+      throw makePortalFieldConflictErrorP474_({
+        rowNo: rowNo,
+        customerNo: customerNo,
+        key: 'memo',
+        label: '마스터시트 메모',
+        currentValue: currentMemo,
+        expectedValue: expectedMemo,
+        attemptedValue: nextMemo,
+        payload: payload,
+        source: 'customer.memoThin'
+      });
     }
   }
   if (currentMemo !== nextMemo) sheet.getRange(rowNo, memoCol).setValue(nextMemo);
   let masterMeta = null;
   let indexUpdate = null;
+  let fieldChangeLogP474 = null;
   if (currentMemo !== nextMemo) {
     if (payload.skipMasterMeta !== true) masterMeta = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-memo-thin-save');
+    fieldChangeLogP474 = recordPortalFieldChangesP474_([{ key: 'memo', label: '마스터시트 메모', oldValue: currentMemo, newValue: nextMemo }], Object.assign({}, payload, { rowNo: rowNo, customerNo: customerNo, source: normalizePortalSaveSourceP474_(payload, 'customer.memoThin') }));
     if (payload.skipIndexQueue !== true) indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, ['memo'], masterMeta, 'WEBAPP_CUSTOMER_MEMO_THIN_SAVE');
   }
   return {
@@ -1828,6 +1855,7 @@ function saveCustomerMemoThinCoreP462_(rowNoOrPayload, memo) {
     values: { memo: nextMemo },
     changedValues: currentMemo !== nextMemo ? { memo: nextMemo } : {},
     indexUpdate: indexUpdate,
+    fieldChangeLogP474: fieldChangeLogP474,
     masterVersion: masterMeta && masterMeta.version || '',
     masterUpdatedAt: masterMeta && masterMeta.updatedAt || '',
     masterEditor: masterMeta && masterMeta.editor || '',
@@ -1836,6 +1864,187 @@ function saveCustomerMemoThinCoreP462_(rowNoOrPayload, memo) {
     timingInnerP462: { totalMs: new Date().getTime() - started, changed: currentMemo !== nextMemo },
     message: '메모 저장 완료'
   };
+}
+
+
+// P474: field-level direct save conflict + field change log ------------------
+// 원칙: 같은 고객이라도 다른 필드는 서로 막지 않습니다. expectedValues가 제공된 필드만 현재값과 비교합니다.
+const PORTAL_FIELD_CHANGE_LOG_P474 = {
+  SHEET_NAME: '필드변경로그_DB',
+  HEADERS: ['변경일시','작업ID','사용자','세션ID','고객번호','rowNo','source','필드명','헤더명','이전값요약','변경값요약','상태']
+};
+
+function getPortalActiveUserEmailP474_() {
+  try { return String(Session.getActiveUser().getEmail() || '').trim(); } catch (e) { return ''; }
+}
+
+function getPortalFieldChangeLogSheetP474_() {
+  const ss = getWebAppDbSpreadsheet_();
+  let sheet = ss.getSheetByName(PORTAL_FIELD_CHANGE_LOG_P474.SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(PORTAL_FIELD_CHANGE_LOG_P474.SHEET_NAME);
+  const headers = PORTAL_FIELD_CHANGE_LOG_P474.HEADERS;
+  const width = Math.max(sheet.getLastColumn(), headers.length);
+  let current = [];
+  if (sheet.getLastRow() >= 1) current = sheet.getRange(1,1,1,width).getDisplayValues()[0].map(function(v){ return String(v||'').trim(); });
+  const seen = {}; current.forEach(function(h){ if(h) seen[h]=true; });
+  let changed = current.filter(Boolean).length === 0;
+  headers.forEach(function(h){ if(!seen[h]){ current.push(h); seen[h]=true; changed=true; } });
+  if (changed) { sheet.getRange(1,1,1,current.length).setValues([current]); try { sheet.setFrozenRows(1); } catch(e){} }
+  return sheet;
+}
+
+function truncatePortalFieldLogValueP474_(value) {
+  const text = String(value == null ? '' : value);
+  return text.length > 900 ? text.slice(0,900) + '…' : text;
+}
+
+function normalizePortalSaveSourceP474_(payload, fallback) {
+  payload = payload || {};
+  const src = String(payload.clientSaveSource || payload.source || payload.saveSource || fallback || '').trim();
+  if (src) return src;
+  return 'unknown.customerSave';
+}
+
+function recordPortalFieldChangesP474_(items, ctx) {
+  items = Array.isArray(items) ? items : [];
+  if (!items.length) return { ok: true, count: 0 };
+  ctx = ctx || {};
+  try {
+    const sheet = getPortalFieldChangeLogSheetP474_();
+    const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getDisplayValues()[0].map(function(v){ return String(v||'').trim(); });
+    const now = new Date();
+    const user = getPortalActiveUserEmailP474_();
+    const rows = items.map(function(item){
+      const obj = {
+        '변경일시': now,
+        '작업ID': String(ctx.operationId || ctx.clientOperationId || ''),
+        '사용자': user,
+        '세션ID': String(ctx.sessionId || ctx.clientSessionId || ''),
+        '고객번호': String(ctx.customerNo || ''),
+        'rowNo': Number(ctx.rowNo || 0) || '',
+        'source': normalizePortalSaveSourceP474_(ctx, ''),
+        '필드명': String(item.key || ''),
+        '헤더명': String(item.label || item.header || item.key || ''),
+        '이전값요약': truncatePortalFieldLogValueP474_(item.oldValue),
+        '변경값요약': truncatePortalFieldLogValueP474_(item.newValue),
+        '상태': 'DONE'
+      };
+      return headers.map(function(h){ return Object.prototype.hasOwnProperty.call(obj,h) ? obj[h] : ''; });
+    });
+    sheet.getRange(sheet.getLastRow()+1,1,rows.length,headers.length).setValues(rows);
+    return { ok: true, count: rows.length };
+  } catch (err) {
+    Logger.log('P474 필드변경로그 기록 실패: ' + (err && err.stack || err));
+    return { ok: false, count: 0, error: String(err && err.message || err) };
+  }
+}
+
+function findLatestPortalFieldChangeP474_(customerNo, rowNo, fieldKey) {
+  try {
+    const sheet = getPortalFieldChangeLogSheetP474_();
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return null;
+    const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getDisplayValues()[0].map(function(v){ return String(v||'').trim(); });
+    const idx = {}; headers.forEach(function(h,i){ if(h) idx[h]=i; });
+    const rowCount = Math.min(500, lastRow-1);
+    const values = sheet.getRange(lastRow-rowCount+1,1,rowCount,headers.length).getValues();
+    const cno = String(customerNo || '').trim();
+    const rno = Number(rowNo || 0) || 0;
+    const fkey = String(fieldKey || '').trim();
+    for (let i=values.length-1; i>=0; i--) {
+      const row = values[i];
+      if (idx['고객번호'] != null && cno && String(row[idx['고객번호']] || '').trim() !== cno) continue;
+      if (idx['rowNo'] != null && rno && Number(row[idx['rowNo']] || 0) !== rno) continue;
+      if (idx['필드명'] != null && fkey && String(row[idx['필드명']] || '').trim() !== fkey) continue;
+      return {
+        changedAt: row[idx['변경일시']] instanceof Date ? row[idx['변경일시']].toISOString() : String(row[idx['변경일시']] || ''),
+        user: idx['사용자'] != null ? String(row[idx['사용자']] || '') : '',
+        source: idx['source'] != null ? String(row[idx['source']] || '') : '',
+        field: idx['필드명'] != null ? String(row[idx['필드명']] || '') : fkey,
+        header: idx['헤더명'] != null ? String(row[idx['헤더명']] || '') : '',
+        oldValueSummary: idx['이전값요약'] != null ? String(row[idx['이전값요약']] || '') : '',
+        newValueSummary: idx['변경값요약'] != null ? String(row[idx['변경값요약']] || '') : ''
+      };
+    }
+  } catch (err) {
+    Logger.log('P474 최신 필드 변경 조회 실패: ' + (err && err.stack || err));
+  }
+  return null;
+}
+
+function makePortalFieldConflictErrorP474_(ctx) {
+  ctx = ctx || {};
+  const latest = findLatestPortalFieldChangeP474_(ctx.customerNo, ctx.rowNo, ctx.key) || {};
+  const info = {
+    type: 'FIELD_CONFLICT',
+    rowNo: Number(ctx.rowNo || 0) || 0,
+    customerNo: String(ctx.customerNo || ''),
+    field: String(ctx.key || ''),
+    label: String(ctx.label || ctx.key || ''),
+    source: normalizePortalSaveSourceP474_(ctx.payload || {}, ctx.source || ''),
+    expectedValue: String(ctx.expectedValue == null ? '' : ctx.expectedValue),
+    currentValue: String(ctx.currentValue == null ? '' : ctx.currentValue),
+    attemptedValue: String(ctx.attemptedValue == null ? '' : ctx.attemptedValue),
+    latestChange: latest
+  };
+  const err = new Error('다른 사용자가 같은 항목을 먼저 수정했습니다. 최신 내용을 확인한 뒤 다시 저장해 주세요.');
+  err.code = 'PORTAL_FIELD_CONFLICT_P474';
+  err.conflictInfoP474 = info;
+  return err;
+}
+
+function isPortalFieldConflictErrorP474_(err) {
+  return String(err && err.code || '') === 'PORTAL_FIELD_CONFLICT_P474' || !!(err && err.conflictInfoP474);
+}
+
+function getPortalDirectSaveConflictInfoP474_(err) {
+  return (err && err.conflictInfoP474) || null;
+}
+
+function getPortalCurrentFieldValueP474_(sheet, rowNo, key, col) {
+  if (!sheet || !rowNo || !col) return '';
+  if (String(key || '') === 'memo') return String(sheet.getRange(rowNo, col).getValue() || '');
+  return String(sheet.getRange(rowNo, col).getDisplayValue() || '').trim();
+}
+
+function getCustomerFieldChangesSinceP474(payload) {
+  payload = payload || {};
+  const sinceMs = Number(payload.sinceMs || 0) || 0;
+  const visible = Array.isArray(payload.visibleCustomers) ? payload.visibleCustomers : [];
+  const wanted = {};
+  visible.forEach(function(item){
+    const rowNo = Number(item && item.rowNo || 0) || 0;
+    const customerNo = String(item && item.customerNo || '').trim();
+    if (rowNo || customerNo) wanted[rowNo + ':' + customerNo] = true;
+  });
+  const sheet = getPortalFieldChangeLogSheetP474_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { ok: true, changes: [], nowMs: Date.now() };
+  const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getDisplayValues()[0].map(function(v){ return String(v||'').trim(); });
+  const idx = {}; headers.forEach(function(h,i){ if(h) idx[h]=i; });
+  const rowCount = Math.min(600, lastRow-1);
+  const values = sheet.getRange(lastRow-rowCount+1,1,rowCount,headers.length).getValues();
+  const changes = [];
+  values.forEach(function(row){
+    const d = row[idx['변경일시']];
+    const ms = d instanceof Date ? d.getTime() : Date.parse(String(d || ''));
+    if (sinceMs && (!ms || ms <= sinceMs)) return;
+    const rowNo = Number(row[idx['rowNo']] || 0) || 0;
+    const customerNo = String(row[idx['고객번호']] || '').trim();
+    if (Object.keys(wanted).length && !wanted[rowNo + ':' + customerNo]) return;
+    changes.push({
+      rowNo: rowNo,
+      customerNo: customerNo,
+      field: String(row[idx['필드명']] || ''),
+      label: String(row[idx['헤더명']] || ''),
+      valueSummary: String(row[idx['변경값요약']] || ''),
+      changedBy: String(row[idx['사용자']] || ''),
+      changedAt: d instanceof Date ? d.toISOString() : String(d || ''),
+      changedAtMs: ms || 0,
+      source: String(row[idx['source']] || '')
+    });
+  });
+  return { ok: true, changes: changes, nowMs: Date.now() };
 }
 
 

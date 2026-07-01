@@ -1039,6 +1039,191 @@ function protectIncomingDetailMemoWithExpandedDraftP473_(detail) {
   return detail;
 }
 
+
+// P474: field-level conflict popup ------------------------------------------------
+function formatPortalConflictDateP474_(isoOrText) {
+  if (!isoOrText) return '-';
+  const d = new Date(isoOrText);
+  if (isNaN(d.getTime())) return String(isoOrText || '-');
+  const pad = n => String(n).padStart(2, '0');
+  return String(d.getFullYear()).slice(2) + '.' + pad(d.getMonth()+1) + '.' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function summarizeConflictTextP474_(value, maxLen) {
+  const text = String(value == null ? '' : value);
+  maxLen = Number(maxLen) || 900;
+  return text.length > maxLen ? text.slice(0, maxLen) + '\n…' : text;
+}
+
+function closePortalSaveConflictDialogP474_() {
+  const old = document.getElementById('portalSaveConflictOverlayP474');
+  if (old) old.remove();
+}
+
+function applyPortalConflictLatestValueP474_(info, options) {
+  options = options || {};
+  if (!info) return;
+  const rowNo = Number(info.rowNo || (options && options.rowNo) || 0) || 0;
+  const customerNo = String(info.customerNo || (options && options.customerNo) || '').trim();
+  const field = String(info.field || options.key || '').trim();
+  const currentValue = String(info.currentValue == null ? '' : info.currentValue);
+  if (field === 'memo' && rowNo) {
+    const el = document.getElementById('expandedMemo_' + rowNo);
+    if (el) {
+      el.value = currentValue;
+      el.setAttribute('data-original', currentValue);
+      updateExpandedMemoDraftP473_(rowNo, customerNo || el.getAttribute('data-customer-no') || '', currentValue, { dirty: false, focused: false, pendingOperationId: '' });
+    }
+    applyCustomerMemoOptimistic_(rowNo, currentValue);
+    refreshCustomerInlineCellDisplay_(rowNo, 'memo');
+    return;
+  }
+  if (field && rowNo) {
+    const patch = {}; patch[field] = currentValue;
+    applyCustomerInlinePatchOptimistic_(rowNo, patch);
+    refreshCustomerInlineCellDisplay_(rowNo, field);
+  }
+}
+
+function showPortalSaveConflictDialogP474_(resOrErr, options) {
+  options = options || {};
+  const info = (resOrErr && resOrErr.conflictInfoP474) || (resOrErr && resOrErr.conflictInfo) || {};
+  const rowNo = Number(info.rowNo || options.rowNo || 0) || 0;
+  const customerNo = String(info.customerNo || options.customerNo || '').trim();
+  const field = String(info.field || options.key || '').trim();
+  const label = String(info.label || options.label || field || '항목').trim();
+  const latest = info.latestChange || {};
+  const currentValue = String(info.currentValue == null ? '' : info.currentValue);
+  const attemptedValue = String(info.attemptedValue == null ? '' : info.attemptedValue);
+  const expectedValue = String(info.expectedValue == null ? '' : info.expectedValue);
+
+  closePortalSaveConflictDialogP474_();
+  const overlay = document.createElement('div');
+  overlay.id = 'portalSaveConflictOverlayP474';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(15,23,42,.38);display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.innerHTML = '' +
+    '<div style="width:min(780px,96vw);max-height:88vh;overflow:auto;background:#fff;border-radius:16px;box-shadow:0 22px 70px rgba(15,23,42,.28);border:1px solid #d0d5dd;">' +
+      '<div style="padding:18px 20px;border-bottom:1px solid #eaecf0;display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">' +
+        '<div><div style="font-size:18px;font-weight:900;color:#b42318;">저장 충돌: 같은 항목이 먼저 수정되었습니다</div>' +
+        '<div style="margin-top:6px;font-size:13px;color:#667085;line-height:1.5;">같은 고객의 같은 항목을 다른 사용자가 먼저 저장했습니다. 입력값은 덮어쓰지 않았습니다.</div></div>' +
+        '<button type="button" id="portalConflictCloseTopP474" style="border:0;background:#f2f4f7;border-radius:8px;padding:8px 10px;cursor:pointer;">닫기</button>' +
+      '</div>' +
+      '<div style="padding:16px 20px;display:grid;grid-template-columns:130px 1fr;gap:8px 12px;font-size:13px;line-height:1.5;">' +
+        '<div style="color:#667085;font-weight:700;">고객번호</div><div>' + esc(customerNo || '-') + ' / row ' + esc(rowNo || '-') + '</div>' +
+        '<div style="color:#667085;font-weight:700;">충돌 항목</div><div>' + esc(label) + ' <span style="color:#98a2b3;">(' + esc(field) + ')</span></div>' +
+        '<div style="color:#667085;font-weight:700;">먼저 수정한 사용자</div><div>' + esc(latest.user || '확인 불가') + '</div>' +
+        '<div style="color:#667085;font-weight:700;">수정 시각</div><div>' + esc(formatPortalConflictDateP474_(latest.changedAt)) + '</div>' +
+        '<div style="color:#667085;font-weight:700;">수정 화면/source</div><div>' + esc(latest.source || info.source || '-') + '</div>' +
+      '</div>' +
+      '<div style="padding:0 20px 18px 20px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div><div style="font-weight:800;margin-bottom:6px;color:#344054;">현재 마스터 최신값</div><textarea readonly style="width:100%;height:190px;resize:vertical;border:1px solid #d0d5dd;border-radius:10px;padding:10px;font-family:inherit;font-size:12px;line-height:1.45;background:#f9fafb;">' + esc(summarizeConflictTextP474_(currentValue)) + '</textarea></div>' +
+        '<div><div style="font-weight:800;margin-bottom:6px;color:#344054;">내가 저장하려던 값</div><textarea readonly id="portalConflictAttemptedP474" style="width:100%;height:190px;resize:vertical;border:1px solid #d0d5dd;border-radius:10px;padding:10px;font-family:inherit;font-size:12px;line-height:1.45;background:#fff7ed;">' + esc(summarizeConflictTextP474_(attemptedValue)) + '</textarea></div>' +
+      '</div>' +
+      '<div style="padding:14px 20px;border-top:1px solid #eaecf0;display:flex;gap:8px;justify-content:flex-end;">' +
+        '<button type="button" id="portalConflictCopyMineP474" style="border:1px solid #d0d5dd;background:#fff;border-radius:9px;padding:9px 12px;cursor:pointer;font-weight:700;">내 입력내용 복사</button>' +
+        '<button type="button" id="portalConflictLoadLatestP474" style="border:0;background:#175cd3;color:#fff;border-radius:9px;padding:9px 12px;cursor:pointer;font-weight:800;">최신값 불러오기</button>' +
+        '<button type="button" id="portalConflictCloseP474" style="border:0;background:#475467;color:#fff;border-radius:9px;padding:9px 12px;cursor:pointer;font-weight:800;">닫기</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  const close = function(){ closePortalSaveConflictDialogP474_(); };
+  document.getElementById('portalConflictCloseTopP474').onclick = close;
+  document.getElementById('portalConflictCloseP474').onclick = close;
+  document.getElementById('portalConflictLoadLatestP474').onclick = function(){
+    applyPortalConflictLatestValueP474_(info, options);
+    close();
+    toast('최신값을 불러왔습니다. 다시 수정 후 저장하세요.');
+  };
+  document.getElementById('portalConflictCopyMineP474').onclick = function(){
+    const text = attemptedValue;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function(){ toast('내 입력내용을 복사했습니다.'); }, function(){ alert(text); });
+    } else {
+      alert(text);
+    }
+  };
+}
+
+function isPortalSaveConflictResponseP474_(res) {
+  return !!(res && (res.conflictP474 || res.conflictP473 || res.status === 'CONFLICT'));
+}
+
+
+// P474: 다른 사용자의 필드 변경을 화면에 부분 반영합니다. 수정 중인 필드는 절대 덮지 않습니다.
+let customerFieldChangeLastPollMsP474 = Date.now();
+let customerFieldChangePollRunningP474 = false;
+
+function collectVisibleCustomerKeysP474_() {
+  const map = {};
+  const out = [];
+  function add(rowNo, customerNo) {
+    rowNo = Number(rowNo) || 0;
+    customerNo = normalizeCustomerNoForKey_(customerNo || '');
+    if (!rowNo && !customerNo) return;
+    const key = rowNo + ':' + customerNo;
+    if (map[key]) return;
+    map[key] = true;
+    out.push({ rowNo: rowNo, customerNo: customerNo });
+  }
+  try { ((lastCustomerResultResponse && lastCustomerResultResponse.rows) || []).forEach(function(r){ add(r.rowNo, r.customerNo); }); } catch(e) {}
+  try { if (currentDetail) add(currentDetail.rowNo, currentDetail.customerNo); } catch(e) {}
+  try { if (customerExpandedRowNo) { const r = findCustomerRowSummaryByRowNo_(customerExpandedRowNo) || {}; add(customerExpandedRowNo, r.customerNo); } } catch(e) {}
+  return out.slice(0, 60);
+}
+
+function isCustomerFieldDirtyOrFocusedP474_(rowNo, customerNo, field) {
+  field = String(field || '').trim();
+  if (field === 'memo') {
+    const entry = findExpandedMemoDraftEntryP473_(rowNo, customerNo);
+    if (entry && (entry.dirty || entry.focused || entry.pendingOperationId)) return true;
+    const el = document.getElementById('expandedMemo_' + rowNo);
+    if (el && document.activeElement === el) return true;
+  }
+  try {
+    const active = window.customerInlineEditActive || null;
+    if (active && Number(active.rowNo || 0) === Number(rowNo) && String(active.key || '') === field) return true;
+  } catch(e) {}
+  return false;
+}
+
+function applyCustomerExternalFieldChangeP474_(change) {
+  if (!change) return;
+  const rowNo = Number(change.rowNo || 0) || 0;
+  const customerNo = String(change.customerNo || '').trim();
+  const field = String(change.field || '').trim();
+  if (!rowNo || !field) return;
+  if (isCustomerFieldDirtyOrFocusedP474_(rowNo, customerNo, field)) return;
+  // 메모는 장문이므로 polling summary로 덮지 않습니다. 메모 충돌은 팝업/최신값 불러오기로 처리합니다.
+  if (field === 'memo') return;
+  const patch = {}; patch[field] = String(change.valueSummary == null ? '' : change.valueSummary);
+  applyCustomerInlinePatchOptimistic_(rowNo, patch);
+  try { refreshCustomerInlineCellDisplay_(rowNo, field); } catch(e) {}
+}
+
+function pollCustomerFieldChangesP474_() {
+  if (customerFieldChangePollRunningP474) return;
+  const visible = collectVisibleCustomerKeysP474_();
+  if (!visible.length) return;
+  customerFieldChangePollRunningP474 = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      customerFieldChangePollRunningP474 = false;
+      if (res && res.nowMs) customerFieldChangeLastPollMsP474 = Number(res.nowMs) || Date.now();
+      const changes = res && Array.isArray(res.changes) ? res.changes : [];
+      changes.forEach(applyCustomerExternalFieldChangeP474_);
+    })
+    .withFailureHandler(function() { customerFieldChangePollRunningP474 = false; })
+    .getCustomerFieldChangesSinceP474({ sinceMs: customerFieldChangeLastPollMsP474, visibleCustomers: visible });
+}
+
+try {
+  if (!window.__customerFieldChangePollTimerP474) {
+    window.__customerFieldChangePollTimerP474 = setInterval(function(){
+      try { pollCustomerFieldChangesP474_(); } catch(e) {}
+    }, 15000);
+  }
+} catch(e) {}
+
 function enqueueCustomerSaveP220_(rowNo, customerNo, workFn, options) {
   options = options || {};
   const key = getCustomerSaveQueueKeyP220_(rowNo, customerNo);
@@ -1123,6 +1308,7 @@ function makeCustomerMemoSavePayloadP220_(rowNo, customerNo, memoValue, options)
     baseMasterVersion: getBaseMasterVersionForCustomerSaveP202_(rowNo, customerNo)
   };
   payload.clientSaveSource = String(options.clientSaveSource || 'customer.memo');
+  payload.source = payload.clientSaveSource;
   if (Object.prototype.hasOwnProperty.call(options, 'expectedMemo')) payload.expectedValues = { memo: String(options.expectedMemo == null ? '' : options.expectedMemo) };
   payload.clientOperationId = String(options.clientOperationId || ('DOP_' + Date.now() + '_' + Math.floor(Math.random() * 1000000)));
   if (Object.prototype.hasOwnProperty.call(options, 'thinSave')) payload.thinSave = !!options.thinSave;
@@ -1213,6 +1399,10 @@ function commitCustomerInlineEdit_(inputId, options) {
       request = runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, values, { clientSaveSource: 'inlineEdit', requireAuditLog: false, expectedValues: expected, fastMode: true, noSynchronousRefresh: true, thinSave: true, skipMasterMeta: true, skipIndexQueue: true }));
     }
     return request.then(function(res) {
+      if (isPortalSaveConflictResponseP474_(res)) {
+        showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: customerNo, key: key, label: key });
+        return res;
+      }
       applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
       if (key === 'memo' && res && Object.prototype.hasOwnProperty.call(res, 'memo')) {
         applyCustomerInlinePatchOptimistic_(rowNo, { memo: res.memo });
@@ -2548,7 +2738,7 @@ function saveExpandedCustomerMemo(rowNo) {
   applyCustomerMemoOptimistic_(rowNo, memoValue);
   // P473: 여기서 renderResults()로 전체 목록을 다시 그리면 textarea focus/value가 날아갈 수 있습니다.
   // 캐시만 optimistic 반영하고 현재 DOM은 그대로 유지합니다.
-  toast('메모 저장 중입니다. 입력값은 화면에 유지됩니다.');
+  
 
   enqueueCustomerSaveP220_(rowNo, targetCustomerNo, function() {
     const payload = makeCustomerMemoSavePayloadP220_(rowNo, targetCustomerNo, memoValue, {
@@ -2562,16 +2752,16 @@ function saveExpandedCustomerMemo(rowNo) {
         if (btn) { btn.disabled = false; btn.textContent = '저장'; }
         applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res);
         applyCustomerMemoOptimistic_(rowNo, memoValue);
-        if (res && res.conflictP473) {
+        if (isPortalSaveConflictResponseP474_(res)) {
           markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
-          toast('메모 저장 충돌 확인 필요: 입력값은 유지했습니다.');
+          showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: targetCustomerNo, key: 'memo', label: '마스터시트 메모' });
         } else if (res && res.queuedFallbackP473) {
-          markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
+          markExpandedMemoSaveDoneP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
           try { persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'customer.expandedMemo', key: 'memo', lastError: 'serverQueuedP473' }); } catch(e) {}
-          toast('메모 저장이 대기 중입니다. 입력값은 유지되고 자동으로 다시 저장됩니다.');
+          toast('저장완료');
         } else {
           markExpandedMemoSaveDoneP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
-          toast('메모가 마스터시트에 저장되었습니다.');
+          toast('저장완료');
         }
         return res;
       }, function(err) {

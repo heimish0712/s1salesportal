@@ -820,6 +820,101 @@ function savePortalSupportRequestCoreP210_(payload) {
   };
 }
 
+
+/*******************************************************
+ * P474 영업지원요청 처리 저장 초경량 경로
+ * - 신규 접수는 기존 savePortalSupportRequest 유지
+ * - 기존 요청의 처리자/처리내용/완료시각/진행상태/자동발송확인만 빠르게 갱신
+ *******************************************************/
+function savePortalSupportProcessThinP474(payload) {
+  assertPortalCanWriteSupport_();
+  const perm = getPortalCurrentPermission_();
+  if (!perm.canCompleteSupport) throw new Error('영업지원 처리 권한이 없습니다.');
+  payload = payload || {};
+  const rowNo = Number(payload.rowNo || 0) || 0;
+  if (rowNo < PORTAL_CONFIG.SUPPORT_DATA_START_ROW) throw new Error('영업지원 요청 행 번호가 올바르지 않습니다.');
+
+  const sheet = ensurePortalSupportSheet_();
+  const headerMap = getPortalSupportHeaderMap_(sheet);
+  ensurePortalSupportHeadersForWriteP210_(sheet, headerMap);
+  ensurePortalSupportRowExistsP210_(sheet, rowNo);
+
+  const writeLastCol = getPortalSupportWriteLastColP210_(sheet, headerMap);
+  const existingValues = sheet.getRange(rowNo, 1, 1, writeLastCol).getDisplayValues()[0] || [];
+  const existingItem = buildPortalSupportRowObject_(existingValues, rowNo, headerMap);
+
+  let status = String(payload.status || existingItem.status || '접수').trim() || '접수';
+  let handler = String(payload.handler || '').trim();
+  if ((status === '처리중' || status === '완료' || String(payload.processContent || '').trim() || String(payload.autoSendCheck || '').trim()) && !handler) {
+    handler = getPortalSupportCurrentHandlerNameP260_(perm);
+  }
+  const completedAt = normalizePortalSupportCompletedAt_(payload.completedAt, status);
+  const processContent = String(payload.processContent || '').trim();
+  const autoSendCheck = String(payload.autoSendCheck || '').trim();
+
+  const fields = {
+    '처리자': handler,
+    '처리내용': processContent,
+    '완료 시각': completedAt,
+    '진행 상태': status,
+    '자동발송 확인': autoSendCheck
+  };
+
+  const beforeMap = {
+    '처리자': existingItem.handler || '',
+    '처리내용': existingItem.processContent || '',
+    '완료 시각': existingItem.completedAt || '',
+    '진행 상태': existingItem.status || '',
+    '자동발송 확인': existingItem.autoSendCheck || ''
+  };
+
+  Object.keys(fields).forEach(function(header) {
+    const col = headerMap[header] || ensurePortalSupportColumn_(sheet, headerMap, header);
+    if (col) sheet.getRange(rowNo, col).setValue(fields[header]);
+  });
+
+  // 전체 캐시를 즉시 다 지우는 대신 bust 값만 갱신합니다. 프론트는 해당 row만 부분 갱신합니다.
+  try { bumpPortalSupportCacheBustV64_(); } catch (e) {}
+
+  const latestValues = sheet.getRange(rowNo, 1, 1, writeLastCol).getDisplayValues()[0] || [];
+  const item = enrichPortalSupportItemWithMasterCustomerInfoP448_(buildPortalSupportRowObject_(latestValues, rowNo, headerMap));
+
+  try {
+    if (typeof recordPortalFieldChangesP474_ === 'function') {
+      const changed = Object.keys(fields).filter(function(h){ return String(beforeMap[h] || '') !== String(fields[h] || ''); }).map(function(h){
+        return { key: 'support.' + h, label: h, oldValue: beforeMap[h], newValue: fields[h] };
+      });
+      recordPortalFieldChangesP474_(changed, {
+        rowNo: rowNo,
+        customerNo: item.customerNo || existingItem.customerNo || '',
+        operationId: String(payload.clientRequestId || payload.clientOperationId || ''),
+        source: 'support.process',
+        clientSaveSource: 'support.process'
+      });
+    }
+  } catch (e) {}
+
+  try {
+    appendPortalActivityLog_({
+      actionType: '영업지원처리',
+      screen: '영업지원 요청',
+      customerNo: item.customerNo || '',
+      company: item.customerName || '',
+      summary: '영업지원 처리 저장: ' + (item.receiptNo || rowNo) + ' / ' + status,
+      detail: { rowNo: rowNo, receiptNo: item.receiptNo || '', status: status, thinP474: true }
+    });
+  } catch (e) {}
+
+  return {
+    ok: true,
+    thinP474: true,
+    rowNo: rowNo,
+    receiptNo: item.receiptNo || existingItem.receiptNo || '',
+    message: '영업지원 처리 저장완료',
+    item: item
+  };
+}
+
 function ensurePortalSupportHeadersForWriteP210_(sheet, headerMap) {
   (PORTAL_CONFIG.SUPPORT_HEADERS || []).forEach(function(header) {
     if (!headerMap[header]) ensurePortalSupportColumn_(sheet, headerMap, header);

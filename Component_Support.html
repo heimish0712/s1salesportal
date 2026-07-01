@@ -1067,29 +1067,38 @@ function saveSupportRequestFromModal() {
   payload.clientRequestId = payload.clientRequestId || makePortalSupportClientRequestIdP26_(payload.rowNo ? 'SUPSAVE' : 'SUPNEW');
   const btn = document.getElementById('supportSaveBtn');
   if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; btn.dataset.requestId = payload.clientRequestId; }
-  google.script.run
+  const saveMethodP474 = payload.rowNo ? 'savePortalSupportProcessThinP474' : 'savePortalSupportRequest';
+  const runnerP474 = google.script.run
     .withSuccessHandler(function(res) {
       if (btn && btn.dataset.requestId && btn.dataset.requestId !== payload.clientRequestId) return;
       if (btn) delete btn.dataset.requestId;
-      toast((res && res.message) || '저장되었습니다.');
+      toast((res && res.message) || '저장완료');
       clearSupportDetailCacheV78_(payload.rowNo);
       try {
         if (supportCurrentData && Array.isArray(supportCurrentData.rows) && res && res.item) {
+          let foundP474 = false;
           supportCurrentData.rows = supportCurrentData.rows.map(function(r) {
-            return Number(r && r.rowNo) === Number(res.item.rowNo) ? res.item : r;
+            if (Number(r && r.rowNo) === Number(res.item.rowNo)) { foundP474 = true; return res.item; }
+            return r;
           });
+          if (!foundP474 && !payload.rowNo) supportCurrentData.rows.unshift(res.item);
           saveSupportCacheV56_(supportCurrentData);
+          renderSupportStatusFilter_(supportCurrentData.statusOptions || []);
+          renderSupportBoard(supportCurrentData.rows || []);
         }
       } catch (e) {}
       closeSupportRequestModal();
       if (activeSupportWorkV64 && Number(activeSupportWorkV64.rowNo) === Number(payload.rowNo)) clearActiveSupportWorkV64_();
-      loadSupportPage({ force: true });
+      // P474: 기존 요청 처리 저장은 해당 row만 부분 갱신합니다. 전체 force reload는 체감 속도를 크게 늦춥니다.
+      if (!payload.rowNo) loadSupportPage({ force: true });
+      else setTimeout(function(){ try { loadSupportPage({ force: false }); } catch(e){} }, 1200);
     })
     .withFailureHandler(function(err) {
       if (btn) { btn.disabled = false; btn.textContent = '저장'; delete btn.dataset.requestId; }
       alert('영업지원 요청 저장 실패: ' + normalizePortalSaveErrorMessageP26_(err, '저장하지 못했습니다. 입력 내용은 유지됩니다.'));
-    })
-    .savePortalSupportRequest(payload);
+    });
+  if (saveMethodP474 === 'savePortalSupportProcessThinP474') runnerP474.savePortalSupportProcessThinP474(payload);
+  else runnerP474.savePortalSupportRequest(payload);
 }
 
 function setSupportCompletedNow() {
