@@ -1,13 +1,128 @@
 <script>
 let portalBootOverlayHideTimerP463_ = null;
 let portalRouteLoadingNonceP463_ = 0;
+let portalCurrentPageP469_ = 'home';
+const PORTAL_HARD_REFRESH_PAGE_KEY_P469 = 'salesPortal.hardRefreshPage.p469';
+
+function getPortalCurrentPageP469_() {
+  return portalCurrentPageP469_ || (sessionStorage && sessionStorage.getItem('salesPortal.currentPage.p469')) || 'home';
+}
+
+function portalHardRefreshCurrentPageP469_() {
+  const page = getPortalCurrentPageP469_() || 'home';
+  try { sessionStorage.setItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469, page); } catch (err) {}
+  // 실제 F5와 동일하게 전체 웹앱을 다시 로드하되, 로드 후 현재 메뉴로 복귀합니다.
+  window.location.reload();
+}
+
+function hasPortalUnsavedDraftP469_() {
+  try {
+    if (typeof isDetailEditMode !== 'undefined' && isDetailEditMode && typeof getDirtyDetailInputValues_ === 'function') {
+      if (Object.keys(getDirtyDetailInputValues_() || {}).length) return true;
+    }
+  } catch (err) {}
+  try {
+    if (typeof detailSessionP457 !== 'undefined' && detailSessionP457) {
+      if (Object.keys(detailSessionP457.draft || {}).length) return true;
+      if ((detailSessionP457.pendingOps || []).some(function(op) { return op && op.status !== 'APPLIED'; })) return true;
+    }
+  } catch (err) {}
+  try { if (typeof todayHasLocalDraftP120_ !== 'undefined' && todayHasLocalDraftP120_) return true; } catch (err) {}
+  try { if (typeof businessRegistrationModalTouchedP436 !== 'undefined' && businessRegistrationModalTouchedP436) return true; } catch (err) {}
+  try {
+    const active = document.activeElement;
+    const tag = active && String(active.tagName || '').toLowerCase();
+    if (document.body && document.body.classList && document.body.classList.contains('portal-user-editing') && ['input','textarea','select'].indexOf(tag) >= 0) return true;
+  } catch (err) {}
+  return false;
+}
+
+function confirmPortalScreenResetP469_() {
+  if (!hasPortalUnsavedDraftP469_()) return true;
+  return confirm('저장하지 않은 입력값이 있을 수 있습니다. 화면초기화를 하면 저장하지 않은 내용이 사라질 수 있습니다. 계속할까요?');
+}
+
+function clearCustomerPageCachesP469_() {
+  try { customerPageMemoryCache = {}; } catch (err) {}
+  try { customerPageMemoryCacheMetaP240 = {}; } catch (err) {}
+  try {
+    Object.keys(sessionStorage || {}).forEach(function(k) {
+      if (String(k).indexOf('portalCustomerPage:') === 0) sessionStorage.removeItem(k);
+    });
+  } catch (err) {}
+}
+
+function resetCustomersScreenP469_() {
+  try { if (typeof closeCustomerSortMenuV67_ === 'function') closeCustomerSortMenuV67_(); } catch (err) {}
+  try { if (typeof collapseCustomerSearchExpandP390_ === 'function') collapseCustomerSearchExpandP390_({ reason: 'screen-reset' }); } catch (err) {}
+  try { if (typeof resetCustomerSearchInputsForScopeP469_ === 'function') resetCustomerSearchInputsForScopeP469_(); } catch (err) {
+    try { const input = document.getElementById('keyword'); if (input) input.value = ''; } catch(e) {}
+  }
+  clearCustomerPageCachesP469_();
+  try { if (typeof invalidateCustomerSearchCaches_ === 'function') invalidateCustomerSearchCaches_({ clearIndex: true, clearDetail: true }); } catch (err) {}
+  try {
+    if (typeof initializeCustomerSearchIndex === 'function') {
+      initializeCustomerSearchIndex({ silent: true, useLocalFirst: false, force: true, clearDetail: true, renderAfterLoad: true });
+    }
+  } catch (err) {}
+  try { if (typeof searchCustomerPage === 'function') searchCustomerPage(0); } catch (err) {}
+}
+
+function portalResetCurrentPageP469_() {
+  if (!confirmPortalScreenResetP469_()) return;
+  const page = getPortalCurrentPageP469_() || 'home';
+  try { if (typeof clearPortalPerfLogsP460_ === 'function' && false) clearPortalPerfLogsP460_(); } catch (err) {}
+
+  if (page === 'customers') return resetCustomersScreenP469_();
+  if (page === 'home') { try { if (typeof loadDashboard === 'function') loadDashboard(); } catch (err) {} return; }
+  if (page === 'notices') { try { if (typeof loadNoticeTable === 'function') loadNoticeTable(); } catch (err) {} return; }
+  if (page === 'today') {
+    try { todayHasLocalDraftP120_ = false; todayDeletedTasksP360_ = []; } catch (err) {}
+    try { if (typeof loadTodayPage === 'function') loadTodayPage({ force: true, reset: true }); } catch (err) {}
+    return;
+  }
+  if (page === 'favorites') {
+    try { const el = document.getElementById('favoriteKeyword'); if (el) el.value = ''; } catch (err) {}
+    try { if (typeof refreshFavoriteCustomers === 'function') refreshFavoriteCustomers(true); } catch (err) {}
+    return;
+  }
+  if (page === 'focusCustomers') {
+    try { const el = document.getElementById('focusKeywordP290'); if (el) el.value = ''; } catch (err) {}
+    try { if (typeof clearFocusCustomerClientCacheP300_ === 'function') clearFocusCustomerClientCacheP300_(); } catch (err) {}
+    try { if (typeof loadFocusCustomerPageP290 === 'function') loadFocusCustomerPageP290(true); } catch (err) {}
+    return;
+  }
+  if (page === 'contracts') {
+    try { if (typeof resetContractCompleteSearchV69 === 'function') resetContractCompleteSearchV69(); else if (typeof refreshContractCompletePageV69 === 'function') refreshContractCompletePageV69(); } catch (err) {}
+    return;
+  }
+  if (page === 'send') { try { if (typeof renderSendPage === 'function') renderSendPage({ reset: true }); } catch (err) {} return; }
+  if (page === 'support') {
+    try { if (typeof resetSupportInlineEntry === 'function') resetSupportInlineEntry(); } catch (err) {}
+    try { if (typeof clearSupportFilter === 'function') clearSupportFilter(); else if (typeof loadSupportPage === 'function') loadSupportPage(); } catch (err) {}
+    return;
+  }
+  if (page === 'activityLog') { try { if (typeof loadActivityLogPage === 'function') loadActivityLogPage(true); } catch (err) {} return; }
+  if (page === 'systemHealth') { try { if (typeof loadSystemHealthPageP208 === 'function') loadSystemHealthPageP208(true); } catch (err) {} return; }
+  if (page === 'settings') { try { if (typeof renderPortalSettingsPageP310_ === 'function') renderPortalSettingsPageP310_(); } catch (err) {} return; }
+  try { switchPage(page); } catch (err) {}
+}
+
 window.onload = function() {
   try { setPortalBootLoadingP462_(true, '영업전산 HOME과 고객검색 기본 데이터를 준비하고 있습니다.'); } catch (err) {}
   try { initPortalFontScale_(); } catch (err) { console.warn('글자 크기 설정 시작 실패', err); }
   try { loadPortalSettings_({ silent: true }); } catch (err) { console.warn('설정_DB 로딩 시작 실패', err); }
   try { loadPortalCurrentPermission_({ silent: true }); } catch (err) { console.warn('권한_DB 로딩 시작 실패', err); }
   // v46: HOME은 즉시 표시합니다. 무거운 대시보드 갱신/공지 전체 조회는 화면을 막지 않습니다.
-  switchPage('home', true);
+  let initialPageP469 = 'home';
+  try {
+    const savedPage = sessionStorage.getItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469);
+    if (savedPage) {
+      initialPageP469 = savedPage;
+      sessionStorage.removeItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469);
+    }
+  } catch (err) {}
+  switchPage(initialPageP469 || 'home', initialPageP469 === 'home');
   setTimeout(function() {
     initializeCustomerSearchIndex({ silent: true, useLocalFirst: true });
   }, 250);
@@ -224,6 +339,8 @@ function switchPage(page, skipSearch) {
   const __routePerfP460 = (typeof portalPerfStartP460_ === 'function') ? portalPerfStartP460_('route.switch', { page: page || 'home' }) : null;
   page = page || 'home';
   if (page === 'dashboard') page = 'home';
+  portalCurrentPageP469_ = page;
+  try { sessionStorage.setItem('salesPortal.currentPage.p469', page); } catch (err) {}
   if (page !== 'home') window.__portalUserNavigatedP462 = true;
   if (!portalBootReadyP462 && page !== 'home' && page !== 'settings' && page !== 'systemHealth') {
     // P463: 초기 부팅 중에도 메뉴 진입을 막지 않습니다.
