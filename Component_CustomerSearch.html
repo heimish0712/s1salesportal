@@ -767,7 +767,7 @@ function makeCustomerSavePayloadP202_(rowNo, customerNo, values, options) {
     values: values || {},
     baseMasterVersion: getBaseMasterVersionForCustomerSaveP202_(rowNo, customerNo)
   };
-  if (options.clientSaveSource) payload.clientSaveSource = String(options.clientSaveSource || '');
+  payload.clientSaveSource = String(options.clientSaveSource || 'customer.patch');
   if (options.clientRequestId) payload.clientRequestId = String(options.clientRequestId || '');
   if (Object.prototype.hasOwnProperty.call(options, 'requireAuditLog')) payload.requireAuditLog = !!options.requireAuditLog;
   if (Object.prototype.hasOwnProperty.call(options, 'fastMode')) payload.fastMode = !!options.fastMode;
@@ -775,7 +775,7 @@ function makeCustomerSavePayloadP202_(rowNo, customerNo, values, options) {
   if (Object.prototype.hasOwnProperty.call(options, 'thinSave')) payload.thinSave = !!options.thinSave;
   if (Object.prototype.hasOwnProperty.call(options, 'skipMasterMeta')) payload.skipMasterMeta = !!options.skipMasterMeta;
   if (Object.prototype.hasOwnProperty.call(options, 'skipIndexQueue')) payload.skipIndexQueue = !!options.skipIndexQueue;
-  if (options.clientOperationId) payload.clientOperationId = String(options.clientOperationId || '');
+  payload.clientOperationId = String(options.clientOperationId || ('DOP_' + Date.now() + '_' + Math.floor(Math.random() * 1000000)));
   if (options.expectedValues) payload.expectedValues = Object.assign({}, options.expectedValues || {});
   if (options.clientSavedAt) payload.clientSavedAt = String(options.clientSavedAt || '');
   return payload;
@@ -956,6 +956,89 @@ try {
   window.addEventListener('visibilitychange', function() { if (document.visibilityState === 'visible') { try { flushCustomerSaveDurableQueueP468_('visible'); } catch(e) {} } });
 } catch(e) {}
 
+// P473: 하단 펼침 메모 draft 보호 -------------------------------------------------
+// 늦게 도착한 full detail/master 응답이 사용자가 작성 중인 textarea 값을 덮어쓰지 못하게 합니다.
+const expandedMemoDraftMapP473 = window.expandedMemoDraftMapP473 || {};
+window.expandedMemoDraftMapP473 = expandedMemoDraftMapP473;
+
+function getExpandedMemoDraftKeyP473_(rowNo, customerNo) {
+  return (Number(rowNo) || 0) + ':' + normalizeCustomerNoForKey_(customerNo || '');
+}
+
+function findExpandedMemoDraftEntryP473_(rowNo, customerNo) {
+  const row = Number(rowNo) || 0;
+  const cno = normalizeCustomerNoForKey_(customerNo || '');
+  const exact = getExpandedMemoDraftKeyP473_(row, cno);
+  if (expandedMemoDraftMapP473[exact]) return expandedMemoDraftMapP473[exact];
+  const prefix = row + ':';
+  const keys = Object.keys(expandedMemoDraftMapP473);
+  for (let i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf(prefix) === 0) return expandedMemoDraftMapP473[keys[i]];
+  }
+  return null;
+}
+
+function updateExpandedMemoDraftP473_(rowNo, customerNo, value, flags) {
+  const key = getExpandedMemoDraftKeyP473_(rowNo, customerNo);
+  if (!key || key === '0:') return null;
+  const prev = expandedMemoDraftMapP473[key] || {};
+  expandedMemoDraftMapP473[key] = Object.assign({}, prev, flags || {}, {
+    rowNo: Number(rowNo) || 0,
+    customerNo: normalizeCustomerNoForKey_(customerNo || prev.customerNo || ''),
+    value: String(value == null ? '' : value),
+    dirty: flags && Object.prototype.hasOwnProperty.call(flags, 'dirty') ? !!flags.dirty : true,
+    updatedAt: Date.now()
+  });
+  return expandedMemoDraftMapP473[key];
+}
+
+function onExpandedMemoFocusP473_(rowNo, customerNo) {
+  const el = document.getElementById('expandedMemo_' + rowNo);
+  if (!el) return;
+  updateExpandedMemoDraftP473_(rowNo, customerNo || el.getAttribute('data-customer-no') || '', el.value || '', { focused: true });
+}
+
+function onExpandedMemoInputP473_(rowNo, customerNo) {
+  const el = document.getElementById('expandedMemo_' + rowNo);
+  if (!el) return;
+  updateExpandedMemoDraftP473_(rowNo, customerNo || el.getAttribute('data-customer-no') || '', el.value || '', { focused: true, dirty: true });
+}
+
+function onExpandedMemoBlurP473_(rowNo, customerNo) {
+  const el = document.getElementById('expandedMemo_' + rowNo);
+  const entry = findExpandedMemoDraftEntryP473_(rowNo, customerNo || (el && el.getAttribute('data-customer-no')) || '');
+  if (entry) entry.focused = false;
+}
+
+function getProtectedExpandedMemoValueP473_(rowNo, customerNo, fallbackValue) {
+  const entry = findExpandedMemoDraftEntryP473_(rowNo, customerNo);
+  if (entry && (entry.dirty || entry.focused || entry.pendingOperationId)) return String(entry.value == null ? '' : entry.value);
+  return String(fallbackValue == null ? '' : fallbackValue);
+}
+
+function markExpandedMemoSavePendingP473_(rowNo, customerNo, operationId, value) {
+  return updateExpandedMemoDraftP473_(rowNo, customerNo, value, { dirty: true, pendingOperationId: String(operationId || ''), focused: false });
+}
+
+function markExpandedMemoSaveDoneP473_(rowNo, customerNo, operationId, value) {
+  const entry = updateExpandedMemoDraftP473_(rowNo, customerNo, value, { dirty: false, focused: false, pendingOperationId: '' });
+  if (entry) entry.savedOperationId = String(operationId || '');
+  return entry;
+}
+
+function protectIncomingDetailMemoWithExpandedDraftP473_(detail) {
+  if (!detail || !detail.rowNo) return detail;
+  const entry = findExpandedMemoDraftEntryP473_(detail.rowNo, detail.customerNo);
+  if (!entry || !(entry.dirty || entry.focused || entry.pendingOperationId)) return detail;
+  const protectedMemo = String(entry.value == null ? '' : entry.value);
+  detail.memo = protectedMemo;
+  if (detail.detailFields && detail.detailFields.basic) {
+    detail.detailFields.basic.forEach(function(f) { if (f && f.key === 'memo') f.value = protectedMemo; });
+  }
+  detail.__memoProtectedP473 = true;
+  return detail;
+}
+
 function enqueueCustomerSaveP220_(rowNo, customerNo, workFn, options) {
   options = options || {};
   const key = getCustomerSaveQueueKeyP220_(rowNo, customerNo);
@@ -973,12 +1056,12 @@ function enqueueCustomerSaveP220_(rowNo, customerNo, workFn, options) {
   }
 
   const runPromise = previousTail.catch(function() { return null; }).then(function() {
-    const perfMarkP460 = (typeof portalPerfStartP460_ === 'function') ? portalPerfStartP460_('customerSaveQueue.run', { rowNo: rowNo, customerNo: customerNo, queuedCount: queuedCount, source: options.source || '', key: options.key || '' }) : null;
+    const perfMarkP460 = (typeof portalPerfStartP460_ === 'function') ? portalPerfStartP460_('customerSaveQueue.run', { rowNo: rowNo, customerNo: customerNo, queuedCount: queuedCount, source: options.source || 'customer.save', key: options.key || '' }) : null;
     return Promise.resolve(workFn({ key: key, queueSeq: queueSeq, queuedCount: queuedCount, options: options })).then(function(res) {
       if (typeof portalPerfEndP460_ === 'function') portalPerfEndP460_(perfMarkP460, { status: 'ok' });
       return res;
     }, function(err) {
-      if (typeof portalPerfErrorP460_ === 'function') portalPerfErrorP460_(perfMarkP460, err, { source: options.source || '', key: options.key || '' });
+      if (typeof portalPerfErrorP460_ === 'function') portalPerfErrorP460_(perfMarkP460, err, { source: options.source || 'customer.save', key: options.key || '' });
       throw err;
     });
   });
@@ -1039,8 +1122,9 @@ function makeCustomerMemoSavePayloadP220_(rowNo, customerNo, memoValue, options)
     memo: memoValue == null ? '' : String(memoValue),
     baseMasterVersion: getBaseMasterVersionForCustomerSaveP202_(rowNo, customerNo)
   };
+  payload.clientSaveSource = String(options.clientSaveSource || 'customer.memo');
   if (Object.prototype.hasOwnProperty.call(options, 'expectedMemo')) payload.expectedValues = { memo: String(options.expectedMemo == null ? '' : options.expectedMemo) };
-  if (options.clientOperationId) payload.clientOperationId = String(options.clientOperationId || '');
+  payload.clientOperationId = String(options.clientOperationId || ('DOP_' + Date.now() + '_' + Math.floor(Math.random() * 1000000)));
   if (Object.prototype.hasOwnProperty.call(options, 'thinSave')) payload.thinSave = !!options.thinSave;
   if (Object.prototype.hasOwnProperty.call(options, 'skipMasterMeta')) payload.skipMasterMeta = !!options.skipMasterMeta;
   if (Object.prototype.hasOwnProperty.call(options, 'skipIndexQueue')) payload.skipIndexQueue = !!options.skipIndexQueue;
@@ -1789,7 +1873,10 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
 
   const hasImmediateMemoP360 = !!(detail && (detail.memo || detail.memoPreview));
   const isFullMemoReadyP300 = !!(detail && detail.__masterBacked && !detail.__summary && !detail.__lite);
-  const memoValue = isFullMemoReadyP300 ? (getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '') : (hasImmediateMemoP360 ? (detail.memo || detail.memoPreview || '') : '');
+  const rawMemoValueP473 = isFullMemoReadyP300 ? (getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '') : (hasImmediateMemoP360 ? (detail.memo || detail.memoPreview || '') : '');
+  const memoCustomerNoP473 = (detail && detail.customerNo) || (rowSummary && rowSummary.customerNo) || '';
+  const memoValue = getProtectedExpandedMemoValueP473_(rowNo, memoCustomerNoP473, rawMemoValueP473);
+  const hasProtectedDraftP473 = memoValue !== String(rawMemoValueP473 == null ? '' : rawMemoValueP473);
   const expandedMemoInputId = 'expandedMemo_' + rowNo;
   html += '<div class="customer-expand-form-block customer-expand-memo-box-v58" id="expandedMemoBox_' + rowNo + '">' +
     '<div class="customer-expand-memo-label-v58">마스터시트<br>메모</div>' +
@@ -1797,7 +1884,7 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
       (!isFullMemoReadyP300 && !hasImmediateMemoP360 ? '<div class="customer-expand-memo-loading-p300">전체 메모를 백그라운드에서 불러오는 중입니다.</div>' : '') +
       '<div class="customer-expand-memo-edit-wrap-p15 customer-expand-memo-edit-wrap-fixed-tags">' +
         '<div class="customer-expand-memo-tag-row customer-expand-memo-tag-row-always">' + renderCustomerMemoTagPopover_(expandedMemoInputId, 'customer-expand-memo-tag-popover') + '</div>' +
-        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '"' + (!isFullMemoReadyP300 && !hasImmediateMemoP360 ? ' readonly data-memo-loading="Y" placeholder="전체 메모 불러오는 중"' : '') + '>' + esc(memoValue) + '</textarea>' +
+        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '" data-customer-no="' + escAttr(memoCustomerNoP473) + '" onfocus="onExpandedMemoFocusP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')" oninput="onExpandedMemoInputP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')" onblur="onExpandedMemoBlurP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')"' + (!hasProtectedDraftP473 && !isFullMemoReadyP300 && !hasImmediateMemoP360 ? ' readonly data-memo-loading="Y" placeholder="전체 메모 불러오는 중"' : '') + '>' + esc(memoValue) + '</textarea>' +
       '</div>' +
       '<div class="customer-expand-save-row">' +
         '<button type="button" class="secondary" onclick="event.stopPropagation(); resetExpandedCustomerMemo(' + rowNo + ')">되돌리기</button>' +
@@ -2452,39 +2539,56 @@ function saveExpandedCustomerMemo(rowNo) {
   const prevRow = findCustomerRowSummaryByRowNo_(rowNo);
   const cachedForMemo = getCustomerDetailCache_(rowNo, prevRow && prevRow.customerNo);
   const prevDetail = cachedForMemo ? JSON.parse(JSON.stringify(cachedForMemo)) : null;
-  const targetCustomerNo = String((prevDetail && prevDetail.customerNo) || (prevRow && prevRow.customerNo) || '').trim();
+  const targetCustomerNo = String((prevDetail && prevDetail.customerNo) || (prevRow && prevRow.customerNo) || memoEl.getAttribute('data-customer-no') || '').trim();
   const prevMemo = prevRow ? (prevRow.memo || '') : (prevDetail ? prevDetail.memo || '' : '');
+  const operationIdP473 = 'DOP_EXP_MEMO_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
 
-  if (btn) { btn.disabled = true; btn.textContent = '저장 예약'; }
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중'; }
+  markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
   applyCustomerMemoOptimistic_(rowNo, memoValue);
-  renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-  toast('메모를 화면에 먼저 반영했습니다. 뒤에서 저장 중입니다.');
+  // P473: 여기서 renderResults()로 전체 목록을 다시 그리면 textarea focus/value가 날아갈 수 있습니다.
+  // 캐시만 optimistic 반영하고 현재 DOM은 그대로 유지합니다.
+  toast('메모 저장 중입니다. 입력값은 화면에 유지됩니다.');
 
   enqueueCustomerSaveP220_(rowNo, targetCustomerNo, function() {
-    return runCustomerSaveRequestP220_('saveCustomerMemoFast', makeCustomerMemoSavePayloadP220_(rowNo, targetCustomerNo, memoValue, { expectedMemo: prevMemo, thinSave: true }))
+    const payload = makeCustomerMemoSavePayloadP220_(rowNo, targetCustomerNo, memoValue, {
+      expectedMemo: prevMemo,
+      thinSave: true,
+      clientOperationId: operationIdP473,
+      clientSaveSource: 'customer.expandedMemo'
+    });
+    return runCustomerSaveRequestP220_('saveCustomerMemoFast', payload)
       .then(function(res) {
         if (btn) { btn.disabled = false; btn.textContent = '저장'; }
         applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res);
         applyCustomerMemoOptimistic_(rowNo, memoValue);
-        toast('메모가 마스터시트에 저장되었습니다.');
+        if (res && res.conflictP473) {
+          markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
+          toast('메모 저장 충돌 확인 필요: 입력값은 유지했습니다.');
+        } else if (res && res.queuedFallbackP473) {
+          markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
+          try { persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'customer.expandedMemo', key: 'memo', lastError: 'serverQueuedP473' }); } catch(e) {}
+          toast('메모 저장이 대기 중입니다. 입력값은 유지되고 자동으로 다시 저장됩니다.');
+        } else {
+          markExpandedMemoSaveDoneP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
+          toast('메모가 마스터시트에 저장되었습니다.');
+        }
         return res;
       }, function(err) {
         if (btn) { btn.disabled = false; btn.textContent = '저장'; }
-        if (isCustomerStaleSaveErrorP202_(err)) {
-          if (prevDetail) setCustomerDetailCache_(prevDetail); else applyCustomerMemoOptimistic_(rowNo, prevMemo);
-          updateCustomerRowMemoInCaches_(rowNo, prevMemo);
-          renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
-          handleCustomerStaleSaveFailureP202_(rowNo, targetCustomerNo, err, null, 'memo');
-          throw err;
-        }
-        if (prevDetail) setCustomerDetailCache_(prevDetail); else applyCustomerMemoOptimistic_(rowNo, prevMemo);
-        updateCustomerRowMemoInCaches_(rowNo, prevMemo);
-        renderResults(lastCustomerResultResponse, lastCustomerResultFromCache);
         const transientP460 = typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err);
-        toast(transientP460 ? '메모 저장이 지연되었습니다. 입력값은 유지됩니다.' : ('메모 저장 실패: ' + getErrorMessage_(err)));
-        throw err;
+        // P473: 실패/충돌이 나도 사용자가 입력한 메모를 절대 롤백하지 않습니다.
+        markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
+        applyCustomerMemoOptimistic_(rowNo, memoValue);
+        try {
+          persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'customer.expandedMemo', key: 'memo', lastError: getErrorMessage_(err) });
+        } catch(e) {}
+        toast(transientP460 || isCustomerStaleSaveErrorP202_(err)
+          ? '메모 저장이 대기/확인 상태입니다. 입력값은 유지됩니다.'
+          : ('메모 저장 실패: ' + getErrorMessage_(err)));
+        return { ok: true, queuedRetryP473: true, rowNo: rowNo, customerNo: targetCustomerNo, memo: memoValue, message: '메모 저장 대기 중' };
       });
-  }, { source: 'expandedMemo', key: 'memo' });
+  }, { source: 'customer.expandedMemo', key: 'memo' });
 }
 
 function resetExpandedCustomerMemo(rowNo) {
@@ -4226,6 +4330,8 @@ function setCustomerDetailCache_(detail, options) {
 
   const source = options.source || detail.__source || '';
   markDetailSourceK1_(detail, source, options);
+  // P473: master/full-detail 응답이 늦게 도착해도 하단 펼침 메모 draft를 덮지 못하게 먼저 보호합니다.
+  if (typeof protectIncomingDetailMemoWithExpandedDraftP473_ === 'function') detail = protectIncomingDetailMemoWithExpandedDraftP473_(detail);
   detail = options.skipPendingMerge ? detail : applyPendingSaveToIncomingDetail_(detail);
 
   const rowNo = Number(detail.rowNo);

@@ -1849,24 +1849,62 @@ function saveCustomerDetailFast(payload) {
   payload = payload || {};
   const cachedP458 = getPortalCachedOperationResultP458_(payload);
   if (cachedP458) return cachedP458;
-  return runPortalCustomerWriteLockedP202_('customer-detail-fast-save', function() {
-    const cachedInsideLockP458 = getPortalCachedOperationResultP458_(payload);
-    if (cachedInsideLockP458) return cachedInsideLockP458;
-    const valuesP462 = payload && payload.values || {};
-    const res = isPortalCustomerThinSavePayloadP462_(payload, valuesP462)
-      ? saveCustomerDetailThinCoreP462_(payload)
-      : saveCustomerDetailFastCoreP202_(payload);
-    putPortalCachedOperationResultP458_(payload, res);
-    return res;
-  });
+
+  const valuesP462 = payload && payload.values || {};
+
+  // P473: 정상적인 단일/경량 저장은 전역 ScriptLock 없이 마스터시트에 직접 저장합니다.
+  // 기존 구조는 3~7초짜리 저장이 전역 lock을 잡고, 다른 사용자는 250ms 후 "다른 작업 처리 중"으로 튕겼습니다.
+  // 경량 저장은 rowNo/customerNo + expectedValues로 필드 단위 충돌을 검사하므로 전역 lock이 필요 없습니다.
+  if (isPortalCustomerThinSavePayloadP462_(payload, valuesP462)) {
+    try {
+      const res = saveCustomerDetailThinCoreP462_(payload);
+      res.directSaveP473 = true;
+      putPortalCachedOperationResultP458_(payload, res);
+      return res;
+    } catch (err) {
+      // 충돌/일시 오류는 사용자에게 busy 실패로 던지지 않고 저장큐_DB에 남깁니다.
+      if (typeof enqueueSaveFallbackP473_ === 'function' && (isPortalServerTransientWriteErrorP473_(err) || isPortalServerStaleErrorP473_(err))) {
+        return enqueueSaveFallbackP473_('saveCustomerDetailFast', payload, 'DIRECT_SAVE_FAILED', err);
+      }
+      throw err;
+    }
+  }
+
+  // 무거운 계약조건/복합 저장은 기존 lock 경로를 유지하되, busy는 큐 fallback으로 전환합니다.
+  try {
+    return runPortalCustomerWriteLockedP202_('customer-detail-fast-save', function() {
+      const cachedInsideLockP458 = getPortalCachedOperationResultP458_(payload);
+      if (cachedInsideLockP458) return cachedInsideLockP458;
+      const res = saveCustomerDetailFastCoreP202_(payload);
+      putPortalCachedOperationResultP458_(payload, res);
+      return res;
+    });
+  } catch (err) {
+    if (typeof enqueueSaveFallbackP473_ === 'function' && (isPortalServerTransientWriteErrorP473_(err) || isPortalServerStaleErrorP473_(err))) {
+      return enqueueSaveFallbackP473_('saveCustomerDetailFast', payload, 'LOCKED_SAVE_FAILED', err);
+    }
+    throw err;
+  }
 }
 
 function saveCustomerMemoFast(rowNoOrPayload, memo) {
   const payloadP462 = (rowNoOrPayload && typeof rowNoOrPayload === 'object') ? rowNoOrPayload : { rowNo: rowNoOrPayload, memo: memo };
-  return runPortalCustomerWriteLockedP202_('customer-memo-save', function() {
-    if (payloadP462 && payloadP462.thinSave === true) return saveCustomerMemoThinCoreP462_(payloadP462);
-    return saveCustomerMemoFastCoreP202_(rowNoOrPayload, memo);
-  });
+  payloadP462.thinSave = true;
+  const cachedP458 = getPortalCachedOperationResultP458_(payloadP462);
+  if (cachedP458) return cachedP458;
+
+  // P473: 메모는 가장 민감한 입력 필드이므로 전역 lock 없이 expectedMemo/expectedValues 기준으로 직접 저장합니다.
+  try {
+    const res = saveCustomerMemoThinCoreP462_(payloadP462);
+    res.directSaveP473 = true;
+    putPortalCachedOperationResultP458_(payloadP462, res);
+    return res;
+  } catch (err) {
+    if (typeof enqueueSaveFallbackP473_ === 'function' && (isPortalServerTransientWriteErrorP473_(err) || isPortalServerStaleErrorP473_(err))) {
+      return enqueueSaveFallbackP473_('saveCustomerMemoFast', payloadP462, 'MEMO_DIRECT_SAVE_FAILED', err);
+    }
+    throw err;
+  }
 }
 
 
