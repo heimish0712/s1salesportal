@@ -2,7 +2,6 @@
 let portalBootOverlayHideTimerP463_ = null;
 let portalRouteLoadingNonceP463_ = 0;
 let portalCurrentPageP469_ = 'home';
-const PORTAL_HARD_REFRESH_PAGE_KEY_P469 = 'salesPortal.hardRefreshPage.p469';
 
 function getPortalCurrentPageP469_() {
   return portalCurrentPageP469_ || (sessionStorage && sessionStorage.getItem('salesPortal.currentPage.p469')) || 'home';
@@ -26,15 +25,6 @@ function normalizePortalPageP470_(page) {
     settings: true
   };
   return allowed[page] ? page : 'home';
-}
-
-function portalHardRefreshCurrentPageP469_() {
-  const page = normalizePortalPageP470_(getPortalCurrentPageP469_() || 'home');
-  try { sessionStorage.setItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469, page); } catch (err) {}
-  try { sessionStorage.setItem('salesPortal.currentPage.p469', page); } catch (err) {}
-  // 실제 F5와 동일하게 전체 웹앱을 다시 로드합니다.
-  // 메뉴 복귀는 onload에서 HOME shell을 먼저 띄운 뒤 안전하게 수행합니다.
-  window.location.reload();
 }
 
 function hasPortalUnsavedDraftP469_() {
@@ -136,21 +126,9 @@ window.onload = function() {
   try { loadPortalSettings_({ silent: true }); } catch (err) { console.warn('설정_DB 로딩 시작 실패', err); }
   try { loadPortalCurrentPermission_({ silent: true }); } catch (err) { console.warn('권한_DB 로딩 시작 실패', err); }
   // v46: HOME은 즉시 표시합니다. 무거운 대시보드 갱신/공지 전체 조회는 화면을 막지 않습니다.
-  // P470: 새로고침 복귀 메뉴는 HOME shell을 먼저 활성화한 뒤 안전하게 전환합니다.
-  let restorePageP470 = '';
-  try {
-    const savedPage = sessionStorage.getItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469);
-    if (savedPage) {
-      restorePageP470 = normalizePortalPageP470_(savedPage);
-      sessionStorage.removeItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469);
-    }
-  } catch (err) {}
+  // P471: 상단 새로고침 버튼은 제거했습니다. 과거 P469/P470에서 남은 복귀 키가 있으면 백지화면 방지를 위해 즉시 폐기합니다.
+  try { sessionStorage.removeItem('salesPortal.hardRefreshPage.p469'); } catch (err) {}
   switchPage('home', true);
-  if (restorePageP470 && restorePageP470 !== 'home') {
-    setTimeout(function() {
-      safeRestorePortalPageAfterRefreshP470_(restorePageP470);
-    }, 520);
-  }
   setTimeout(function() {
     initializeCustomerSearchIndex({ silent: true, useLocalFirst: true });
   }, 250);
@@ -543,7 +521,7 @@ function forcePortalHomeVisibleP470_(reason) {
     const pageTitle = document.getElementById('pageTitle');
     const pageSubtitle = document.getElementById('pageSubtitle');
     if (pageTitle) pageTitle.textContent = '영업전산 HOME';
-    if (pageSubtitle) pageSubtitle.textContent = '새로고침 후 화면 복귀 중 오류가 발생해 HOME으로 복귀했습니다.';
+    if (pageSubtitle) pageSubtitle.textContent = '화면 전환 중 오류가 발생해 HOME으로 복귀했습니다.';
     portalCurrentPageP469_ = 'home';
     try { sessionStorage.setItem('salesPortal.currentPage.p469', 'home'); } catch (err) {}
     try { setPortalBootLoadingP462_(false); } catch (err) {}
