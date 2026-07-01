@@ -8,10 +8,32 @@ function getPortalCurrentPageP469_() {
   return portalCurrentPageP469_ || (sessionStorage && sessionStorage.getItem('salesPortal.currentPage.p469')) || 'home';
 }
 
+function normalizePortalPageP470_(page) {
+  page = String(page || 'home');
+  if (page === 'dashboard') page = 'home';
+  const allowed = {
+    home: true,
+    notices: true,
+    customers: true,
+    favorites: true,
+    focusCustomers: true,
+    contracts: true,
+    send: true,
+    support: true,
+    activityLog: true,
+    systemHealth: true,
+    today: true,
+    settings: true
+  };
+  return allowed[page] ? page : 'home';
+}
+
 function portalHardRefreshCurrentPageP469_() {
-  const page = getPortalCurrentPageP469_() || 'home';
+  const page = normalizePortalPageP470_(getPortalCurrentPageP469_() || 'home');
   try { sessionStorage.setItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469, page); } catch (err) {}
-  // 실제 F5와 동일하게 전체 웹앱을 다시 로드하되, 로드 후 현재 메뉴로 복귀합니다.
+  try { sessionStorage.setItem('salesPortal.currentPage.p469', page); } catch (err) {}
+  // 실제 F5와 동일하게 전체 웹앱을 다시 로드합니다.
+  // 메뉴 복귀는 onload에서 HOME shell을 먼저 띄운 뒤 안전하게 수행합니다.
   window.location.reload();
 }
 
@@ -114,15 +136,21 @@ window.onload = function() {
   try { loadPortalSettings_({ silent: true }); } catch (err) { console.warn('설정_DB 로딩 시작 실패', err); }
   try { loadPortalCurrentPermission_({ silent: true }); } catch (err) { console.warn('권한_DB 로딩 시작 실패', err); }
   // v46: HOME은 즉시 표시합니다. 무거운 대시보드 갱신/공지 전체 조회는 화면을 막지 않습니다.
-  let initialPageP469 = 'home';
+  // P470: 새로고침 복귀 메뉴는 HOME shell을 먼저 활성화한 뒤 안전하게 전환합니다.
+  let restorePageP470 = '';
   try {
     const savedPage = sessionStorage.getItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469);
     if (savedPage) {
-      initialPageP469 = savedPage;
+      restorePageP470 = normalizePortalPageP470_(savedPage);
       sessionStorage.removeItem(PORTAL_HARD_REFRESH_PAGE_KEY_P469);
     }
   } catch (err) {}
-  switchPage(initialPageP469 || 'home', initialPageP469 === 'home');
+  switchPage('home', true);
+  if (restorePageP470 && restorePageP470 !== 'home') {
+    setTimeout(function() {
+      safeRestorePortalPageAfterRefreshP470_(restorePageP470);
+    }, 520);
+  }
   setTimeout(function() {
     initializeCustomerSearchIndex({ silent: true, useLocalFirst: true });
   }, 250);
@@ -484,4 +512,96 @@ function switchPage(page, skipSearch) {
   document.getElementById('placeholderTitle').textContent = item[0];
   document.getElementById('placeholderDesc').innerHTML = item[1] + '<br><br>현재 단계에서는 Home/공지사항/고객검색/자료발송 화면을 우선 안정화합니다.';
 }
+
+function getPortalSectionIdForPageP470_(page) {
+  page = normalizePortalPageP470_(page || 'home');
+  const map = {
+    home: 'homeSection',
+    notices: 'noticeSection',
+    customers: 'customerSearchSection',
+    favorites: 'customerFavoritesSection',
+    focusCustomers: 'focusCustomerSection',
+    contracts: 'contractCompleteSection',
+    send: 'placeholderSection',
+    support: 'supportSection',
+    activityLog: 'activityLogSection',
+    systemHealth: 'systemHealthSection',
+    today: 'todaySection',
+    settings: 'placeholderSection'
+  };
+  return map[page] || 'homeSection';
+}
+
+function forcePortalHomeVisibleP470_(reason) {
+  try {
+    ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('active');
+    });
+    const home = document.getElementById('homeSection');
+    if (home) home.classList.add('active');
+    const pageTitle = document.getElementById('pageTitle');
+    const pageSubtitle = document.getElementById('pageSubtitle');
+    if (pageTitle) pageTitle.textContent = '영업전산 HOME';
+    if (pageSubtitle) pageSubtitle.textContent = '새로고침 후 화면 복귀 중 오류가 발생해 HOME으로 복귀했습니다.';
+    portalCurrentPageP469_ = 'home';
+    try { sessionStorage.setItem('salesPortal.currentPage.p469', 'home'); } catch (err) {}
+    try { setPortalBootLoadingP462_(false); } catch (err) {}
+    console.warn('[P470] 화면 fallback HOME:', reason || '');
+  } catch (err) {
+    console.error('[P470] HOME fallback 실패', err);
+  }
+}
+
+function ensurePortalActiveSectionP470_(page) {
+  try {
+    const active = document.querySelector('#homeSection.active, #noticeSection.active, #supportSection.active, #activityLogSection.active, #systemHealthSection.active, #todaySection.active, #customerSearchSection.active, #customerFavoritesSection.active, #focusCustomerSection.active, #contractCompleteSection.active, #placeholderSection.active');
+    if (active) return true;
+    const sectionId = getPortalSectionIdForPageP470_(page || getPortalCurrentPageP469_());
+    const section = document.getElementById(sectionId) || document.getElementById('homeSection');
+    if (section) {
+      section.classList.add('active');
+      return true;
+    }
+  } catch (err) {}
+  return false;
+}
+
+function safeRestorePortalPageAfterRefreshP470_(page) {
+  page = normalizePortalPageP470_(page || 'home');
+  if (!page || page === 'home') return;
+  try {
+    portalBootReadyP462 = true;
+    try { setPortalBootLoadingP462_(false); } catch (err) {}
+    switchPage(page, false);
+    setTimeout(function() {
+      if (!ensurePortalActiveSectionP470_(page)) forcePortalHomeVisibleP470_('restore-no-active-section:' + page);
+    }, 80);
+  } catch (err) {
+    console.error('[P470] 새로고침 메뉴 복귀 실패', page, err);
+    forcePortalHomeVisibleP470_('restore-error:' + page);
+  }
+}
+
+// P470: switchPage 내부 오류가 화면 전체 백지로 이어지지 않도록 최후 방어막을 둡니다.
+try {
+  if (!window.__switchPageCoreP470 && typeof switchPage === 'function') {
+    window.__switchPageCoreP470 = switchPage;
+    switchPage = function(page, skipSearch) {
+      page = normalizePortalPageP470_(page || 'home');
+      try {
+        window.__switchPageCoreP470(page, skipSearch);
+        setTimeout(function() {
+          if (!ensurePortalActiveSectionP470_(page)) forcePortalHomeVisibleP470_('switch-no-active-section:' + page);
+        }, 0);
+      } catch (err) {
+        console.error('[P470] switchPage 실패', page, err);
+        forcePortalHomeVisibleP470_('switch-error:' + page);
+      }
+    };
+  }
+} catch (err) {
+  console.error('[P470] switchPage wrapper 설치 실패', err);
+}
+
 </script>
