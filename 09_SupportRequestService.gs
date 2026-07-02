@@ -631,11 +631,20 @@ function searchPortalSupportCustomers(keyword) {
 
 function savePortalSupportRequest(payload) {
   assertPortalCanWriteSupport_();
-  const result = runPortalSupportWriteLockedP210_('support-request-save', function() {
-    return savePortalSupportRequestCoreP210_(payload || {});
-  });
+  payload = payload || {};
+  let result;
+  try {
+    // P489: 신규 영업지원 요청도 기본 경로에서는 전역 LockService를 잡지 않고 직접 append합니다.
+    // 실패/서비스 busy일 때만 저장큐_DB로 fallback합니다.
+    result = savePortalSupportRequestCoreP210_(payload);
+  } catch (err) {
+    if (typeof enqueueSaveFallbackP473_ === 'function' && typeof isPortalServerTransientWriteErrorP473_ === 'function' && isPortalServerTransientWriteErrorP473_(err)) {
+      return enqueueSaveFallbackP473_('savePortalSupportRequest', payload, 'SUPPORT_REQUEST_DIRECT_SAVE_FAILED', err);
+    }
+    throw err;
+  }
 
-  // 활동로그는 핵심 저장 Lock 밖에서 처리합니다. 로그 실패가 접수/저장 성공을 막으면 안 됩니다.
+  // 활동로그는 핵심 저장 밖에서 처리합니다. 로그 실패가 접수/저장 성공을 막으면 안 됩니다.
   try {
     appendPortalActivityLog_({
       actionType: '영업지원요청',
@@ -827,6 +836,17 @@ function savePortalSupportRequestCoreP210_(payload) {
  * - 기존 요청의 처리자/처리내용/완료시각/진행상태/자동발송확인만 빠르게 갱신
  *******************************************************/
 function savePortalSupportProcessThinP474(payload) {
+  try {
+    return savePortalSupportProcessThinCoreP489_(payload || {});
+  } catch (err) {
+    if (typeof enqueueSaveFallbackP473_ === 'function' && typeof isPortalServerTransientWriteErrorP473_ === 'function' && isPortalServerTransientWriteErrorP473_(err)) {
+      return enqueueSaveFallbackP473_('savePortalSupportProcessThinP474', payload || {}, 'SUPPORT_PROCESS_DIRECT_SAVE_FAILED', err);
+    }
+    throw err;
+  }
+}
+
+function savePortalSupportProcessThinCoreP489_(payload) {
   assertPortalCanWriteSupport_();
   const perm = getPortalCurrentPermission_();
   if (!perm.canCompleteSupport) throw new Error('영업지원 처리 권한이 없습니다.');

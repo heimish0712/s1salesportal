@@ -1292,8 +1292,8 @@ function isPortalExpectedValuesStillFreshP458_(sheet, rowNo, payload) {
     if (!def) return false;
     const col = findFirstExistingHeaderCol_(headerMap, def.headers || []);
     if (!col) return false;
-    const expectedText = getPortalMasterCompareTextP280_(key, expected[key]);
-    const currentText = String(currentDisplayRow[col - 1] || '').trim();
+    const expectedText = getPortalMasterConflictCompareTextP489_(key, expected[key]);
+    const currentText = getPortalMasterConflictCompareTextP489_(key, currentDisplayRow[col - 1]);
     if (currentText !== expectedText) return false;
   }
   return true;
@@ -1730,18 +1730,21 @@ function saveCustomerDetailThinCoreP462_(payload) {
     const col = findFirstExistingHeaderCol_(headerMap, def.headers || []) || ensureMasterColumn_(sheet, headerMap, (def.headers && def.headers[0]) || def.label);
     headerMap = getHeaderMap_(sheet);
     const nextValue = getPortalMasterCompareTextP280_(key, values[key]);
+    const nextCompare = getPortalMasterConflictCompareTextP489_(key, values[key]);
     const writeValue = getPortalMasterWriteValueP280_(key, values[key]);
-    const currentText = String(sheet.getRange(rowNo, col).getDisplayValue() || '').trim();
+    const currentRawText = getPortalCurrentFieldCompareValueP489_(sheet, rowNo, key, col);
+    const currentCompare = getPortalMasterConflictCompareTextP489_(key, currentRawText);
+    const currentText = getPortalFieldDisplayTextForResponseP489_(key, currentRawText);
     if (Object.prototype.hasOwnProperty.call(expected, key)) {
-      const expectedText = getPortalMasterCompareTextP280_(key, expected[key]);
-      if (currentText !== expectedText && currentText !== nextValue) {
+      const expectedText = getPortalMasterConflictCompareTextP489_(key, expected[key]);
+      if (currentCompare !== expectedText && currentCompare !== nextCompare) {
         throw makePortalFieldConflictErrorP474_({
           rowNo: rowNo,
           customerNo: customerNo,
           key: key,
           label: def.label || key,
           currentValue: currentText,
-          expectedValue: expectedText,
+          expectedValue: getPortalFieldDisplayTextForResponseP489_(key, expected[key]),
           attemptedValue: nextValue,
           payload: payload,
           source: 'customer.detailThin'
@@ -1749,7 +1752,7 @@ function saveCustomerDetailThinCoreP462_(payload) {
       }
     }
     appliedValues[key] = nextValue;
-    if (currentText !== nextValue) {
+    if (currentCompare !== nextCompare) {
       targets.push({ key: key, label: def.label || key, col: col, writeValue: writeValue, value: nextValue, oldValue: currentText });
       changed.push(def.label || key);
       changedKeys.push(key);
@@ -1782,6 +1785,14 @@ function saveCustomerDetailThinCoreP462_(payload) {
       }
     }
     flushBlock();
+
+    // P488: 고객상세 모달 저장은 저장 버튼 직후 실제 마스터 반영 여부를 1차 검증합니다.
+    // 검증 실패는 saveCustomerDetailFast()의 P473 fallback 경로에서 저장큐_DB로 넘깁니다.
+    const verifyThinWriteP488 = payload.clientSaveSource === 'detailModal';
+    if (verifyThinWriteP488) {
+      SpreadsheetApp.flush();
+      verifyPortalCustomerFastSaveAppliedP430_(sheet, rowNo, targets);
+    }
   }
 
   let masterMeta = null;
@@ -1811,7 +1822,7 @@ function saveCustomerDetailThinCoreP462_(payload) {
     masterUpdatedAt: masterMeta && masterMeta.updatedAt || '',
     masterEditor: masterMeta && masterMeta.editor || '',
     savedAt: new Date().toISOString(),
-    verified: false,
+    verified: payload.clientSaveSource === 'detailModal' && targets.length > 0,
     fastPatch: true,
     thinSaveP462: true,
     clientOperationId: payload.clientOperationId || '',
@@ -1831,10 +1842,11 @@ function saveCustomerMemoThinCoreP462_(rowNoOrPayload, memo) {
   const sheet = target.sheet;
   const headerMap = getHeaderMap_(sheet);
   const memoCol = findMasterFieldCol_(headerMap, 'memo') || ensureMasterFieldColumn_(sheet, headerMap, 'memo');
-  const nextMemo = String(payload.memo == null ? '' : payload.memo);
-  const currentMemo = String(sheet.getRange(rowNo, memoCol).getDisplayValue() || '');
+  const nextMemo = String(payload.memo == null ? '' : payload.memo).replace(/\r?\n/g, '\n');
+  const memoRangeP489 = sheet.getRange(rowNo, memoCol);
+  const currentMemo = String(memoRangeP489.getValue() == null ? '' : memoRangeP489.getValue()).replace(/\r?\n/g, '\n');
   if (payload.expectedValues && Object.prototype.hasOwnProperty.call(payload.expectedValues, 'memo')) {
-    const expectedMemo = String(payload.expectedValues.memo == null ? '' : payload.expectedValues.memo);
+    const expectedMemo = String(payload.expectedValues.memo == null ? '' : payload.expectedValues.memo).replace(/\r?\n/g, '\n');
     if (currentMemo !== expectedMemo && currentMemo !== nextMemo) {
       throw makePortalFieldConflictErrorP474_({
         rowNo: rowNo,
@@ -2067,6 +2079,58 @@ function saveCustomerDetail(payload) {
   });
 }
 
+
+function applyCustomerPatchDirectP473_(payload) {
+  payload = Object.assign({}, payload || {});
+  if (!payload.values && payload.patch && typeof payload.patch === 'object') payload.values = Object.assign({}, payload.patch || {});
+  if (!payload.values && Object.prototype.hasOwnProperty.call(payload, 'memo')) payload.values = { memo: payload.memo };
+  payload.values = Object.assign({}, payload.values || {});
+  payload.thinSave = true;
+  payload.fastMode = true;
+  payload.noSynchronousRefresh = true;
+  const keys = Object.keys(payload.values || {});
+  let res;
+  if (keys.length === 1 && keys[0] === 'memo') {
+    payload.memo = payload.values.memo;
+    res = saveCustomerMemoThinCoreP462_(payload);
+  } else {
+    res = saveCustomerDetailThinCoreP462_(payload);
+  }
+  res = Object.assign({}, res || {}, {
+    directSaveP473: true,
+    optimisticDirectSaveP489: true,
+    methodName: 'saveCustomerPatchFastP473',
+    applied: true,
+    noSynchronousRefresh: true
+  });
+  return res;
+}
+
+function saveCustomerPatchFastP473(payload) {
+  payload = Object.assign({}, payload || {});
+  if (!payload.values && payload.patch && typeof payload.patch === 'object') payload.values = Object.assign({}, payload.patch || {});
+  if (!payload.values && Object.prototype.hasOwnProperty.call(payload, 'memo')) payload.values = { memo: payload.memo };
+  payload.clientSaveSource = String(payload.clientSaveSource || payload.source || 'customer.patch');
+  payload.thinSave = true;
+  payload.fastMode = true;
+  payload.noSynchronousRefresh = true;
+  const cachedP458 = getPortalCachedOperationResultP458_(payload);
+  if (cachedP458) return cachedP458;
+
+  try {
+    const res = applyCustomerPatchDirectP473_(payload);
+    res.directSaveP473 = true;
+    res.optimisticDirectSaveP489 = true;
+    putPortalCachedOperationResultP458_(payload, res);
+    return res;
+  } catch (err) {
+    if (typeof enqueueSaveFallbackP473_ === 'function' && (isPortalServerTransientWriteErrorP473_(err) || isPortalServerStaleErrorP473_(err))) {
+      return enqueueSaveFallbackP473_('saveCustomerPatchFastP473', payload, 'DIRECT_PATCH_SAVE_FAILED', err);
+    }
+    throw err;
+  }
+}
+
 function saveCustomerDetailFast(payload) {
   payload = payload || {};
   const cachedP458 = getPortalCachedOperationResultP458_(payload);
@@ -2078,18 +2142,9 @@ function saveCustomerDetailFast(payload) {
   // 기존 구조는 3~7초짜리 저장이 전역 lock을 잡고, 다른 사용자는 250ms 후 "다른 작업 처리 중"으로 튕겼습니다.
   // 경량 저장은 rowNo/customerNo + expectedValues로 필드 단위 충돌을 검사하므로 전역 lock이 필요 없습니다.
   if (isPortalCustomerThinSavePayloadP462_(payload, valuesP462)) {
-    try {
-      const res = saveCustomerDetailThinCoreP462_(payload);
-      res.directSaveP473 = true;
-      putPortalCachedOperationResultP458_(payload, res);
-      return res;
-    } catch (err) {
-      // 충돌/일시 오류는 사용자에게 busy 실패로 던지지 않고 저장큐_DB에 남깁니다.
-      if (typeof enqueueSaveFallbackP473_ === 'function' && (isPortalServerTransientWriteErrorP473_(err) || isPortalServerStaleErrorP473_(err))) {
-        return enqueueSaveFallbackP473_('saveCustomerDetailFast', payload, 'DIRECT_SAVE_FAILED', err);
-      }
-      throw err;
-    }
+    // P489: saveCustomerDetailFast 호출도 내부적으로 P473 Direct Patch 엔진으로 라우팅합니다.
+    // 정상 경로는 마스터시트 직접 저장, 충돌/일시 오류만 저장큐_DB fallback입니다.
+    return saveCustomerPatchFastP473(payload);
   }
 
   // 무거운 계약조건/복합 저장은 기존 lock 경로를 유지하되, busy는 큐 fallback으로 전환합니다.
@@ -2183,8 +2238,9 @@ function saveCustomerDetailCoreP202_(payload) {
     const nextValue = getPortalMasterCompareTextP280_(def.key, values[def.key]);
     const writeValue = getPortalMasterWriteValueP280_(def.key, values[def.key]);
     const range = sheet.getRange(rowNo, col);
-    const prevValue = String(range.getDisplayValue() || '').trim();
-    if (prevValue !== nextValue) {
+    const prevCompare = getPortalMasterConflictCompareTextP489_(def.key, getPortalCurrentFieldCompareValueP489_(sheet, rowNo, def.key, col));
+    const nextCompare = getPortalMasterConflictCompareTextP489_(def.key, values[def.key]);
+    if (prevCompare !== nextCompare) {
       applyPortalMasterCellFormatP433_(sheet, rowNo, col, def.key);
       range.setValue(writeValue);
       changed.push(def.label);
@@ -2233,10 +2289,13 @@ function verifyPortalCustomerFastSaveAppliedP430_(sheet, rowNo, changedTargets) 
   const failed = [];
   changedTargets.forEach(function(t) {
     try {
-      const actual = String(sheet.getRange(rowNo, t.col).getDisplayValue() || '').trim();
-      const expected = String(t.value == null ? '' : t.value).trim();
-      if (actual !== expected) {
-        failed.push(t.label + ' expected=[' + expected + '] actual=[' + actual + ']');
+      const range = sheet.getRange(rowNo, t.col);
+      const actualRaw = getPortalCurrentFieldCompareValueP489_(sheet, rowNo, t.key, t.col);
+      const actualToken = getPortalMasterConflictCompareTextP489_(t.key, actualRaw);
+      const expectedToken = getPortalMasterConflictCompareTextP489_(t.key, Object.prototype.hasOwnProperty.call(t, 'writeValue') ? t.writeValue : t.value);
+      if (actualToken !== expectedToken) {
+        const actualDisplay = String(range.getDisplayValue() || '').trim();
+        failed.push(t.label + ' expected=[' + getPortalFieldDisplayTextForResponseP489_(t.key, Object.prototype.hasOwnProperty.call(t, 'writeValue') ? t.writeValue : t.value) + '] actual=[' + (actualDisplay || actualToken) + ']');
       }
     } catch (err) {
       failed.push(t.label + ' 확인 실패: ' + (err && err.message || err));
@@ -2296,12 +2355,11 @@ function saveCustomerDetailFastCoreP202_(payload) {
     };
   }
 
-  const lastCol = Math.max(sheet.getLastColumn(), Math.max.apply(null, targets.map(function(t) { return t.col; })));
-  const currentDisplayRow = sheet.getRange(rowNo, 1, 1, lastCol).getDisplayValues()[0];
   const changedTargets = [];
   targets.forEach(function(t) {
-    const prevValue = String(currentDisplayRow[t.col - 1] || '').trim();
-    if (prevValue !== t.value) changedTargets.push(t);
+    const prevCompare = getPortalMasterConflictCompareTextP489_(t.key, getPortalCurrentFieldCompareValueP489_(sheet, rowNo, t.key, t.col));
+    const nextCompare = getPortalMasterConflictCompareTextP489_(t.key, Object.prototype.hasOwnProperty.call(t, 'writeValue') ? t.writeValue : t.value);
+    if (prevCompare !== nextCompare) changedTargets.push(t);
   });
 
   const changed = changedTargets.map(function(t) { return t.label; });
@@ -2673,28 +2731,22 @@ function normalizePortalContractPayloadFieldsP280_(values) {
   return values;
 }
 
-function normalizePortalBuildingTypeP487_(value) {
-  const compact = String(value == null ? '' : value).replace(/\s+/g, '').trim();
-  if (!compact) return '';
-  if (compact.indexOf('기업') >= 0) return '기업';
-  if (compact.indexOf('공공') >= 0 || compact.indexOf('학교') >= 0) return '공공기관';
-  if (compact.indexOf('집합') >= 0 || compact.indexOf('공동주택') >= 0 || compact.indexOf('아파트') >= 0 || compact.indexOf('오피스텔') >= 0) return '집합건물';
+function normalizePortalBuildingTypeP488_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (text === '기업') return '기업';
+  if (text === '공공기관' || text === '공공' || text === '학교') return '공공기관';
+  if (text === '집합건물' || text === '공동주택') return '집합건물';
   return '';
-}
-
-function formatPortalDiscountRateTextP487_(value) {
-  const n = Number(value);
-  if (!isFinite(n)) return '';
-  return (Math.round(n * 1000) / 1000).toFixed(3);
 }
 
 function normalizePortalDetailSaveValuesP484_(values) {
   values = Object.assign({}, values || {});
+  if (Object.prototype.hasOwnProperty.call(values, 'buildingType')) {
+    values.buildingType = normalizePortalBuildingTypeP488_(values.buildingType);
+  }
   if (Object.prototype.hasOwnProperty.call(values, 'contact') && typeof normalizePortalContactProfileNameP484_ === 'function') {
     values.contact = normalizePortalContactProfileNameP484_(values.contact);
-  }
-  if (Object.prototype.hasOwnProperty.call(values, 'buildingType')) {
-    values.buildingType = normalizePortalBuildingTypeP487_(values.buildingType);
   }
   ['areaCheckNeeded', 'addressCheckNeeded'].forEach(function(key) {
     if (!Object.prototype.hasOwnProperty.call(values, key)) return;
@@ -2740,6 +2792,7 @@ function formatPortalNumberTextP433_(num, decimals, comma) {
 
 function getPortalMasterWriteValueP280_(key, value) {
   key = String(key || '').trim();
+  if (key === 'memo' || key === 'specialTerms') return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
   if (key === 'contractUnit') {
     const months = normalizePortalContractUnitMonthsP280_(value);
     return months === '' ? '' : months;
@@ -2764,7 +2817,7 @@ function getPortalMasterWriteValueP280_(key, value) {
   }
   if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') {
     const text = String(value == null ? '' : value).trim().toUpperCase();
-    return (value === true || text === 'TRUE' || text === 'Y' || text === 'YES' || text === '1') ? 'TRUE' : 'FALSE';
+    return (value === true || text === 'TRUE' || text === 'Y' || text === 'YES' || text === '1' || text === 'O' || text === 'CHECKED') ? 'TRUE' : 'FALSE';
   }
   if (isPortalMasterDateKeyP433_(key)) {
     const d = parsePortalContractDateP420_(value);
@@ -2782,10 +2835,71 @@ function getPortalMasterCompareTextP280_(key, value) {
   if (key === 'maintenance' || key === 'performance') return String(writeValue) + '회';
   if (key === 'area') return formatPortalNumberTextP433_(writeValue, 2, true);
   if (key === 'finalQuote') return '₩' + formatPortalNumberTextP433_(writeValue, 0, true);
-  if (key === 'discountRate') return formatPortalDiscountRateTextP487_(writeValue);
+  if (key === 'discountRate') {
+    const n = Number(writeValue);
+    return isFinite(n) ? (Math.round(n * 1000) / 1000).toFixed(3) : '';
+  }
   if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') return String(writeValue || '').toUpperCase() === 'TRUE' ? 'TRUE' : 'FALSE';
   return String(writeValue).trim();
 }
+
+
+// P489: Direct Save expectedValue 비교 정규화
+// 화면/시트 표시 형식 차이 때문에 같은 값이 충돌로 오인되는 문제를 막습니다.
+// 예: 빈 체크박스 == FALSE, ₩1,680,000 == 1680000 == ₩ 1,680,000, 12 == 12.000.
+function getPortalMasterConflictCompareTextP489_(key, value) {
+  key = String(key || '').trim();
+  if (key === 'memo' || key === 'specialTerms') return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
+  if (isPortalMasterDateKeyP433_(key)) return formatPortalContractDateForDisplayP420_(value);
+  if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') {
+    const text = String(value == null ? '' : value).trim().toUpperCase();
+    return (value === true || text === 'TRUE' || text === 'Y' || text === 'YES' || text === '1' || text === 'O' || text === 'CHECKED') ? 'TRUE' : 'FALSE';
+  }
+  if (key === 'finalQuote') {
+    const n = parsePortalDecimalNumberP433_(value);
+    return n === '' ? '' : String(Math.round(Number(n)));
+  }
+  if (key === 'discountRate') {
+    const n = parsePortalDecimalNumberP433_(value);
+    return n === '' ? '' : (Math.round(Number(n) * 1000) / 1000).toFixed(3);
+  }
+  if (key === 'contractUnit') {
+    const n = normalizePortalContractUnitMonthsP280_(value);
+    return n === '' ? '' : String(n);
+  }
+  if (key === 'maintenance' || key === 'performance') {
+    const n = normalizePortalInspectionCountP280_(value);
+    return n === '' ? '' : String(n);
+  }
+  if (key === 'area') {
+    const n = parsePortalDecimalNumberP433_(value);
+    return n === '' ? '' : String(roundPortalNumberP433_(n, 2));
+  }
+  if (key === 'buildingType' && typeof normalizePortalBuildingTypeP488_ === 'function') return normalizePortalBuildingTypeP488_(value);
+  return String(value == null ? '' : value).trim();
+}
+
+function getPortalCurrentFieldCompareValueP489_(sheet, rowNo, key, col) {
+  if (!sheet || !rowNo || !col) return '';
+  const range = sheet.getRange(rowNo, col);
+  if (String(key || '') === 'memo' || String(key || '') === 'specialTerms') return String(range.getValue() == null ? '' : range.getValue()).replace(/\r?\n/g, '\n');
+  let raw = '';
+  let display = '';
+  try { raw = range.getValue(); } catch (err) { raw = ''; }
+  try { display = range.getDisplayValue(); } catch (err) { display = ''; }
+  if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') return (raw === '' || raw == null) ? display : raw;
+  if (key === 'finalQuote' || key === 'discountRate' || key === 'area' || key === 'contractUnit' || key === 'maintenance' || key === 'performance') {
+    return (raw === '' || raw == null) ? display : raw;
+  }
+  return String(display == null ? '' : display).trim();
+}
+
+function getPortalFieldDisplayTextForResponseP489_(key, value) {
+  key = String(key || '').trim();
+  if (key === 'memo' || key === 'specialTerms') return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
+  return getPortalMasterCompareTextP280_(key, value);
+}
+
 
 // PATCH P1-12: 계약조건 저장 검증 + 할인율 공란 0 보정
 // - 변수 입력 부족이 시트 수식에 남지 않도록 계약 계산 필수값을 저장 전 차단합니다.

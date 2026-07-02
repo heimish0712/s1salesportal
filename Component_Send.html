@@ -2002,6 +2002,87 @@ function cancelCurrentMailSend() {
     .cancelMailRun(runId);
 }
 
+
+function getPortalLocalPendingSaveCountBeforeSendP489_(customerNo, rowNo) {
+  customerNo = normalizeCustomerNoForKey_(customerNo || '');
+  rowNo = Number(rowNo || 0) || 0;
+  let count = 0;
+  try {
+    if (typeof getCustomerSaveQueueSizeP220_ === 'function') count += Number(getCustomerSaveQueueSizeP220_(rowNo, customerNo) || 0) || 0;
+  } catch(e) {}
+  try {
+    if (typeof getCustomerSaveDurableOpsP468_ === 'function') {
+      const ops = getCustomerSaveDurableOpsP468_() || [];
+      count += ops.filter(function(op){
+        return op && normalizeCustomerNoForKey_(op.customerNo || (op.payload && op.payload.customerNo) || '') === customerNo && (!rowNo || Number(op.rowNo || (op.payload && op.payload.rowNo) || 0) === rowNo);
+      }).length;
+    }
+  } catch(e) {}
+  try {
+    if (typeof customerDetailPendingOpMapP457 !== 'undefined' && customerDetailPendingOpMapP457) {
+      const suffix = rowNo + ':' + customerNo;
+      Object.keys(customerDetailPendingOpMapP457).forEach(function(k){
+        if (String(k).indexOf(suffix) >= 0 || String(k) === suffix) count += (customerDetailPendingOpMapP457[k] || []).length;
+      });
+    }
+  } catch(e) {}
+  return count;
+}
+
+function waitPortalLocalPendingSavesBeforeSendP489_(customerNo, rowNo, timeoutMs) {
+  const started = Date.now();
+  const limit = Math.max(1200, Number(timeoutMs || 5000) || 5000);
+  return new Promise(function(resolve, reject){
+    function tick() {
+      const pending = getPortalLocalPendingSaveCountBeforeSendP489_(customerNo, rowNo);
+      if (!pending) return resolve({ ok: true, pending: 0 });
+      if (Date.now() - started >= limit) return reject(new Error('브라우저 저장 대기 작업 ' + pending + '건이 아직 남아 있습니다.'));
+      setTimeout(tick, 160);
+    }
+    tick();
+  });
+}
+
+function ensurePortalSendPendingSavesFlushedP489_(customerNo, rowNo) {
+  customerNo = normalizeCustomerNoForKey_(customerNo || '');
+  rowNo = Number(rowNo || 0) || 0;
+  const localFlush = (typeof flushCustomerSaveDurableQueueP468_ === 'function')
+    ? Promise.resolve().then(function(){ return flushCustomerSaveDurableQueueP468_('beforeSendP489'); })
+    : Promise.resolve({ ok: true, skipped: true });
+
+  return localFlush
+    .then(function(){ return waitPortalLocalPendingSavesBeforeSendP489_(customerNo, rowNo, 5000); })
+    .then(function(){
+      if (!customerNo) return { ok: true, skipped: true };
+      return new Promise(function(resolve, reject){
+        google.script.run
+          .withSuccessHandler(function(res){
+            if (res && res.ok === false) {
+              reject(new Error(res.message || '저장 대기 작업이 아직 남아 있습니다.'));
+              return;
+            }
+            resolve(res || { ok: true });
+          })
+          .withFailureHandler(reject)
+          .flushCustomerPendingOpsP473(customerNo, 5000);
+      });
+    });
+}
+
+function enqueueSendActionAfterPendingSaveFlushP489_(action, payload, ws) {
+  setSendMessage('현재 고객의 저장 반영 여부를 확인 중입니다.', false);
+  ensurePortalSendPendingSavesFlushedP489_(payload && payload.customerNo, payload && payload.rowNo)
+    .then(function(){
+      captureSendGlobalsToWorkspaceP211_(ws);
+      enqueueSendActionP477_(action);
+    })
+    .catch(function(err){
+      const msg = err && err.message ? err.message : String(err || '');
+      setSendMessage('현재 고객의 저장 반영이 아직 완료되지 않았습니다. 저장 완료 후 다시 발송해 주세요.' + (msg ? ' (' + msg + ')' : ''), true);
+      try { if (typeof renderInlineMailProgress_ === 'function') renderInlineMailProgress_(); } catch(e) {}
+    });
+}
+
 function preparePortalMailFilesForReviewFromUi() {
   const ws = getActiveSendWorkspaceP211_();
   if (!ws) return;
@@ -2029,8 +2110,7 @@ function preparePortalMailFilesForReviewFromUi() {
     workspaceId: ws.id
   };
 
-  captureSendGlobalsToWorkspaceP211_(ws);
-  enqueueSendActionP477_({
+  enqueueSendActionAfterPendingSaveFlushP489_({
     actionId: runId,
     type: 'REVIEW',
     mode: 'REVIEW',
@@ -2043,7 +2123,7 @@ function preparePortalMailFilesForReviewFromUi() {
     payload: payload,
     model: model,
     testInput: ''
-  });
+  }, payload, ws);
 }
 
 function sendPortalMailFromUi(mode) {
@@ -2092,8 +2172,7 @@ function sendPortalMailFromUi(mode) {
     workspaceId: ws.id
   };
 
-  captureSendGlobalsToWorkspaceP211_(ws);
-  enqueueSendActionP477_({
+  enqueueSendActionAfterPendingSaveFlushP489_({
     actionId: runId,
     type: 'MAIL',
     mode: mode,
@@ -2106,7 +2185,7 @@ function sendPortalMailFromUi(mode) {
     payload: payload,
     model: model,
     testInput: testInput
-  });
+  }, payload, ws);
 }
 
 function resetSendWorkspaceForExternalOpenP250_(ws) {

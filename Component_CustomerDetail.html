@@ -229,7 +229,34 @@ function collectCurrentDetailInputValues_() {
 
 // PATCH J: 저장 payload는 전체 editable input이 아니라 실제 변경된 필드만 보냅니다.
 // 상세정보가 아직 __summary/__lite 상태일 때 보이지 않던 계약조건 빈값이 마스터시트 값을 덮어쓰는 사고를 막습니다.
-function normalizeDetailSaveCompareValue_(value) {
+function normalizeDetailSaveCompareValue_(value, key) {
+  key = String(key || '').trim();
+  if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') {
+    return isTruthyDetailCheckboxP484_(value) ? 'TRUE' : 'FALSE';
+  }
+  if (key === 'finalQuote') {
+    const text = String(value == null ? '' : value).trim();
+    if (!text) return '';
+    const n = parsePortalClientMoneyP462_(value);
+    return isFinite(n) ? String(Math.round(n)) : '';
+  }
+  if (key === 'discountRate') {
+    const n = Number(String(value == null ? '' : value).replace(/,/g, '').replace(/%/g, '').replace(/[^0-9.\-]/g, ''));
+    return isFinite(n) ? (Math.round(n * 1000) / 1000).toFixed(3) : '';
+  }
+  if (key === 'buildingType' && typeof normalizeDetailBuildingTypeP488_ === 'function') {
+    return normalizeDetailBuildingTypeP488_(value);
+  }
+  if (key === 'contractUnit' || key === 'maintenance' || key === 'performance') {
+    const m = String(value == null ? '' : value).match(/\d+/);
+    return m ? String(Number(m[0]) || 0) : '';
+  }
+  if (key === 'area') {
+    const text = String(value == null ? '' : value).trim();
+    if (!text) return '';
+    const n = parseDetailAreaNumberP451_(value);
+    return isFinite(n) ? String(Math.round(n * 100) / 100) : '';
+  }
   return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
 }
 
@@ -238,6 +265,7 @@ function normalizeDetailSaveCompareValue_(value) {
 function formatDetailDiscountRateDisplayP483_(value) {
   const n = Number(String(value == null ? '' : value).replace(/,/g, '').replace(/%/g, '').replace(/[^0-9.\-]/g, ''));
   if (!isFinite(n)) return '';
+  // P488: 할인율은 고객상세/펼침 행 모두 소수점 아래 3자리까지 고정 표시합니다.
   return (Math.round(n * 1000) / 1000).toFixed(3);
 }
 function normalizeDetailDiscountRateTextP483_(value) {
@@ -330,8 +358,8 @@ function getDirtyDetailInputValues_() {
   const baseline = detailEditBaselineValues || buildDetailBaselineFallbackP461_();
   const dirty = {};
   Object.keys(currentValues).forEach(function(key) {
-    const cur = normalizeDetailSaveCompareValue_(currentValues[key]);
-    const base = normalizeDetailSaveCompareValue_(baseline[key]);
+    const cur = normalizeDetailSaveCompareValue_(currentValues[key], key);
+    const base = normalizeDetailSaveCompareValue_(baseline[key], key);
     if (cur !== base) dirty[key] = currentValues[key] || '';
   });
   return dirty;
@@ -353,7 +381,6 @@ function restoreDetailInputValues_(values) {
     if (el) {
       if (el.type === 'checkbox') el.checked = isTruthyDetailCheckboxP484_(values[key]);
       else if (key === 'finalQuote') el.value = formatPortalClientMoneyPlainP484_(parsePortalClientMoneyP462_(values[key])) || (values[key] || '');
-      else if (key === 'discountRate') el.value = formatDetailDiscountRateDisplayP483_(parsePortalClientPercentP484_(values[key]));
       else el.value = values[key] || '';
       if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
     }
@@ -559,7 +586,7 @@ function bindDetailDraftProtectionP457_() {
     const handler = function() {
       const key = getDetailInputKeyP457_(el);
       if (!key) return;
-      markDetailDraftFieldP457_(key, el.value || '', { force: true });
+      markDetailDraftFieldP457_(key, readDetailInputValueForSaveP483_(el), { force: true });
       try { updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
     };
     el.addEventListener('input', handler);
@@ -1684,17 +1711,19 @@ function isDetailZeroDateLikeP340_(value) {
   return false;
 }
 
+function normalizeDetailBuildingTypeP488_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  if (text === '기업') return '기업';
+  if (text === '공공기관' || text === '공공' || text === '학교') return '공공기관';
+  if (text === '집합건물' || text === '공동주택') return '집합건물';
+  return '';
+}
+
 function normalizeDetailSelectCurrentP280_(key, value) {
   const text = String(value == null ? '' : value).trim();
   if (!text || text === '-' || text === '–' || text === '—') return '';
   if (isDetailZeroDateLikeP340_(text)) return (key === 'maintenance' || key === 'performance') ? '0' : '';
-  if (key === 'buildingType') {
-    const compact = text.replace(/\s+/g, '');
-    if (compact.indexOf('기업') >= 0) return '기업';
-    if (compact.indexOf('공공') >= 0 || compact.indexOf('학교') >= 0) return '공공기관';
-    if (compact.indexOf('집합') >= 0 || compact.indexOf('공동주택') >= 0 || compact.indexOf('아파트') >= 0 || compact.indexOf('오피스텔') >= 0) return '집합건물';
-    return '';
-  }
   if (key === 'contractUnit') {
     if (text === '1년') return '12';
     if (text === '반년') return '6';
@@ -1705,6 +1734,7 @@ function normalizeDetailSelectCurrentP280_(key, value) {
     const m = text.match(/\d+/);
     return m ? String(Math.max(0, Math.min(12, Number(m[0]) || 0))) : text;
   }
+  if (key === 'buildingType') return normalizeDetailBuildingTypeP488_(text);
   return text;
 }
 
@@ -1873,6 +1903,20 @@ function applyServerDetailAfterSaveP112_(detail, rowNo) {
   return true;
 }
 
+function notifyCustomerDetailSaveResultP488_(res) {
+  try {
+    if (res && res.conflictP473) {
+      toast('저장 충돌이 발생했습니다. 입력값은 화면에 보존했습니다.');
+      return;
+    }
+    if (res && res.queuedFallbackP473) {
+      toast('저장큐로 넘어갔습니다. 입력값은 유지되고 자동으로 반영됩니다.');
+      return;
+    }
+    toast('저장되었습니다.');
+  } catch (err) {}
+}
+
 function saveDetailFields() {
   if (!currentDetail || !currentDetail.rowNo) return;
   const rowNo = Number(currentDetail.rowNo);
@@ -1954,6 +1998,17 @@ function saveDetailFields() {
       }))
       .then(function(res){
         const detailModalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo);
+        if (res && res.conflictP473) {
+          try { if (opP457 && typeof markDetailOperationFailedP457_ === 'function') markDetailOperationFailedP457_(opP457, new Error('저장 충돌 확인 필요'), true); } catch(e) {}
+          markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, res || { message: '저장 충돌 확인 필요' });
+          if (detailModalStillActiveP456) {
+            try { renderDetailSyncStatusP457_(); } catch(e) {}
+            if (typeof showPortalSaveConflictDialogP474_ === 'function') showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: targetCustomerNo, key: '', label: '고객 상세' });
+            else showModalError('다른 사용자가 같은 고객 정보를 먼저 수정했습니다. 입력값은 화면에 보존했습니다. 최신값 확인 후 다시 저장해 주세요.');
+          }
+          notifyCustomerDetailSaveResultP488_(res);
+          return res;
+        }
         const confirmedValuesP457 = (res && (res.changedValues || res.values)) ? (res.changedValues || res.values) : values;
         try { applyCustomerMasterMetaFromSaveP202_(rowNo, targetCustomerNo, res); } catch(e) {}
         try { if (opP457 && typeof markDetailOperationAppliedP457_ === 'function') markDetailOperationAppliedP457_(opP457, confirmedValuesP457, res || {}); } catch(e) {}
@@ -1983,17 +2038,7 @@ function saveDetailFields() {
         repaintCustomerResultsIfVisible_();
         try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, res || { message: '마스터시트 저장 완료' });
-        if (detailModalStillActiveP456) {
-          try {
-            if (res && (res.conflictP473 || res.conflictP474)) {
-              toast('저장 충돌 확인 필요: 입력값은 보존했고 저장큐에 기록했습니다.');
-            } else if (res && (res.queuedFallbackP473 || res.queuedRetryP468)) {
-              toast('저장 대기 중입니다. 저장큐로 넘어갔고 자동으로 다시 반영됩니다.');
-            } else {
-              toast('저장되었습니다.');
-            }
-          } catch(e) {}
-        }
+        notifyCustomerDetailSaveResultP488_(res || {});
         if (profilePayloadP484) saveContactProfilesAfterDetailSaveP484_(profilePayloadP484);
         if (detailModalStillActiveP456) {
           try { renderDetailSyncStatusP457_(); } catch(e) {}
@@ -2095,7 +2140,6 @@ function setInputValueByKey(key, value) {
   if (el) {
     if (el.type === 'checkbox') el.checked = isTruthyDetailCheckboxP484_(value);
     else if (key === 'finalQuote') el.value = formatPortalClientMoneyPlainP484_(parsePortalClientMoneyP462_(value)) || (value || '');
-    else if (key === 'discountRate') el.value = formatDetailDiscountRateDisplayP483_(parsePortalClientPercentP484_(value));
     else el.value = value || '';
     if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
     try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_(key, readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}

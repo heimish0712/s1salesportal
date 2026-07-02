@@ -135,7 +135,7 @@ const CUSTOMER_FILTER_DEFS_P = [
 
   { section:'상세 계약조건', key:'area', label:'연면적', type:'range' },
   { section:'상세 계약조건', key:'grade', label:'관리등급', type:'select' },
-  { section:'상세 계약조건', key:'buildingType', label:'건물 유형', type:'select' },
+  { section:'상세 계약조건', key:'buildingType', label:'건물 유형', type:'select', options:['기업','공공기관','집합건물'] },
   { section:'상세 계약조건', key:'contractUnit', label:'계약단위', type:'select' },
   { section:'상세 계약조건', key:'contractStartDate', label:'계약시작일', type:'text' },
   { section:'상세 계약조건', key:'contractEndDate', label:'계약종료일', type:'text' },
@@ -386,29 +386,6 @@ function renderCustomerSearchSortableThP15_(col) {
   return makePortalSortableThP15_(col.label || col.key, col.key || '', info.key, info.dir, 'toggleCustomerSearchHeaderSortP15_', '');
 }
 
-function formatCustomerMoneyDisplayP487_(value) {
-  const text = String(value == null ? '' : value).trim();
-  if (!text || text === '-' || text === '–' || text === '—') return '';
-  const raw = text.replace(/,/g, '').replace(/[₩￦원]/g, '').replace(/\s+/g, '');
-  const n = Number(raw.replace(/[^0-9.\-]/g, ''));
-  if (!isFinite(n)) return text;
-  return '₩ ' + Math.round(n).toLocaleString('ko-KR');
-}
-
-function formatCustomerDiscountRateDisplayP487_(value) {
-  const text = String(value == null ? '' : value).trim();
-  if (!text || text === '-' || text === '–' || text === '—') return '';
-  const n = Number(text.replace(/,/g, '').replace(/%/g, '').replace(/[^0-9.\-]/g, ''));
-  if (!isFinite(n)) return text;
-  return (Math.round(n * 1000) / 1000).toFixed(3);
-}
-
-function formatCustomerResultDisplayValueP487_(key, value) {
-  if (key === 'finalQuote') return formatCustomerMoneyDisplayP487_(value) || disp(value);
-  if (key === 'discountRate') return formatCustomerDiscountRateDisplayP487_(value) || disp(value);
-  return disp(value);
-}
-
 function toggleCustomerSearchHeaderSortP15_(key) {
   key = String(key || '').trim();
   if (!key) return;
@@ -422,10 +399,38 @@ function toggleCustomerSearchHeaderSortP15_(key) {
   searchCustomerPage(0);
 }
 
+function parseCustomerMoneyNumberP488_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return NaN;
+  const n = Number(text.replace(/,/g, '').replace(/[₩￦원\s]/g, '').replace(/[^0-9.\-]/g, ''));
+  return isFinite(n) ? n : NaN;
+}
+
+function formatCustomerMoneyDisplayP488_(value) {
+  const n = parseCustomerMoneyNumberP488_(value);
+  if (!isFinite(n)) return disp(String(value == null ? '' : value).trim());
+  return '₩' + Math.round(n).toLocaleString('ko-KR');
+}
+
+function formatCustomerDiscountRateDisplayP488_(value) {
+  const text = String(value == null ? '' : value).replace(/,/g, '').replace(/%/g, '').trim();
+  if (!text || text === '-' || text === '–' || text === '—') return disp(text);
+  const n = Number(text.replace(/[^0-9.\-]/g, ''));
+  if (!isFinite(n)) return disp(text);
+  return (Math.round(n * 1000) / 1000).toFixed(3);
+}
+
+function formatCustomerSearchDisplayValueP488_(key, value) {
+  key = String(key || '').trim();
+  if (key === 'finalQuote') return formatCustomerMoneyDisplayP488_(value);
+  if (key === 'discountRate') return formatCustomerDiscountRateDisplayP488_(value);
+  return disp(value);
+}
+
 function renderCustomerResultCell_(row, col) {
   const key = col.key || '';
   const rawValue = row && row[key] != null ? row[key] : '';
-  let value = formatCustomerResultDisplayValueP487_(key, rawValue);
+  let value = formatCustomerSearchDisplayValueP488_(key, rawValue);
   let title = value;
 
   if (key === 'memo') {
@@ -718,7 +723,7 @@ function cancelCustomerInlineEdit_(inputId) {
 }
 
 function renderCustomerInlineDisplayHtml_(key, rawValue) {
-  let value = formatCustomerResultDisplayValueP487_(key, rawValue);
+  let value = disp(rawValue);
   if (key === 'memo') {
     value = shortenCustomerMemo_(value, CUSTOMER_RESULT_TABLE.memoMaxLength || 90);
   }
@@ -912,7 +917,11 @@ function runCustomerSaveRequestOnceP468_(methodName, payload) {
     try {
       const runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
       if (methodName === 'saveCustomerMemoFast') runner.saveCustomerMemoFast(payload);
-      else if (methodName === 'saveCustomerDetailFast') runner.saveCustomerDetailFast(payload);
+      else if (methodName === 'saveCustomerPatchFastP473') runner.saveCustomerPatchFastP473(payload);
+      else if (methodName === 'saveCustomerDetailFast') {
+        if (payload && (payload.thinSave || payload.fastMode || payload.noSynchronousRefresh)) runner.saveCustomerPatchFastP473(payload);
+        else runner.saveCustomerDetailFast(payload);
+      }
       else reject(new Error('지원하지 않는 고객 저장 메서드입니다: ' + methodName));
     } catch (err) { reject(err); }
   });
@@ -1372,8 +1381,11 @@ function runCustomerSaveRequestP220_(methodName, payload) {
         const runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
         if (methodName === 'saveCustomerMemoFast') {
           runner.saveCustomerMemoFast(payload);
+        } else if (methodName === 'saveCustomerPatchFastP473') {
+          runner.saveCustomerPatchFastP473(payload);
         } else if (methodName === 'saveCustomerDetailFast') {
-          runner.saveCustomerDetailFast(payload);
+          if (payload && (payload.thinSave || payload.fastMode || payload.noSynchronousRefresh)) runner.saveCustomerPatchFastP473(payload);
+          else runner.saveCustomerDetailFast(payload);
         } else {
           reject(new Error('지원하지 않는 고객 저장 메서드입니다: ' + methodName));
         }
@@ -2238,12 +2250,8 @@ function formatCustomerExpandDisplayValue_(key, value, detail) {
     const v = normalizePortalContractDisplayValueClientP280_(key, normalized);
     return v !== '' ? v + '회' : disp(normalized);
   }
-  if (key === 'finalQuote') {
-    return formatCustomerMoneyDisplayP487_(normalized) || disp(normalized);
-  }
-  if (key === 'discountRate') {
-    return formatCustomerDiscountRateDisplayP487_(normalized) || disp(normalized);
-  }
+  if (key === 'finalQuote') return formatCustomerMoneyDisplayP488_(normalized);
+  if (key === 'discountRate') return formatCustomerDiscountRateDisplayP488_(normalized);
   if (key === 'phone' || key === 'directPhone') {
     return splitCustomerExpandPhoneLines_(normalized) || disp(normalized);
   }
@@ -2566,6 +2574,10 @@ function saveBusinessRegistrationModalP436_() {
   if (!rowNo || !customerNo) return alert('사업자등록증 정보를 저장할 고객을 찾지 못했습니다.');
   const allValues = collectBusinessRegistrationModalValuesP436_();
   const dirty = getBusinessRegistrationDirtyValuesP436_(allValues);
+  const expectedValuesP489 = {};
+  Object.keys(dirty || {}).forEach(function(key) {
+    expectedValuesP489[key] = state.original && Object.prototype.hasOwnProperty.call(state.original, key) ? state.original[key] : '';
+  });
   if (!Object.keys(dirty).length) {
     toast('변경된 사업자등록증 정보가 없습니다.');
     closeBusinessRegistrationModalP436_();
@@ -2579,6 +2591,7 @@ function saveBusinessRegistrationModalP436_() {
     return runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, dirty, {
       clientSaveSource: 'businessRegistrationModal',
       requireAuditLog: false,
+      expectedValues: expectedValuesP489,
       fastMode: true,
       noSynchronousRefresh: true,
       thinSave: true,
@@ -2586,9 +2599,17 @@ function saveBusinessRegistrationModalP436_() {
       skipMasterMeta: true,
       skipIndexQueue: true
     })).then(function(res) {
+      if (isPortalSaveConflictResponseP474_(res)) {
+        businessRegistrationModalTouchedP436 = true;
+        renderBusinessRegistrationModalP436_(allValues, false);
+        showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: customerNo, key: '', label: '사업자등록증 정보' });
+        toast('사업자등록증 저장 충돌 확인 필요: 입력값은 유지됩니다.');
+        return res;
+      }
       applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
       if (res && res.values) applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, res.values);
-      toast((res && res.message) || '사업자등록증 정보 저장 완료');
+      if (res && res.queuedFallbackP473) toast('사업자등록증 정보가 저장큐로 넘어갔습니다. 자동으로 다시 반영됩니다.');
+      else toast((res && res.message) || '사업자등록증 정보 저장 완료');
       closeBusinessRegistrationModalP436_();
       return res;
     }, function(err) {
@@ -2607,6 +2628,7 @@ function saveBusinessRegistrationModalP436_() {
           persistCustomerSaveDurableOperationP468_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(rowNo, customerNo, dirty, {
             clientSaveSource: 'businessRegistrationModalRetryP468',
             requireAuditLog: false,
+            expectedValues: expectedValuesP489,
             fastMode: true,
             noSynchronousRefresh: true,
             thinSave: true,
@@ -4212,6 +4234,12 @@ function normalizePortalContractDisplayValueClientP280_(key, value) {
   if (key === 'maintenance' || key === 'performance') {
     const m = text.match(/\d+/);
     return m ? String(Math.max(0, Math.min(12, Number(m[0]) || 0))) : text;
+  }
+  if (key === 'buildingType') {
+    if (text === '기업') return '기업';
+    if (text === '공공기관' || text === '공공' || text === '학교') return '공공기관';
+    if (text === '집합건물' || text === '공동주택') return '집합건물';
+    return '';
   }
   return text;
 }
