@@ -57,7 +57,48 @@ function getPortalNoticeDetail(noticeId) {
   return result;
 }
 
+
+function findPortalNoticeRowByIdP489_(sheet, noticeId) {
+  const id = String(noticeId || '').trim();
+  if (!sheet || !id) return null;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const values = sheet.getRange(2, 1, lastRow - 1, PORTAL_CONFIG.NOTICE_HEADERS.length).getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim() === id) {
+      return { rowNo: i + 2, values: values[i], item: { id: String(values[i][0] || '').trim(), deleted: String(values[i][7] || '').trim() } };
+    }
+  }
+  return null;
+}
+
+
+function normalizePortalNoticeCompareTextP489_(key, value) {
+  key = String(key || '').trim();
+  if (key === 'noticeDate') {
+    const d = parsePortalDateOnly_(value);
+    if (d) return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  return String(value == null ? '' : value).replace(/\r?\n/g, '\n').trim();
+}
+
 function savePortalNotice(payload) {
+  payload = Object.assign({}, payload || {});
+  payload.clientSaveSource = String(payload.clientSaveSource || 'notice.save');
+  payload.noticeId = String(payload.noticeId || payload.id || '').trim() || Utilities.getUuid().slice(0, 8);
+  try {
+    return savePortalNoticeCoreP489_(payload);
+  } catch (err) {
+    if (typeof enqueueSaveFallbackP473_ === 'function' &&
+        typeof isPortalServerTransientWriteErrorP473_ === 'function' &&
+        (isPortalServerTransientWriteErrorP473_(err) || (typeof isPortalServerStaleErrorP473_ === 'function' && isPortalServerStaleErrorP473_(err)))) {
+      return enqueueSaveFallbackP473_('savePortalNotice', payload, 'NOTICE_DIRECT_SAVE_FAILED', err);
+    }
+    throw err;
+  }
+}
+
+function savePortalNoticeCoreP489_(payload) {
   assertPortalCanWriteNotice_();
   payload = payload || {};
   const title = String(payload.title || '').trim();
@@ -69,7 +110,12 @@ function savePortalNotice(payload) {
   const now = new Date();
   const createdAt = parsePortalDateOnly_(payload.noticeDate) || now;
   const author = String(payload.author || '').trim() || getPortalCurrentUserName_();
-  const id = Utilities.getUuid().slice(0, 8);
+  const id = String(payload.noticeId || payload.id || '').trim() || Utilities.getUuid().slice(0, 8);
+
+  const existing = findPortalNoticeRowByIdP489_(sheet, id);
+  if (existing && existing.item && String(existing.item.deleted || '').toUpperCase() !== 'Y') {
+    return { ok: true, duplicate: true, notice: getPortalNoticeDetail(id), notices: getPortalNotices(0), message: '이미 처리된 공지사항 저장입니다.' };
+  }
 
   sheet.appendRow([
     id,
@@ -97,8 +143,22 @@ function savePortalNotice(payload) {
   return { ok: true, notice: getPortalNoticeDetail(id), notices: getPortalNotices(0) };
 }
 
-
 function updatePortalNotice(payload) {
+  payload = Object.assign({}, payload || {});
+  payload.clientSaveSource = String(payload.clientSaveSource || 'notice.update');
+  try {
+    return updatePortalNoticeCoreP489_(payload);
+  } catch (err) {
+    if (typeof enqueueSaveFallbackP473_ === 'function' &&
+        typeof isPortalServerTransientWriteErrorP473_ === 'function' &&
+        (isPortalServerTransientWriteErrorP473_(err) || (typeof isPortalServerStaleErrorP473_ === 'function' && isPortalServerStaleErrorP473_(err)))) {
+      return enqueueSaveFallbackP473_('updatePortalNotice', payload, 'NOTICE_UPDATE_DIRECT_SAVE_FAILED', err);
+    }
+    throw err;
+  }
+}
+
+function updatePortalNoticeCoreP489_(payload) {
   assertPortalCanWriteNotice_();
   payload = payload || {};
 
@@ -128,6 +188,28 @@ function updatePortalNotice(payload) {
 
     const rowNo = i + 2;
     const rowValues = values[i].slice();
+
+    if (payload.expectedValues && typeof payload.expectedValues === 'object') {
+      const currentExpectedMap = {
+        noticeDate: String(rowValues[2] || '').trim(),
+        author: String(rowValues[3] || '').trim(),
+        title: String(rowValues[4] || '').trim(),
+        content: String(rowValues[5] || '').replace(/\r?\n/g, '\n')
+      };
+      Object.keys(currentExpectedMap).forEach(function(k) {
+        if (!Object.prototype.hasOwnProperty.call(payload.expectedValues, k)) return;
+        const expectedText = normalizePortalNoticeCompareTextP489_(k, payload.expectedValues[k]);
+        const currentText = normalizePortalNoticeCompareTextP489_(k, currentExpectedMap[k]);
+        const nextText = normalizePortalNoticeCompareTextP489_(k, payload[k]);
+        if (currentText !== expectedText && currentText !== nextText) {
+          const err = new Error('다른 사용자가 같은 공지사항을 먼저 수정했습니다. 최신 내용을 확인한 뒤 다시 저장해 주세요.');
+          err.code = 'PORTAL_FIELD_CONFLICT_P474';
+          err.conflictInfoP474 = { key: k, label: k, currentValue: currentText, expectedValue: expectedText, attemptedValue: nextText, rowNo: rowNo, source: 'notice.update' };
+          throw err;
+        }
+      });
+    }
+
     rowValues[2] = noticeDate ? Utilities.formatDate(noticeDate, tz, 'yyyy. MM. dd') : String(payload.noticeDate || rowValues[2] || '').trim();
     rowValues[3] = author;
     rowValues[4] = title;

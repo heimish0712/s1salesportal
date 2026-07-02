@@ -93,8 +93,38 @@ function getPortalSaveOperationIdP473_(methodName, payload) {
 
 function getPortalSavePatchP473_(methodName, payload) {
   payload = payload || {};
+  methodName = String(methodName || '').trim();
   if (payload.values && typeof payload.values === 'object') return payload.values;
   if (Object.prototype.hasOwnProperty.call(payload, 'memo')) return { memo: payload.memo };
+  if (methodName === 'savePortalSupportProcessThinP474') {
+    return {
+      handler: payload.handler || '',
+      processContent: payload.processContent || '',
+      completedAt: payload.completedAt || '',
+      status: payload.status || '',
+      autoSendCheck: payload.autoSendCheck || ''
+    };
+  }
+  if (methodName === 'savePortalSupportRequest') {
+    return {
+      requestType: payload.requestType || '',
+      requester: payload.requester || '',
+      customerNo: payload.customerNo || '',
+      customerName: payload.customerName || '',
+      requestText: payload.requestText || '',
+      status: payload.status || '접수'
+    };
+  }
+  if (methodName === 'savePortalNotice' || methodName === 'updatePortalNotice') {
+    return {
+      id: payload.id || payload.noticeId || '',
+      noticeId: payload.noticeId || payload.id || '',
+      title: payload.title || '',
+      author: payload.author || '',
+      noticeDate: payload.noticeDate || '',
+      content: payload.content || ''
+    };
+  }
   return {};
 }
 
@@ -105,7 +135,11 @@ function normalizePortalSaveQueueSourceP474_(methodName, payload) {
   if (raw) return raw;
   methodName = String(methodName || '').trim();
   if (methodName === 'saveCustomerMemoFast') return 'customer.expandedMemo';
-  if (methodName === 'saveCustomerDetailFast') return 'customer.detailPatch';
+  if (methodName === 'saveCustomerDetailFast' || methodName === 'saveCustomerPatchFastP473') return 'customer.detailPatch';
+  if (methodName === 'savePortalSupportProcessThinP474') return 'support.process';
+  if (methodName === 'savePortalSupportRequest') return 'support.request';
+  if (methodName === 'savePortalNotice') return 'notice.save';
+  if (methodName === 'updatePortalNotice') return 'notice.update';
   return 'unknown.' + (methodName || 'save');
 }
 
@@ -147,6 +181,8 @@ function isPortalServerTransientWriteErrorP473_(err) {
     msg.indexOf('Exceeded maximum execution time') >= 0 ||
     msg.indexOf('Exception:') >= 0 && msg.indexOf('Google') >= 0 ||
     msg.indexOf('Internal error') >= 0 ||
+    msg.indexOf('마스터시트 저장 확인 실패') >= 0 ||
+    msg.indexOf('저장 확인 실패') >= 0 ||
     msg.indexOf('서버') >= 0;
 }
 
@@ -327,6 +363,76 @@ function processSaveQueueP473(options) {
   return { ok: true, processed: processed, done: done, retry: retry, conflict: conflict, fail: fail };
 }
 
+
+function isPortalQueuedCustomerPatchAlreadyAppliedP489_(methodName, payload, patch) {
+  methodName = String(methodName || '').trim();
+  payload = Object.assign({}, payload || {});
+  patch = Object.assign({}, patch || payload.values || {});
+  if (methodName === 'saveCustomerMemoFast' && Object.prototype.hasOwnProperty.call(payload, 'memo')) patch = { memo: payload.memo };
+  const keys = Object.keys(patch || {});
+  if (!keys.length) return false;
+  if (['saveCustomerPatchFastP473','saveCustomerDetailFast','saveCustomerMemoFast'].indexOf(methodName) < 0) return false;
+  const target = assertCustomerTarget_(payload, '저장큐 충돌 자동정리 확인', { readObject: false });
+  const sheet = target.sheet;
+  const rowNo = target.rowNo;
+  const headerMap = getHeaderMap_(sheet);
+  const defMap = typeof getPortalThinSaveDetailDefMapP462_ === 'function' ? getPortalThinSaveDetailDefMapP462_() : {};
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    let col = 0;
+    if (key === 'memo') col = findMasterFieldCol_(headerMap, 'memo') || 0;
+    else {
+      const def = defMap[key];
+      if (!def) return false;
+      col = findFirstExistingHeaderCol_(headerMap, def.headers || []) || 0;
+    }
+    if (!col) return false;
+    const currentRaw = getPortalCurrentFieldCompareValueP489_(sheet, rowNo, key, col);
+    const currentCompare = getPortalMasterConflictCompareTextP489_(key, currentRaw);
+    const patchCompare = getPortalMasterConflictCompareTextP489_(key, patch[key]);
+    if (currentCompare !== patchCompare) return false;
+  }
+  return true;
+}
+
+function resolveCustomerSupersededSaveConflictsP489_(customerNo) {
+  const no = String(customerNo || '').trim();
+  if (!no) return { ok: true, resolved: 0 };
+  const sheet = getPortalSaveQueueSheetP473_();
+  const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2 || !idx['고객번호'] || !idx['상태']) return { ok: true, resolved: 0 };
+  const width = sheet.getLastColumn();
+  const rows = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function(v) { return String(v || '').trim(); });
+  let resolved = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const rowNo = i + 2;
+    const row = rows[i];
+    const status = String(row[(idx['상태'] || 1) - 1] || '').trim();
+    if (status !== PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT) continue;
+    if (String(row[(idx['고객번호'] || 1) - 1] || '').trim() !== no) continue;
+    const obj = {};
+    headers.forEach(function(h, c) { if (h) obj[h] = row[c]; });
+    const methodName = String(obj['methodName'] || 'saveCustomerDetailFast').trim();
+    const payload = parsePortalSaveQueueJsonP473_(obj['payloadJson'], {});
+    const patch = parsePortalSaveQueueJsonP473_(obj['patchJson'], getPortalSavePatchP473_(methodName, payload));
+    try {
+      if (!isPortalQueuedCustomerPatchAlreadyAppliedP489_(methodName, payload, patch)) continue;
+      const now = new Date();
+      if (idx['상태']) sheet.getRange(rowNo, idx['상태']).setValue(PORTAL_SAVE_QUEUE_P473.STATUS.DONE);
+      if (idx['수정일시']) sheet.getRange(rowNo, idx['수정일시']).setValue(now);
+      if (idx['resultJson']) sheet.getRange(rowNo, idx['resultJson']).setValue(stringifyPortalSaveQueueJsonP473_({ ok: true, resolvedBy: 'MASTER_ALREADY_MATCHES_PATCH_P489', patch: patch }).slice(0, 45000));
+      if (idx['마지막오류']) sheet.getRange(rowNo, idx['마지막오류']).setValue('');
+      if (idx['적용일시']) sheet.getRange(rowNo, idx['적용일시']).setValue(now);
+      resolved++;
+    } catch (err) {
+      // 자동정리는 보조 기능입니다. 실패하면 기존 CONFLICT 상태를 보존합니다.
+    }
+  }
+  return { ok: true, resolved: resolved };
+}
+
 function applyPortalQueuedSaveJobP473_(methodName, payload) {
   methodName = String(methodName || '').trim();
   payload = Object.assign({}, payload || {});
@@ -336,25 +442,74 @@ function applyPortalQueuedSaveJobP473_(methodName, payload) {
     payload.thinSave = true;
     return saveCustomerMemoThinCoreP462_(payload);
   }
+  if (methodName === 'saveCustomerPatchFastP473') {
+    payload.thinSave = true;
+    return applyCustomerPatchDirectP473_(payload);
+  }
   if (methodName === 'saveCustomerDetailFast') {
     const values = payload.values || {};
-    if (isPortalCustomerThinSavePayloadP462_(payload, values)) return saveCustomerDetailThinCoreP462_(payload);
+    if (isPortalCustomerThinSavePayloadP462_(payload, values)) return applyCustomerPatchDirectP473_(payload);
     return saveCustomerDetailFastCoreP202_(payload);
+  }
+  if (methodName === 'savePortalSupportProcessThinP474') {
+    return savePortalSupportProcessThinCoreP489_(payload);
+  }
+  if (methodName === 'savePortalSupportRequest') {
+    return savePortalSupportRequestCoreP210_(payload);
+  }
+  if (methodName === 'savePortalNotice') {
+    return savePortalNoticeCoreP489_(payload);
+  }
+  if (methodName === 'updatePortalNotice') {
+    return updatePortalNoticeCoreP489_(payload);
   }
   throw new Error('지원하지 않는 저장큐 methodName: ' + methodName);
 }
 
 function flushCustomerPendingOpsP473(customerNo, timeoutMs) {
+  try { resolveCustomerSupersededSaveConflictsP489_(customerNo); } catch (e) {}
   const started = new Date().getTime();
   const limit = Math.max(1000, Number(timeoutMs || 5000) || 5000);
   let last = null;
   while (new Date().getTime() - started < limit) {
+    const before = getCustomerSaveQueueStatusCountsP489_(customerNo);
+    if (before.conflict || before.fail) {
+      return { ok: false, pending: before.pending, conflict: before.conflict, fail: before.fail, result: last, message: '저장 충돌/실패 작업이 남아 있어 진행할 수 없습니다.' };
+    }
+    if (!before.pending) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
     last = processSaveQueueP473({ maxJobs: 8, lockWaitMs: 800 });
-    const pending = getCustomerPendingSaveQueueCountP473_(customerNo);
-    if (!pending) return { ok: true, pending: 0, result: last };
+    const after = getCustomerSaveQueueStatusCountsP489_(customerNo);
+    if (after.conflict || after.fail) {
+      return { ok: false, pending: after.pending, conflict: after.conflict, fail: after.fail, result: last, message: '저장 충돌/실패 작업이 남아 있어 진행할 수 없습니다.' };
+    }
+    if (!after.pending) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
     Utilities.sleep(300);
   }
-  return { ok: false, pending: getCustomerPendingSaveQueueCountP473_(customerNo), result: last, message: '저장 대기 작업이 아직 남아 있습니다.' };
+  const finalCounts = getCustomerSaveQueueStatusCountsP489_(customerNo);
+  return { ok: false, pending: finalCounts.pending, conflict: finalCounts.conflict, fail: finalCounts.fail, result: last, message: '저장 대기 작업이 아직 남아 있습니다.' };
+}
+
+function getCustomerSaveQueueStatusCountsP489_(customerNo) {
+  const no = String(customerNo || '').trim();
+  const counts = { pending: 0, conflict: 0, fail: 0, done: 0, total: 0 };
+  if (!no) return counts;
+  const sheet = getPortalSaveQueueSheetP473_();
+  const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2 || !idx['고객번호'] || !idx['상태']) return counts;
+  const data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getDisplayValues();
+  const customerCol = idx['고객번호'] - 1;
+  const statusCol = idx['상태'] - 1;
+  data.forEach(function(row) {
+    if (String(row[customerCol] || '').trim() !== no) return;
+    const st = String(row[statusCol] || '').trim();
+    counts.total++;
+    if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY, PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING].indexOf(st) >= 0) counts.pending++;
+    else if (st === PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT) counts.conflict++;
+    else if (st === PORTAL_SAVE_QUEUE_P473.STATUS.FAIL) counts.fail++;
+    else if (st === PORTAL_SAVE_QUEUE_P473.STATUS.DONE) counts.done++;
+  });
+  return counts;
 }
 
 function getCustomerPendingSaveQueueCountP473_(customerNo) {
