@@ -5,12 +5,55 @@
  ***************************************/
 
 
+
+function normalizePortalMailSelectedKeysP478_(selectedKeys, payload, actionLabel) {
+  const aliases = {
+    contractorInfoZip: 'contractorInfo',
+    contractorInfoFile: 'contractorInfo',
+    '수행사정보': 'contractorInfo',
+    '수행사 정보': 'contractorInfo',
+    sample: 'sampleReport',
+    samples: 'sampleReport',
+    sampleReports: 'sampleReport',
+    '샘플보고서': 'sampleReport',
+    terms: 'termsGuide',
+    '약관안내문법령요약': 'termsGuide',
+    vendorContract: 'serviceStandardContract',
+    standardContract: 'serviceStandardContract'
+  };
+  const out = [];
+  const seen = {};
+  (Array.isArray(selectedKeys) ? selectedKeys : String(selectedKeys || '').split(/[;,\s]+/)).forEach(function(key) {
+    key = String(key || '').trim();
+    if (!key) return;
+    key = aliases[key] || key;
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(key);
+  });
+
+  const set = {};
+  out.forEach(function(k) { set[k] = true; });
+  const preset = String(payload && (payload.filePreset || payload.preset || payload.sendPreset || '') || '').trim().toLowerCase();
+  const firstPreset = preset === 'first' || preset === '최초';
+  const looksLikeFirst =
+    set.quote && set.serviceApplication && set.appointmentDoc && set.termsGuide &&
+    !set.sampleReport && !set.compareQuote && !set.serviceStandardContract;
+
+  if ((firstPreset || looksLikeFirst) && !set.contractorInfo) {
+    out.push('contractorInfo');
+    set.contractorInfo = true;
+    try { Logger.log('P478 ' + (actionLabel || 'mail') + ': 최초 발송 selectedKeys 수행사정보 누락 복구'); } catch (err) {}
+  }
+  return out;
+}
+
 function preparePortalMailFilesForReview(payload) {
   payload = payload || {};
   const target = assertCustomerTarget_(payload, '파일 확인/수정', { readObject: true });
   const rowNo = target.rowNo;
   const targetCustomerNo = target.customerNo;
-  const selectedKeys = Array.isArray(payload.selectedKeys) ? payload.selectedKeys.map(String).filter(Boolean) : [];
+  const selectedKeys = normalizePortalMailSelectedKeysP478_(payload.selectedKeys, payload, 'prepareReview');
 
   if (!selectedKeys.length) throw new Error('확인/수정할 발송자료를 하나 이상 선택하세요.');
   if (typeof CONFIG !== 'undefined' && CONFIG && Array.isArray(CONFIG.FILE_DEFINITIONS)) {
@@ -28,6 +71,7 @@ function preparePortalMailFilesForReview(payload) {
     rowNo: rowNo,
     customerNo: targetCustomerNo,
     selectedKeys: selectedKeys,
+    filePreset: String(payload.filePreset || payload.preset || '').trim(),
     runId: String(payload.runId || Utilities.getUuid()),
     compareQuoteSheets: payload.compareQuoteSheets || payload.selectedCompareQuoteSheets || null,
     excludedCompareQuoteSheets: payload.excludedCompareQuoteSheets || payload.excludedCompareSheets || null
@@ -80,7 +124,7 @@ function sendPortalSingleMail(payload) {
   const rowNo = target.rowNo;
   const targetCustomerNo = target.customerNo;
   const mode = String(payload.mode || '').toUpperCase();
-  const selectedKeys = Array.isArray(payload.selectedKeys) ? payload.selectedKeys.map(String).filter(Boolean) : [];
+  const selectedKeys = normalizePortalMailSelectedKeysP478_(payload.selectedKeys, payload, 'sendMail');
 
   if (mode !== 'TEST' && mode !== 'CUSTOMER') throw new Error('발송 모드가 올바르지 않습니다.');
   if (!selectedKeys.length) throw new Error('발송자료를 하나 이상 선택하세요.');
@@ -109,6 +153,7 @@ function sendPortalSingleMail(payload) {
     rowNo: rowNo,
     mode: mode,
     selectedKeys: selectedKeys,
+    filePreset: String(payload.filePreset || payload.preset || '').trim(),
     testInput: testInput,
     manualTo: payload.manualTo || null,
     manualCc: payload.manualCc || null,

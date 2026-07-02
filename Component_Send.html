@@ -250,17 +250,18 @@ function runMailActionJobP477_(job, done) {
       if (targetWs) {
         withSendWorkspaceGlobalsP211_(targetWs, function(){
           finishMailProgressModal(true, msg, msg, targetWs.id);
+          // P479: 발송 완료 후 파일확인 세션은 해당 작업창 안에서만 정리합니다.
+          // 비활성 작업창도 전역값을 비운 뒤 캡처해야 이전 reviewSession이 다시 살아나지 않습니다.
+          sendReviewSessionIdV75 = '';
+          sendReviewFolderUrlV75 = '';
+          sendReviewRequestNoV75 = '';
           if (isActiveSendWorkspaceP211_(targetWs.id)) {
             setSendMessage(msg, false);
-            clearSendReviewSessionV75_('mail sent');
             renderSendPreview();
           } else {
             targetWs.messageHtml = msg;
             targetWs.messageIsError = false;
             targetWs.messageUseHtml = false;
-            targetWs.reviewSessionId = '';
-            targetWs.reviewFolderUrl = '';
-            targetWs.reviewRequestNo = '';
           }
         });
       }
@@ -386,21 +387,71 @@ function getSendFileQuickPresetKeys_(preset) {
   return [];
 }
 
+
+// P478: 포털 최초/전체 발송자료 key 보정
+// - #최초는 수행사정보를 반드시 포함합니다.
+// - #전체/#수행사는 선택값을 그대로 보존합니다.
+// - 작업창/발송큐 payload 생성 직전에 한 번 더 보정해 브릿지/워크스페이스 상태 꼬임으로 수행사정보가 누락되는 것을 막습니다.
+function normalizePortalSendSelectedKeysP478_(keys, context) {
+  const allowed = {};
+  try { SEND_FILE_OPTIONS.forEach(function(f) { if (f && f.key) allowed[f.key] = true; }); } catch (err) {}
+
+  const out = [];
+  const seen = {};
+  (Array.isArray(keys) ? keys : String(keys || '').split(/[;,\s]+/)).forEach(function(key) {
+    key = String(key || '').trim();
+    if (!key) return;
+    if (key === 'contractorInfoZip' || key === 'contractorInfoFile' || key === '수행사정보' || key === '수행사 정보') key = 'contractorInfo';
+    if (key === 'sample' || key === 'sampleReports' || key === '샘플보고서') key = 'sampleReport';
+    if (key === 'terms' || key === 'termsGuideFiles' || key === '약관안내문법령요약') key = 'termsGuide';
+    if (Object.keys(allowed).length && !allowed[key]) return;
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(key);
+  });
+
+  const set = {};
+  out.forEach(function(k) { set[k] = true; });
+
+  // #최초 프리셋의 본질: 견적서+용역신청서+선임신고서+약관/안내문/법령요약+수행사정보.
+  // sampleReport/compareQuote/serviceStandardContract가 없고 최초 기본 4종이 있으면 수행사정보 누락을 복구합니다.
+  const looksLikeFirstPreset =
+    set.quote && set.serviceApplication && set.appointmentDoc && set.termsGuide &&
+    !set.sampleReport && !set.compareQuote && !set.serviceStandardContract;
+
+  if (looksLikeFirstPreset && !set.contractorInfo) {
+    out.push('contractorInfo');
+    set.contractorInfo = true;
+    try { console.warn('[P478] 최초 발송 selectedKeys에서 수행사정보 누락을 복구했습니다.', context || ''); } catch (err) {}
+  }
+
+  return out;
+}
+
 function applySendFileQuickPreset_(preset) {
+  const ws = getActiveSendWorkspaceP211_();
+  if (!guardSendWorkspaceMutationP479_(ws, '발송자료 프리셋 변경')) return;
   const allowed = {};
   SEND_FILE_OPTIONS.forEach(function(f) { allowed[f.key] = true; });
-  const selected = getSendFileQuickPresetKeys_(preset).filter(function(k) { return !!allowed[k]; });
+  const selected = normalizePortalSendSelectedKeysP478_(
+    getSendFileQuickPresetKeys_(preset).filter(function(k) { return !!allowed[k]; }),
+    'quickPreset:' + preset
+  );
   const keySet = {};
   selected.forEach(function(k) { keySet[k] = true; });
   document.querySelectorAll('.send-file-check').forEach(function(el) {
     el.checked = !!keySet[el.value];
   });
   sendSelectedFileKeysV50 = selected.slice();
-  clearSendReviewSessionV75_('file quick preset changed');
+  clearSendReviewSessionV75_('file quick preset changed: ' + preset);
+  captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
   renderSendPreview();
+  renderSendWorkspaceTabsP211_();
 }
 
 function clearAllSendFileChecksP250_() {
+  const ws = getActiveSendWorkspaceP211_();
+  if (!guardSendWorkspaceMutationP479_(ws, '발송자료 해제')) return;
   document.querySelectorAll('.send-file-check').forEach(function(el) {
     el.checked = false;
   });
@@ -569,10 +620,11 @@ function getSelectedSendFiles() {
   let keys = [];
   if (allChecks.length) {
     keys = allChecks.filter(function(el){ return el.checked; }).map(function(el){ return el.value; });
-    sendSelectedFileKeysV50 = keys.slice();
   } else {
     keys = (sendSelectedFileKeysV50 || []).slice();
   }
+  keys = normalizePortalSendSelectedKeysP478_(keys, 'getSelectedSendFiles');
+  sendSelectedFileKeysV50 = keys.slice();
   return keys.map(function(key){
     const opt = SEND_FILE_OPTIONS.find(function(f){ return f.key === key; });
     return opt || { key: key, label: key };
@@ -627,6 +679,8 @@ function renderRecipientEditor(type) {
 }
 
 function promptAddRecipient(type) {
+  const ws = getActiveSendWorkspaceP211_();
+  if (!guardSendWorkspaceMutationP479_(ws, '수신/참조 변경')) return;
   const label = type === 'to' ? '수신자' : '참조자';
   const value = prompt(label + ' 이메일을 입력하세요.\n사내 아이디만 입력하면 @s1samsung.com으로 처리합니다.');
   if (value == null) return;
@@ -645,6 +699,8 @@ function promptAddRecipient(type) {
 }
 
 function removeSendRecipient(type, idx) {
+  const ws = getActiveSendWorkspaceP211_();
+  if (!guardSendWorkspaceMutationP479_(ws, '수신/참조 변경')) return;
   const target = type === 'to' ? sendToList : sendCcList;
   target.splice(idx, 1);
   markSendRecipientTouchedV51_(type);
@@ -882,6 +938,8 @@ function normalizePortalSendErrorP26_(err) {
 var sendWorkspacesP211_ = [];
 var sendActiveWorkspaceIdP211_ = '';
 var sendWorkspaceSeedP211_ = 1;
+// P479: 발송 작업창 전역 상태 소유자. 백그라운드 발송/진행률 콜백이 활성 작업창 상태를 오염시키지 않도록 보호합니다.
+var sendWorkspaceGlobalsOwnerIdP479_ = '';
 const SEND_WORKSPACE_MAX_P211_ = 5;
 var sendWorkspacesLoadedFromStorageP213_ = false;
 var sendWorkspacePersistTimerP213_ = null;
@@ -1026,8 +1084,26 @@ function isActiveSendWorkspaceP211_(id) {
   return String(sendActiveWorkspaceIdP211_ || '') === String(id || '');
 }
 
+function isSendWorkspaceBusyP479_(ws) {
+  if (!ws) return false;
+  if (ws.mailSendInFlight) return true;
+  const st = String((ws.mailProgressState && ws.mailProgressState.status) || '').toUpperCase();
+  return st === 'RUNNING' || st === 'PENDING' || st === 'QUEUED';
+}
+
+function guardSendWorkspaceMutationP479_(ws, actionLabel) {
+  if (!isSendWorkspaceBusyP479_(ws)) return true;
+  toast((actionLabel || '작업 변경') + '은 현재 발송 대기/진행 중인 작업창에서는 할 수 없습니다. 새 발송 작업창을 만들어 진행해 주세요.');
+  return false;
+}
+
 function captureSendGlobalsToWorkspaceP211_(ws) {
   if (!ws) return;
+  // P479 핵심: 현재 전역 send 상태가 이 작업창 소유가 아니면 캡처하지 않습니다.
+  // 백그라운드 큐/진행률 콜백 중 A 작업창 전역값이 B 작업창에 저장되는 매핑 오염을 차단합니다.
+  if (sendWorkspaceGlobalsOwnerIdP479_ && String(sendWorkspaceGlobalsOwnerIdP479_) !== String(ws.id || '')) {
+    return;
+  }
   ws.searchState = Object.assign({ keyword: '', page: 0, pageSize: SEND_CUSTOMER_PAGE_SIZE }, sendSearchState || {});
   ws.selectedDetail = sendSelectedDetail || null;
   ws.selectedRowNo = Number(sendSelectedRowNoV50 || 0) || 0;
@@ -1055,6 +1131,7 @@ function captureSendGlobalsToWorkspaceP211_(ws) {
 
 function applySendWorkspaceToGlobalsP211_(ws) {
   if (!ws) return;
+  sendWorkspaceGlobalsOwnerIdP479_ = String(ws.id || '');
   sendSearchState = Object.assign({ keyword: '', page: 0, pageSize: SEND_CUSTOMER_PAGE_SIZE }, ws.searchState || {});
   sendSelectedDetail = ws.selectedDetail || null;
   sendSelectedRowNoV50 = Number(ws.selectedRowNo || 0) || 0;
@@ -1078,14 +1155,20 @@ function withSendWorkspaceGlobalsP211_(wsOrId, fn) {
   const ws = typeof wsOrId === 'string' ? getSendWorkspaceByIdP211_(wsOrId) : wsOrId;
   if (!ws || typeof fn !== 'function') return;
   const activeWs = getActiveSendWorkspaceP211_();
-  if (activeWs) captureSendGlobalsToWorkspaceP211_(activeWs);
+  // P479: 현재 전역값의 소유자가 활성 작업창일 때만 활성 작업창을 캡처합니다.
+  // 그렇지 않으면 백그라운드 A 작업 결과가 활성 B 작업창에 저장될 수 있습니다.
+  if (activeWs && (!sendWorkspaceGlobalsOwnerIdP479_ || String(sendWorkspaceGlobalsOwnerIdP479_) === String(activeWs.id))) {
+    captureSendGlobalsToWorkspaceP211_(activeWs);
+  }
   applySendWorkspaceToGlobalsP211_(ws);
   let result;
   try {
     result = fn(ws);
   } finally {
     captureSendGlobalsToWorkspaceP211_(ws);
-    if (activeWs && activeWs.id !== ws.id) applySendWorkspaceToGlobalsP211_(activeWs);
+    if (activeWs && activeWs.id !== ws.id) {
+      applySendWorkspaceToGlobalsP211_(activeWs);
+    }
   }
   return result;
 }
@@ -1291,7 +1374,13 @@ function renderSendWorkspaceBodyP211_() {
   }
   document.querySelectorAll('.send-file-check').forEach(function(el){
     el.addEventListener('change', function(){
-      syncSendSelectedFileKeysV50_();
+      const activeWsForCheck = getActiveSendWorkspaceP211_();
+      if (!guardSendWorkspaceMutationP479_(activeWsForCheck, '발송자료 변경')) {
+        restoreSendFileChecksV50_();
+        return;
+      }
+      sendSelectedFileKeysV50 = normalizePortalSendSelectedKeysP478_(syncSendSelectedFileKeysV50_(), 'manualCheckboxChange');
+      restoreSendFileChecksV50_();
       captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
       clearSendReviewSessionV75_('file selection changed');
       captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
@@ -1354,6 +1443,7 @@ function restoreSendPageStateV50_() {
 function resetSendPageAllV50() {
   const ws = getActiveSendWorkspaceP211_();
   if (!ws) return;
+  if (!guardSendWorkspaceMutationP479_(ws, '작업창 초기화')) return;
   withSendWorkspaceGlobalsP211_(ws, function(){
     clearSendReviewSessionV75_('send page reset');
     sendSelectedDetail = null;
@@ -1491,6 +1581,7 @@ function selectSendCustomer(rowNo, options) {
   options = options || {};
   const ws = getActiveSendWorkspaceP211_();
   if (!ws) return;
+  if (!guardSendWorkspaceMutationP479_(ws, '발송 고객 변경')) return;
   applySendWorkspaceToGlobalsP211_(ws);
   rowNo = Number(rowNo) || 0;
   const summary = findCustomerRowSummaryByRowNo_(rowNo) || {};
@@ -1790,12 +1881,13 @@ function preparePortalMailFilesForReviewFromUi() {
   if (!files.length) { setSendMessage('확인/수정할 발송자료를 하나 이상 선택하세요.', true); return; }
 
   const model = buildCurrentSendPreviewModel_('REVIEW');
-  const selectedKeys = files.map(function(f){ return f.key; });
+  const selectedKeys = normalizePortalSendSelectedKeysP478_(files.map(function(f){ return f.key; }), 'reviewPayload');
   const runId = 'portal_review_' + Date.now() + '_' + Math.random().toString(16).slice(2);
   const payload = {
     rowNo: sendSelectedDetail.rowNo,
     customerNo: normalizeCustomerNoForKey_(sendSelectedDetail.customerNo || sendSelectedCustomerNoV50),
     selectedKeys: selectedKeys.slice(),
+    filePreset: (selectedKeys.indexOf('quote') >= 0 && selectedKeys.indexOf('serviceApplication') >= 0 && selectedKeys.indexOf('appointmentDoc') >= 0 && selectedKeys.indexOf('termsGuide') >= 0 && selectedKeys.indexOf('sampleReport') < 0 && selectedKeys.indexOf('compareQuote') < 0 && selectedKeys.indexOf('serviceStandardContract') < 0) ? 'first' : '',
     runId: runId,
     clientRequestId: runId,
     workspaceId: ws.id
@@ -1833,7 +1925,7 @@ function sendPortalMailFromUi(mode) {
   const files = getSelectedSendFiles();
   if (!files.length) { setSendMessage('발송자료를 하나 이상 선택하세요.', true); return; }
   const model = buildCurrentSendPreviewModel_(mode);
-  const selectedKeys = files.map(function(f){ return f.key; });
+  const selectedKeys = normalizePortalSendSelectedKeysP478_(files.map(function(f){ return f.key; }), 'mailPayload');
   const testInputEl = document.getElementById('sendTestInput');
   let testInput = (testInputEl && testInputEl.value || '').trim();
   if (mode === 'TEST') {
@@ -1853,6 +1945,7 @@ function sendPortalMailFromUi(mode) {
     customerNo: normalizeCustomerNoForKey_(sendSelectedDetail.customerNo || sendSelectedCustomerNoV50),
     mode: mode,
     selectedKeys: selectedKeys.slice(),
+    filePreset: (selectedKeys.indexOf('quote') >= 0 && selectedKeys.indexOf('serviceApplication') >= 0 && selectedKeys.indexOf('appointmentDoc') >= 0 && selectedKeys.indexOf('termsGuide') >= 0 && selectedKeys.indexOf('sampleReport') < 0 && selectedKeys.indexOf('compareQuote') < 0 && selectedKeys.indexOf('serviceStandardContract') < 0) ? 'first' : '',
     testInput: testInput,
     manualTo: sendToList.slice(),
     manualCc: sendCcList.slice(),
