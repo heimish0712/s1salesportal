@@ -1071,6 +1071,19 @@ function renderButtonCell(text, onclick, cls, id) {
   return '<div class="field-item button-cell"><button ' + (id ? 'id="' + escAttr(id) + '" ' : '') + 'class="' + escAttr(cls || '') + '" onclick="' + onclick + '">' + esc(text) + '</button></div>';
 }
 
+// P485: 최종 견적가는 기본적으로 1만원 단위(천원 이하 절삭)로 정제하고,
+// 체크 해제 시 1천원 단위(백원 이하 절삭)로 정제합니다.
+function renderDetailQuoteRoundingControlP485_() {
+  return '' +
+    '<div class="quote-rounding-inline-p485">' +
+      '<label class="quote-rounding-check-p485" title="체크: 1,230,000 / 해제: 1,234,000">' +
+        '<input type="checkbox" id="detailQuoteRoundingThousandP485" checked' + (isDetailEditMode ? '' : ' disabled') + '>' +
+        '<span>천원 이하 절삭</span>' +
+      '</label>' +
+      '<div class="readonly-note quote-rounding-note-p485">체크 시 1,230,000 · 해제 시 1,234,000</div>' +
+    '</div>';
+}
+
 
 function getDetailFieldHelpTextP13_(key) {
   key = String(key || '');
@@ -1120,6 +1133,7 @@ function renderDetailField(f, sectionKey, forceWide, extraClass) {
     const discountRawAttrP484 = key === 'discountRate' && isFinite(discountPercentP484) ? ' data-discount-rate-raw-p483="' + escAttr(String(discountPercentP484)) + '"' : '';
     html += '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(displayValueP484) + '"' + placeholderP420 + data + discountRawAttrP484 + ' disabled>';
   }
+  if (key === 'finalQuote') html += renderDetailQuoteRoundingControlP485_();
   html += '</div>';
   return html;
 }
@@ -1185,6 +1199,8 @@ function toggleDetailEdit(enable) {
     el.disabled = !(enable && editable);
   });
   enforceRegionReadonly_();
+  const quoteRoundingElP485 = document.getElementById('detailQuoteRoundingThousandP485');
+  if (quoteRoundingElP485) quoteRoundingElP485.disabled = !enable;
 
   const editBtn = document.getElementById('footerEditDetail');
   const saveBtn = document.getElementById('footerSaveDetail');
@@ -1283,6 +1299,18 @@ function prepareDetailContractValuesForClientSaveP112_(values, options) {
     values.discountRate = '0';
     const discountEl = getDetailInputByKey_ ? getDetailInputByKey_('discountRate') : null;
     if (discountEl) discountEl.value = '0';
+  }
+
+  // P485: 최종견적가가 dirty로 저장될 때는 화면의 절삭 기준에 맞춰 정제된 금액만 저장합니다.
+  if (Object.prototype.hasOwnProperty.call(values, 'finalQuote')) {
+    const cleanedFinalQuoteP485 = formatCleanDetailFinalQuoteByRoundingP485_(values.finalQuote);
+    if (cleanedFinalQuoteP485) {
+      values.finalQuote = cleanedFinalQuoteP485;
+      effective.finalQuote = cleanedFinalQuoteP485;
+      const finalElP485 = getDetailInputByKey_ ? getDetailInputByKey_('finalQuote') : null;
+      if (finalElP485) finalElP485.value = cleanedFinalQuoteP485;
+    }
+    values.__quoteRoundingUnitP485 = getDetailQuoteRoundingUnitP485_();
   }
 
   const missing = [];
@@ -1453,6 +1481,7 @@ function gatherValuesForCalc(targetFinalPrice) {
     if (key) obj[key] = readDetailInputValueForSaveP483_(el);
   });
   obj.targetFinalPrice = targetFinalPrice || '';
+  obj.quoteRoundingUnit = getDetailQuoteRoundingUnitP485_();
   return obj;
 }
 
@@ -1530,6 +1559,33 @@ function formatPortalClientWonP462_(value) {
 function roundDownToUnitClientP462_(value, unit) {
   unit = Number(unit) || 1;
   return Math.floor((Number(value) || 0) / unit) * unit;
+}
+function getDetailQuoteRoundingUnitP485_() {
+  const el = document.getElementById('detailQuoteRoundingThousandP485');
+  // 기본값은 체크: 천원 이하 절삭 = 1만원 단위로 내림
+  if (!el) return 10000;
+  return el.checked ? 10000 : 1000;
+}
+function cleanDetailFinalQuoteByRoundingP485_(value) {
+  const n = parsePortalClientMoneyP462_(value);
+  if (!(n > 0)) return '';
+  return roundDownToUnitClientP462_(n, getDetailQuoteRoundingUnitP485_());
+}
+function formatCleanDetailFinalQuoteByRoundingP485_(value) {
+  const n = cleanDetailFinalQuoteByRoundingP485_(value);
+  return n ? formatPortalClientWonP462_(n) : '';
+}
+function applyDetailFinalQuoteRoundingP485_(options) {
+  options = options || {};
+  const el = getDetailInputByKey_ ? getDetailInputByKey_('finalQuote') : null;
+  if (!el) return false;
+  const cleanedText = formatCleanDetailFinalQuoteByRoundingP485_(el.value);
+  if (!cleanedText) return false;
+  if (String(el.value || '') !== cleanedText) {
+    setInputValueByKey('finalQuote', cleanedText);
+    return true;
+  }
+  return false;
 }
 function normalizeGradeClientP462_(grade) {
   const text = String(grade || '').replace(/\s+/g, '').trim();
@@ -1643,17 +1699,19 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
   const subtotal = appointmentAmount + maintenanceAmount + performanceAmount + areaSurchargeAmount;
   const vatMultiplier = vatText.indexOf('포함') >= 0 ? 1.1 : 1;
   const originPrice = subtotal * vatMultiplier;
-  const targetFinal = parsePortalClientMoneyP462_(targetFinalValue || '');
+  const quoteRoundingUnitP485 = Number(values.quoteRoundingUnit || values.__quoteRoundingUnitP485 || getDetailQuoteRoundingUnitP485_()) === 1000 ? 1000 : 10000;
+  const targetFinalRawP485 = parsePortalClientMoneyP462_(targetFinalValue || '');
+  const targetFinal = targetFinalRawP485 > 0 ? roundDownToUnitClientP462_(targetFinalRawP485, quoteRoundingUnitP485) : 0;
   let discountRate = normalizeDetailDiscountRatePercentP484_(values.discountRate == null || values.discountRate === '' ? '0' : values.discountRate);
   let finalPrice = 0;
   if (targetFinal > 0 && originPrice > 0) {
     discountRate = (1 - targetFinal / originPrice) * 100;
-    finalPrice = roundDownToUnitClientP462_(targetFinal, 10000);
+    finalPrice = targetFinal;
   } else if (!isNaN(discountRate)) {
-    finalPrice = roundDownToUnitClientP462_(originPrice * (1 - discountRate / 100), 10000);
+    finalPrice = roundDownToUnitClientP462_(originPrice * (1 - discountRate / 100), quoteRoundingUnitP485);
   } else {
     discountRate = 0;
-    finalPrice = roundDownToUnitClientP462_(originPrice, 10000);
+    finalPrice = roundDownToUnitClientP462_(originPrice, quoteRoundingUnitP485);
   }
   return {
     ok: true,
@@ -1664,6 +1722,7 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
     discountRateText: formatDetailDiscountRateDisplayP483_(discountRate),
     finalPrice: finalPrice,
     finalPriceText: formatPortalClientWonP462_(finalPrice),
+    quoteRoundingUnit: quoteRoundingUnitP485,
     originPrice: originPrice,
     areaAddUnit: Number(basis.areaAddUnit) || 0,
     areaSurchargeAmount: areaSurchargeAmount,
@@ -1698,6 +1757,17 @@ function bindDetailRealtimeCalculatedFieldsP462_() {
     el.addEventListener('change', handler);
     el.addEventListener('blur', handler);
   });
+  const roundingElP485 = document.getElementById('detailQuoteRoundingThousandP485');
+  if (roundingElP485 && !roundingElP485.__detailRealtimeBoundP485) {
+    roundingElP485.__detailRealtimeBoundP485 = true;
+    roundingElP485.addEventListener('change', function() {
+      try {
+        const recalculatedP485 = recalcDetailQuoteRealtimeP462_({ reason: 'quoteRoundingUnit' });
+        if (!recalculatedP485) applyDetailFinalQuoteRoundingP485_({ reason: 'quoteRoundingUnit' });
+        try { toast(roundingElP485.checked ? '천원 이하 절삭 기준으로 최종 견적가를 정제합니다.' : '백원 이하 절삭 기준으로 최종 견적가를 정제합니다.'); } catch(e) {}
+      } catch (e) { console.warn('견적가 절삭 기준 변경 처리 실패', e); }
+    });
+  }
   const target = document.getElementById('calcTargetFinal');
   if (target && !target.__detailRealtimeBoundP462) {
     target.__detailRealtimeBoundP462 = true;
