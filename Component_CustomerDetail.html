@@ -356,6 +356,7 @@ function restoreDetailInputValues_(values) {
     const el = document.querySelector(selector);
     if (el) {
       if (el.type === 'checkbox') el.checked = isTruthyDetailCheckboxP484_(values[key]);
+      else if (key === 'finalQuote') el.value = formatPortalClientMoneyPlainP484_(parsePortalClientMoneyP462_(values[key])) || (values[key] || '');
       else el.value = values[key] || '';
       if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
     }
@@ -1079,21 +1080,33 @@ function renderDetailControlP484_(f, sectionKey, extraClass, options) {
 
 function renderDetailFieldInlineCheckP484_(mainField, checkField, sectionKey, extraClass) {
   if (!mainField) return renderDetailField(mainField, sectionKey, false, extraClass);
-  let html = '<div class="field-item field-with-check-p484' + (mainField.wide ? ' wide' : '') + (extraClass ? ' ' + escAttr(extraClass) : '') + '">';
+  const mainKey = String(mainField.key || '');
+  const checkText = mainKey === 'address' ? '주소 차후 확인 필요' : (mainKey === 'area' ? '연면적 차후 확인 필요' : '차후 확인 필요');
+  const isAddressCheck = mainKey === 'address';
+  let html = '<div class="field-item field-with-check-p484' + (mainField.wide ? ' wide' : '') + (extraClass ? ' ' + escAttr(extraClass) : '') + (isAddressCheck ? ' field-address-check-layout-p485' : '') + '">';
   html += '<div class="field-label-row-p484"><div class="field-label">' + renderDetailFieldLabelP13_(mainField) + '</div>';
-  if (checkField) {
-    html += '<label class="detail-inline-check-p484">' + renderDetailControlP484_(checkField, sectionKey, 'detail-inline-check-input-p484') + '<span>차후 확인 필요</span></label>';
+  if (checkField && !isAddressCheck) {
+    html += '<label class="detail-inline-check-p484">' + renderDetailControlP484_(checkField, sectionKey, 'detail-inline-check-input-p484') + '<span>' + esc(checkText) + '</span></label>';
   }
   html += '</div>';
   html += renderDetailControlP484_(mainField, sectionKey, '');
+  if (checkField && isAddressCheck) {
+    html += '<div class="detail-check-below-p485"><label class="detail-inline-check-p484 detail-address-check-p485">' + renderDetailControlP484_(checkField, sectionKey, 'detail-inline-check-input-p484') + '<span>' + esc(checkText) + '</span></label></div>';
+  }
   html += '</div>';
   return html;
 }
 
-function renderReadonlyMetaChipP484_(label, field, fallback, icon) {
-  const value = getDetailFieldValueP484_(field, fallback);
-  if (value == null || String(value).trim() === '') return '';
-  return '<span class="detail-meta-chip-p484"><span class="detail-meta-icon-p484">' + esc(icon || '•') + '</span><span class="detail-meta-label-p484">' + esc(label) + '</span><b>' + esc(value) + '</b></span>';
+function renderDetailMetaItemP485_(label, field, sectionKey, options) {
+  options = options || {};
+  if (!field) return '';
+  const key = String(field.key || '');
+  const editableOverride = options.editable === true ? true : (options.editable === false ? false : (field.editable !== false));
+  const ctrlClass = options.editable === true ? 'detail-meta-control-p485 detail-meta-control-editable-p485' : 'detail-meta-control-p485 detail-meta-control-readonly-p485';
+  return '<div class="detail-meta-item-p485 key-' + escAttr(key) + '">'
+    + '<div class="detail-meta-label-p485">' + esc(label || field.label || '') + '</div>'
+    + '<div class="detail-meta-control-wrap-p485">' + renderDetailControlP484_(field, sectionKey, ctrlClass, { editableOverride: editableOverride }) + '</div>'
+    + '</div>';
 }
 
 function renderCustomerBasicSection(d) {
@@ -1102,15 +1115,15 @@ function renderCustomerBasicSection(d) {
   html += '<div class="detail-top-grid-p484">';
   html += '<div class="detail-basic-main-p484">';
   html += renderDetailField(f.company, 'basic', false, 'detail-company-input-p484');
-  html += '<div class="detail-meta-row-p484">';
-  html += renderReadonlyMetaChipP484_('고객번호', f.customerNo, d.customerNo, '⌘');
-  html += renderReadonlyMetaChipP484_('지역구분', f.region, d.region, '◎');
-  html += renderReadonlyMetaChipP484_('수행사', f.vendor, d.vendor, '⚙');
-  html += renderReadonlyMetaChipP484_('관리등급', f.grade, d.grade, '▣');
+  html += '<div class="detail-meta-grid-p485">';
+  html += renderDetailMetaItemP485_('고객번호', f.customerNo, 'basic', { editable: false });
+  html += renderDetailMetaItemP485_('지역구분', f.region, 'basic', { editable: false });
+  html += renderDetailMetaItemP485_('수행사', f.vendor, 'basic', { editable: true });
+  html += renderDetailMetaItemP485_('관리등급', f.grade, 'basic', { editable: false });
   html += '</div>';
-  html += '<div class="detail-status-line-p484"><span>영업 진행 현황</span>' + renderDetailControlP484_(f.status, 'basic', 'detail-status-inline-p484') + '</div>';
+  html += '<div class="detail-status-line-p484"><span class="detail-status-label-p485">영업 진행 현황</span>' + renderDetailControlP484_(f.status, 'basic', 'detail-status-inline-p484') + '</div>';
   html += '<div class="detail-hidden-basics-p484">';
-  ['customerNo','region','vendor','grade','salesRep','firstRegisteredAt','customerRank'].forEach(function(k) {
+  ['salesRep','firstRegisteredAt','customerRank'].forEach(function(k) {
     if (f[k]) html += renderDetailControlP484_(f[k], 'basic', 'detail-hidden-input-p484', { editableOverride: false });
   });
   html += '</div>';
@@ -1167,15 +1180,16 @@ function renderMasterMemoSectionP484_(d) {
 function renderQuoteInfoSectionP484_(d) {
   const f = getFieldMap('contract');
   const discountField = f.discountRate || { key: 'discountRate', label: '할인율(%)', type: 'text', editable: true, value: '' };
-  const finalField = Object.assign({}, f.finalQuote || { key: 'finalQuote', label: '최종 견적가', type: 'text', editable: true, value: '' }, { editable: true });
+  const finalFieldRaw = f.finalQuote || { key: 'finalQuote', label: '최종 견적가', type: 'text', editable: true, value: '' };
+  const finalField = Object.assign({}, finalFieldRaw, { editable: true, value: formatPortalClientMoneyPlainP484_(parsePortalClientMoneyP462_(finalFieldRaw.value || '')) });
   let html = '<div class="section-card quote-info-card-p484">';
   html += '<div class="section-header-p484"><div class="section-title">견적 정보</div></div>';
   html += '<div class="quote-info-table-p484">';
-  html += '<div class="quote-row-p484"><div class="quote-label-p484">견적원가(할인전)</div><div class="quote-value-p484"><span id="quoteOriginPriceP484">-</span></div></div>';
-  html += '<div class="quote-row-p484 quote-input-row-p484"><div class="quote-label-p484">할인율(%)</div><div class="quote-value-p484">' + renderDetailControlP484_(discountField, 'contract', 'quote-input-p484 quote-discount-rate-input-p484') + '</div></div>';
+  html += '<div class="quote-row-p484 quote-origin-row-p485"><div class="quote-label-p484">견적원가(할인전)</div><div class="quote-value-p484"><div class="quote-readonly-money-p485"><span class="quote-currency-p485">₩</span><span id="quoteOriginPriceP484">-</span></div></div></div>';
+  html += '<div class="quote-row-p484 quote-input-row-p484"><div class="quote-label-p484">할인율(%)</div><div class="quote-value-p484 quote-percent-wrap-p485">' + renderDetailControlP484_(discountField, 'contract', 'quote-input-p484 quote-discount-rate-input-p484') + '<span class="quote-percent-suffix-p485">%</span></div></div>';
   html += '<div class="quote-row-p484 quote-check-row-p484"><div class="quote-label-p484">만원 단위 미만 절삭</div><div class="quote-value-p484 quote-round-value-p484"><label class="quote-round-check-p484"><input id="quoteRoundTenThousandP484" type="checkbox"' + (quoteRoundTenThousandP484 ? ' checked' : '') + ' disabled><span>적용</span></label><span class="quote-small-hint-p484">해제 시 천원 단위 미만 절삭</span></div></div>';
-  html += '<div class="quote-row-p484 quote-input-row-p484"><div class="quote-label-p484">할인 금액</div><div class="quote-value-p484"><input id="quoteDiscountAmountP484" class="quote-input-p484 quote-derived-input-p484" type="text" value="" disabled><span class="quote-suffix-p484">원</span></div></div>';
-  html += '<div class="quote-row-p484 quote-final-row-p484"><div class="quote-label-p484">최종 견적가</div><div class="quote-value-p484 quote-final-value-wrap-p484">' + renderDetailControlP484_(finalField, 'contract', 'quote-input-p484 quote-final-input-p484', { editableOverride: true }) + '<span class="quote-final-suffix-p484">원</span></div></div>';
+  html += '<div class="quote-row-p484 quote-input-row-p484"><div class="quote-label-p484">할인 금액</div><div class="quote-value-p484"><div class="quote-money-input-wrap-p485"><span class="quote-currency-p485">₩</span><input id="quoteDiscountAmountP484" class="quote-input-p484 quote-derived-input-p484" type="text" value="" disabled></div></div></div>';
+  html += '<div class="quote-row-p484 quote-final-row-p484"><div class="quote-label-p484">최종 견적가</div><div class="quote-value-p484 quote-final-value-wrap-p484"><div class="quote-money-input-wrap-p485 quote-final-money-wrap-p485"><span class="quote-currency-p485">₩</span>' + renderDetailControlP484_(finalField, 'contract', 'quote-input-p484 quote-final-input-p484', { editableOverride: true }) + '</div></div></div>';
   html += '</div>';
   html += '<div class="quote-help-p484">실시간 계산값은 화면에서만 반영되며, 실제 마스터시트 저장은 저장 버튼을 눌렀을 때만 실행됩니다.</div>';
   html += '</div>';
@@ -2064,6 +2078,7 @@ function setInputValueByKey(key, value) {
   const el = document.querySelector('.detail-edit-input[data-key="' + key + '"]');
   if (el) {
     if (el.type === 'checkbox') el.checked = isTruthyDetailCheckboxP484_(value);
+    else if (key === 'finalQuote') el.value = formatPortalClientMoneyPlainP484_(parsePortalClientMoneyP462_(value)) || (value || '');
     else el.value = value || '';
     if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
     try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_(key, readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}
@@ -2265,7 +2280,7 @@ function refreshQuoteInfoPanelP484_(options) {
     return false;
   }
   const origin = Number(calc.originPrice) || 0;
-  if (originEl) originEl.textContent = formatPortalClientWonP462_(origin) || '-';
+  if (originEl) originEl.textContent = formatPortalClientMoneyPlainP484_(origin) || '-';
   const finalEl = getDetailInputByKey_('finalQuote');
   const rateEl = getDetailInputByKey_('discountRate');
   const amountEl = document.getElementById('quoteDiscountAmountP484');
