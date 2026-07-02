@@ -2619,7 +2619,7 @@ function getPortalMasterNumberFormatP433_(key) {
   if (key === 'maintenance' || key === 'performance') return '0"회"';
   if (key === 'area') return '#,##0.##';
   if (key === 'finalQuote') return '₩#,##0';
-  if (key === 'discountRate') return '0.##';
+  if (key === 'discountRate') return '0.###';
   return '';
 }
 
@@ -2717,7 +2717,9 @@ function getPortalMasterWriteValueP280_(key, value) {
   }
   if (key === 'discountRate') {
     const n = parsePortalDecimalNumberP433_(value);
-    return n === '' ? '' : roundPortalNumberP433_(n, 2);
+    // P483: 할인율은 계산 정확도를 위해 원본 소수값을 그대로 저장합니다.
+    // 표시 형식만 소수점 셋째자리까지 반올림합니다.
+    return n === '' ? '' : n;
   }
   if (isPortalMasterDateKeyP433_(key)) {
     const d = parsePortalContractDateP420_(value);
@@ -2735,7 +2737,7 @@ function getPortalMasterCompareTextP280_(key, value) {
   if (key === 'maintenance' || key === 'performance') return String(writeValue) + '회';
   if (key === 'area') return formatPortalNumberTextP433_(writeValue, 2, true);
   if (key === 'finalQuote') return '₩' + formatPortalNumberTextP433_(writeValue, 0, true);
-  if (key === 'discountRate') return formatPortalNumberTextP433_(writeValue, 2, false);
+  if (key === 'discountRate') return formatPortalNumberTextP433_(writeValue, 3, false);
   return String(writeValue).trim();
 }
 
@@ -2971,7 +2973,8 @@ function calculateQuoteDiscount(payload) {
     finalPrice = roundDownToUnit_(originPrice, 10000);
   }
 
-  const roundedDiscountRate = Math.round(discountRate * 100) / 100;
+  const displayDiscountRate = Math.round(discountRate * 1000) / 1000;
+  const discountRateText = formatPortalNumberTextP433_(displayDiscountRate, 3, false);
 
   return {
     ok: true,
@@ -2993,7 +2996,10 @@ function calculateQuoteDiscount(payload) {
     subtotal: subtotal,
     vatMultiplier: vatMultiplier,
     originPrice: originPrice,
-    discountRate: roundedDiscountRate,
+    discountRate: discountRate,
+    discountRateRaw: discountRate,
+    discountRateText: discountRateText,
+    discountRateDisplay: discountRateText,
     finalPrice: finalPrice,
     finalPriceText: formatWon_(finalPrice),
     message: '계산 완료'

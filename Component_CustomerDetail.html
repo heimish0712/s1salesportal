@@ -198,7 +198,7 @@ function collectCurrentDetailInputValues_() {
   const values = {};
   document.querySelectorAll('.detail-edit-input').forEach(function(el) {
     const key = el.getAttribute('data-key');
-    if (key) values[key] = el.value || '';
+    if (key) values[key] = readDetailInputValueForSaveP483_(el);
   });
   return values;
 }
@@ -207,6 +207,46 @@ function collectCurrentDetailInputValues_() {
 // 상세정보가 아직 __summary/__lite 상태일 때 보이지 않던 계약조건 빈값이 마스터시트 값을 덮어쓰는 사고를 막습니다.
 function normalizeDetailSaveCompareValue_(value) {
   return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
+}
+
+// P483: 할인율은 계산 정확도 보존을 위해 내부값(raw)은 소수점 전체를 유지하고,
+// 화면 표시만 소수점 셋째자리까지 반올림합니다.
+function formatDetailDiscountRateDisplayP483_(value) {
+  const n = Number(String(value == null ? '' : value).replace(/,/g, '').replace(/%/g, '').replace(/[^0-9.\-]/g, ''));
+  if (!isFinite(n)) return '';
+  const rounded = Math.round(n * 1000) / 1000;
+  let text = String(rounded);
+  if (text.indexOf('e') >= 0 || text.indexOf('E') >= 0) text = rounded.toFixed(3);
+  if (text.indexOf('.') >= 0) text = text.replace(/0+$/g, '').replace(/\.$/, '');
+  return text;
+}
+function normalizeDetailDiscountRateTextP483_(value) {
+  return String(value == null ? '' : value).replace(/,/g, '').replace(/%/g, '').trim();
+}
+function readDetailInputValueForSaveP483_(el) {
+  if (!el) return '';
+  const key = el.getAttribute('data-key');
+  const value = el.value || '';
+  if (key !== 'discountRate') return value;
+  const raw = el.getAttribute('data-discount-rate-raw-p483');
+  if (raw == null || raw === '') return value;
+  const rawDisplay = formatDetailDiscountRateDisplayP483_(raw);
+  const currentText = normalizeDetailDiscountRateTextP483_(value);
+  // 사용자가 자동 계산된 표시값을 직접 고치지 않은 경우에만 raw 전체값을 저장 payload로 사용합니다.
+  if (rawDisplay && currentText === rawDisplay) return raw;
+  return value;
+}
+function setDetailDiscountRateCalculatedValueP483_(rawValue, displayValue) {
+  const el = document.querySelector('.detail-edit-input[data-key="discountRate"]');
+  const rawText = rawValue == null || rawValue === '' ? '' : String(rawValue);
+  const displayText = displayValue != null && displayValue !== '' ? String(displayValue) : formatDetailDiscountRateDisplayP483_(rawText);
+  if (el) {
+    el.value = displayText || '';
+    if (rawText) el.setAttribute('data-discount-rate-raw-p483', rawText);
+    else el.removeAttribute('data-discount-rate-raw-p483');
+    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_('discountRate', readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}
+    try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
+  }
 }
 
 function parseDetailAreaNumberP451_(value) {
@@ -289,7 +329,10 @@ function restoreDetailInputValues_(values) {
   Object.keys(values).forEach(function(key) {
     const selector = '.detail-edit-input[data-key="' + String(key).replace(/"/g, '\"') + '"]';
     const el = document.querySelector(selector);
-    if (el) el.value = values[key] || '';
+    if (el) {
+      el.value = values[key] || '';
+      if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
+    }
   });
 }
 
@@ -1385,7 +1428,10 @@ function saveDetailFields() {
 
 function gatherValuesForCalc(targetFinalPrice) {
   const obj = {};
-  document.querySelectorAll('.detail-edit-input').forEach(el => obj[el.getAttribute('data-key')] = el.value || '');
+  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
+    const key = el.getAttribute('data-key');
+    if (key) obj[key] = readDetailInputValueForSaveP483_(el);
+  });
   obj.targetFinalPrice = targetFinalPrice || '';
   return obj;
 }
@@ -1430,7 +1476,7 @@ function handleDiscountModeClick() {
   const payload = gatherValuesForCalc(targetValue);
   google.script.run.withSuccessHandler(function(res){
     lastCalcResult = res;
-    setInputValueByKey('discountRate', String(res.discountRate));
+    setDetailDiscountRateCalculatedValueP483_(res.discountRateRaw !== undefined ? res.discountRateRaw : res.discountRate, res.discountRateText || res.discountRateDisplay);
     setInputValueByKey('finalQuote', res.finalPriceText || targetValue);
     if (res.contractUnit) {
       setInputValueByKey('contractUnit', res.contractUnit);
@@ -1444,7 +1490,8 @@ function setInputValueByKey(key, value) {
   const el = document.querySelector('.detail-edit-input[data-key="' + key + '"]');
   if (el) {
     el.value = value || '';
-    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_(key, el.value || '', { force: true }); } catch (err) {}
+    if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
+    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_(key, readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}
     try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
   }
   if (key === 'status') applyPortalStatusControlStyles_();
@@ -1592,7 +1639,9 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
     ok: true,
     grade: grade,
     contractUnit: String(months),
-    discountRate: Math.round(discountRate * 100) / 100,
+    discountRate: discountRate,
+    discountRateRaw: discountRate,
+    discountRateText: formatDetailDiscountRateDisplayP483_(discountRate),
     finalPrice: finalPrice,
     finalPriceText: formatPortalClientWonP462_(finalPrice),
     originPrice: originPrice,
@@ -1610,7 +1659,7 @@ function recalcDetailQuoteRealtimeP462_(options) {
   const res = calculateDetailQuoteClientP462_(collectDetailContractCalcValuesP462_(), targetValue);
   if (!res || !res.ok) return false;
   if (res.grade) setInputValueByKey('grade', res.grade);
-  if (targetValue && res.discountRate !== undefined) setInputValueByKey('discountRate', String(res.discountRate));
+  if (targetValue && res.discountRate !== undefined) setDetailDiscountRateCalculatedValueP483_(res.discountRateRaw !== undefined ? res.discountRateRaw : res.discountRate, res.discountRateText);
   if (res.finalPriceText) setInputValueByKey('finalQuote', res.finalPriceText);
   lastCalcResult = res;
   return true;
@@ -1962,8 +2011,9 @@ function applyPortalStatusControlStyles_() {
 
 function gatherRegistrationValues() {
   const values = {};
-  document.querySelectorAll('.detail-edit-input').forEach(el => {
-    values[el.getAttribute('data-key')] = el.value || '';
+  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
+    const key = el.getAttribute('data-key');
+    if (key) values[key] = readDetailInputValueForSaveP483_(el);
   });
   return values;
 }
