@@ -21,6 +21,74 @@ var sendActionQueueRunningP477_ = false;
 var sendActionQueueRestoredP477_ = false;
 var SEND_ACTION_NEXT_DISPATCH_DELAY_MS_P481 = 650;
 
+// P482: 메일 Worker/Apps Script가 순간적으로 기존 실행을 잡고 있을 때는 실패 처리하지 않고
+// 같은 작업창/같은 payload/runId로 자동 재시도합니다.
+// 목적: A/B/C 작업창을 빠르게 연속 디스패치할 때 Worker 쪽 lock busy가 떠도 매핑을 바꾸지 않고 누락 없이 이어가기.
+var SEND_MAIL_BUSY_RETRY_MAX_P482 = 18;
+var SEND_MAIL_BUSY_RETRY_BASE_DELAY_MS_P482 = 1800;
+var SEND_MAIL_BUSY_RETRY_MAX_DELAY_MS_P482 = 6500;
+
+function getPortalSendRawErrorMessageP482_(err) {
+  return err && err.message ? String(err.message) : String(err || '');
+}
+
+function isPortalSendBusyErrorP482_(err) {
+  var raw = getPortalSendRawErrorMessageP482_(err);
+  return /다른 작업 처리 중|LockService|lock busy|lock|잠금|Service invoked too many times|ScriptLock|timeout|Timeout/i.test(raw);
+}
+
+function getPortalSendBusyRetryDelayP482_(retryCount) {
+  retryCount = Number(retryCount || 0) || 0;
+  var delay = SEND_MAIL_BUSY_RETRY_BASE_DELAY_MS_P482 + Math.min(retryCount, 8) * 600;
+  return Math.min(delay, SEND_MAIL_BUSY_RETRY_MAX_DELAY_MS_P482);
+}
+
+function markSendWorkspaceBusyRetryP482_(ws, job, err) {
+  if (!ws || !job) return;
+  var retryCount = Number(job.busyRetryCountP482 || 0) || 0;
+  var delay = getPortalSendBusyRetryDelayP482_(retryCount);
+  withSendWorkspaceGlobalsP211_(ws, function(){
+    ws.sendActionLockP480 = true;
+    currentMailRunId = job.runId || currentMailRunId || '';
+    mailSendInFlight = true;
+    mailProgressState = Object.assign({}, mailProgressState || {}, {
+      runId: currentMailRunId,
+      ownerClientId: getPortalClientIdV48_(),
+      mode: job.mode || '',
+      status: 'RUNNING',
+      percent: Math.max(1, Number(mailProgressState && mailProgressState.percent || 1) || 1),
+      message: '메일 Worker가 다른 발송을 처리 중입니다. 잠시 후 자동 재시도합니다. (' + retryCount + '/' + SEND_MAIL_BUSY_RETRY_MAX_P482 + ')',
+      progressError: '자동 재시도 대기 ' + Math.ceil(delay / 1000) + '초 · payload/runId 유지',
+      resultText: ''
+    });
+    if (isActiveSendWorkspaceP211_(ws.id)) {
+      renderInlineMailProgress_();
+      setSendMessage('메일 Worker가 다른 발송을 처리 중입니다. 이 작업창은 자동 재시도합니다.', false);
+    } else {
+      ws.messageHtml = '메일 Worker가 다른 발송을 처리 중입니다. 자동 재시도합니다.';
+      ws.messageIsError = false;
+      ws.messageUseHtml = false;
+    }
+  });
+  renderSendWorkspaceTabsP211_();
+}
+
+function scheduleSendMailBusyRetryP482_(job, err) {
+  var ws = getSendWorkspaceByIdP211_(job && job.wsId);
+  if (!isSendActionJobStillOwnedP481_(ws, job)) return false;
+  job.busyRetryCountP482 = Number(job.busyRetryCountP482 || 0) + 1;
+  if (job.busyRetryCountP482 > SEND_MAIL_BUSY_RETRY_MAX_P482) return false;
+  markSendWorkspaceBusyRetryP482_(ws, job, err);
+  var delay = getPortalSendBusyRetryDelayP482_(job.busyRetryCountP482);
+  setTimeout(function(){
+    var latestWs = getSendWorkspaceByIdP211_(job.wsId);
+    if (!isSendActionJobStillOwnedP481_(latestWs, job)) return;
+    job.isBusyRetryP482 = true;
+    runMailActionJobP477_(job, function(){});
+  }, delay);
+  return true;
+}
+
 function makeSendActionDispatchDoneP481_(done) {
   var called = false;
   return function() {
@@ -53,7 +121,9 @@ function normalizeSendActionQueueJobForStorageP477_(job) {
     rowNo: Number(job.rowNo || 0) || 0,
     payload: job.payload || {},
     model: job.model || {},
-    testInput: String(job.testInput || '')
+    testInput: String(job.testInput || ''),
+    busyRetryCountP482: Number(job.busyRetryCountP482 || 0) || 0,
+    isBusyRetryP482: !!job.isBusyRetryP482
   };
 }
 
@@ -259,7 +329,9 @@ function runMailActionJobP477_(job, done) {
     if (isActiveSendWorkspaceP211_(ws.id)) renderInlineMailProgress_();
   });
   renderSendWorkspaceTabsP211_();
-  toast('메일 발송 요청을 보냈습니다. 대기 중인 다음 작업도 곧바로 요청합니다.');
+  if (!job.isBusyRetryP482) {
+    toast('메일 발송 요청을 보냈습니다. 대기 중인 다음 작업도 곧바로 요청합니다.');
+  }
   pollMailProgress(job.runId, ws.id);
 
   setTimeout(function(){
@@ -279,6 +351,8 @@ function runMailActionJobP477_(job, done) {
     .withSuccessHandler(function(res){
       const targetWs = getSendWorkspaceByIdP211_(job.wsId);
       if (!isSendActionJobStillOwnedP481_(targetWs, job)) return;
+      job.busyRetryCountP482 = 0;
+      job.isBusyRetryP482 = false;
       const msg = (res && res.message) || ((job.mode === 'TEST' ? '테스트 발송' : '고객 발송') + ' 완료');
       if (targetWs) {
         withSendWorkspaceGlobalsP211_(targetWs, function(){
@@ -300,6 +374,13 @@ function runMailActionJobP477_(job, done) {
     .withFailureHandler(function(err){
       const targetWs = getSendWorkspaceByIdP211_(job.wsId);
       if (!isSendActionJobStillOwnedP481_(targetWs, job)) return;
+
+      // P482: 병렬 디스패치 중 Worker/Apps Script lock busy는 실제 발송 실패가 아닙니다.
+      // 실패 팝업으로 끝내지 않고 같은 작업창/같은 payload/runId로 자동 재시도합니다.
+      if (isPortalSendBusyErrorP482_(err) && scheduleSendMailBusyRetryP482_(job, err)) {
+        return;
+      }
+
       const msg = '오류: ' + normalizePortalSendErrorP26_(err);
       if (targetWs) {
         withSendWorkspaceGlobalsP211_(targetWs, function(){
