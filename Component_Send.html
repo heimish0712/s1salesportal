@@ -73,6 +73,7 @@ function setSendWorkspaceQueuedStateP477_(job, message) {
   const ws = getSendWorkspaceByIdP211_(job && job.wsId);
   if (!ws) return;
   withSendWorkspaceGlobalsP211_(ws, function(){
+    ws.sendActionLockP480 = true;
     currentMailRunId = job.runId || currentMailRunId || '';
     mailSendInFlight = true;
     mailProgressState = Object.assign({}, mailProgressState || {}, {
@@ -147,6 +148,7 @@ function runReviewActionJobP477_(job, done) {
   const ws = getSendWorkspaceByIdP211_(job.wsId);
   if (!ws) { if (done) done(); return; }
   withSendWorkspaceGlobalsP211_(ws, function(){
+    ws.sendActionLockP480 = true;
     currentMailRunId = job.runId;
     mailSendInFlight = true;
     mailProgressState = Object.assign({}, mailProgressState || {}, {
@@ -209,6 +211,7 @@ function runMailActionJobP477_(job, done) {
   const ws = getSendWorkspaceByIdP211_(job.wsId);
   if (!ws) { if (done) done(); return; }
   withSendWorkspaceGlobalsP211_(ws, function(){
+    ws.sendActionLockP480 = true;
     currentMailRunId = job.runId || '';
     mailSendInFlight = true;
     mailProgressState = {
@@ -250,11 +253,8 @@ function runMailActionJobP477_(job, done) {
       if (targetWs) {
         withSendWorkspaceGlobalsP211_(targetWs, function(){
           finishMailProgressModal(true, msg, msg, targetWs.id);
-          // P479: 발송 완료 후 파일확인 세션은 해당 작업창 안에서만 정리합니다.
-          // 비활성 작업창도 전역값을 비운 뒤 캡처해야 이전 reviewSession이 다시 살아나지 않습니다.
-          sendReviewSessionIdV75 = '';
-          sendReviewFolderUrlV75 = '';
-          sendReviewRequestNoV75 = '';
+          // P480: 발송 완료 후에도 같은 작업창에서 수정용 파일을 다시 열어 수정·재발송할 수 있어야 합니다.
+          // 따라서 reviewSession/folder/requestNo는 보존합니다. 고객 변경/자료 체크 변경/작업창 초기화 때만 clearSendReviewSessionV75_가 정리합니다.
           if (isActiveSendWorkspaceP211_(targetWs.id)) {
             setSendMessage(msg, false);
             renderSendPreview();
@@ -1000,6 +1000,7 @@ function restoreSendWorkspacesFromStorageP213_() {
       merged.order = idx + 1;
       merged.createdAt = Number(merged.createdAt || (savedAt ? savedAt + idx : Date.now() + idx));
       merged.mailProgressPollTimer = null;
+      merged.sendActionLockP480 = false;
       merged.recipientTouched = Object.assign({ to:false, cc:false }, merged.recipientTouched || {});
       merged.searchState = Object.assign({ keyword:'', page:0, pageSize:SEND_CUSTOMER_PAGE_SIZE }, merged.searchState || {});
       merged.searchSeq = Number(merged.searchSeq || 0) || 0;
@@ -1052,6 +1053,7 @@ function buildSendWorkspaceP211_(order) {
     mailRunId: '',
     mailProgressPollTimer: null,
     mailSendInFlight: false,
+    sendActionLockP480: false,
     mailProgressState: null,
     messageHtml: '',
     messageIsError: false,
@@ -1086,6 +1088,7 @@ function isActiveSendWorkspaceP211_(id) {
 
 function isSendWorkspaceBusyP479_(ws) {
   if (!ws) return false;
+  if (ws.sendActionLockP480) return true;
   if (ws.mailSendInFlight) return true;
   const st = String((ws.mailProgressState && ws.mailProgressState.status) || '').toUpperCase();
   return st === 'RUNNING' || st === 'PENDING' || st === 'QUEUED';
@@ -1147,6 +1150,7 @@ function applySendWorkspaceToGlobalsP211_(ws) {
   sendReviewRequestNoV75 = ws.reviewRequestNo || '';
   currentMailRunId = ws.mailRunId || '';
   mailProgressPollTimer = ws.mailProgressPollTimer || null;
+  ws.sendActionLockP480 = !!ws.sendActionLockP480;
   mailSendInFlight = !!ws.mailSendInFlight;
   mailProgressState = ws.mailProgressState ? Object.assign({}, ws.mailProgressState) : null;
 }
@@ -1175,11 +1179,25 @@ function withSendWorkspaceGlobalsP211_(wsOrId, fn) {
 
 function getWorkspaceStatusP211_(ws) {
   if (!ws) return 'IDLE';
-  if (ws.mailSendInFlight) return 'RUNNING';
+  if (ws.sendActionLockP480 || ws.mailSendInFlight) return 'RUNNING';
   const status = String((ws.mailProgressState && ws.mailProgressState.status) || '').toUpperCase();
   if (status === 'DONE') return 'DONE';
   if (status === 'FAIL' || status === 'CANCEL') return 'FAIL';
   return 'IDLE';
+}
+
+// P480: 발송큐 작업창 잠금 해제. 완료/실패/취소 후에는 같은 작업창에서 파일 수정·재발송이 가능해야 합니다.
+function releaseSendWorkspaceActionLockP480_(wsOrId, reason) {
+  const ws = typeof wsOrId === 'string' ? getSendWorkspaceByIdP211_(wsOrId) : wsOrId;
+  if (!ws) return;
+  try { if (ws.mailProgressPollTimer) clearTimeout(ws.mailProgressPollTimer); } catch (err) {}
+  ws.mailProgressPollTimer = null;
+  ws.mailSendInFlight = false;
+  ws.sendActionLockP480 = false;
+  // runId/progressState는 결과 표시와 재발송 이력 확인을 위해 보존합니다.
+  // reviewSessionId/reviewFolderUrl도 보존합니다. 파일/고객 변경 시에만 별도 clear합니다.
+  persistSendWorkspacesP213_(false);
+  try { console.log('[P480 send workspace unlocked]', reason || '', ws.id); } catch (err) {}
 }
 
 function getWorkspaceStatusDotHtmlP211_(ws) {
@@ -1800,6 +1818,7 @@ function finishMailProgressModal(ok, message, detailText, tabId) {
     if (ok) playMailCompleteSoundForRunV48_(currentMailRunId);
     if (isActiveSendWorkspaceP211_(ws.id)) renderInlineMailProgress_();
   });
+  releaseSendWorkspaceActionLockP480_(ws, ok ? 'mail done' : 'mail fail');
   renderSendWorkspaceTabsP211_();
 }
 
@@ -1820,6 +1839,7 @@ function finishPortalReviewProgressV75_(ok, message, detailText, tabId) {
     });
     if (isActiveSendWorkspaceP211_(ws.id)) renderInlineMailProgress_();
   });
+  releaseSendWorkspaceActionLockP480_(ws, ok ? 'review done' : 'review fail');
   renderSendWorkspaceTabsP211_();
 }
 
@@ -1841,11 +1861,14 @@ function cancelCurrentMailSend() {
       const targetWs = getSendWorkspaceByIdP211_(ws.id);
       if (!targetWs) return;
       withSendWorkspaceGlobalsP211_(targetWs, function(){
+        mailSendInFlight = false;
+        if (mailProgressPollTimer) { clearTimeout(mailProgressPollTimer); mailProgressPollTimer = null; }
         mailProgressState = Object.assign({}, mailProgressState || {}, {
           status: 'CANCEL',
           message: (res && res.message) || '취소 요청을 보냈습니다. 하이웍스 발송 전 단계에서 중단됩니다.',
           resultText: (res && res.message) || '취소 요청을 보냈습니다.'
         });
+        ws.sendActionLockP480 = false;
         if (isActiveSendWorkspaceP211_(ws.id)) renderInlineMailProgress_();
       });
       renderSendWorkspaceTabsP211_();
