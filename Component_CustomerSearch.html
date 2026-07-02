@@ -1965,7 +1965,10 @@ const CUSTOMER_EXPAND_RAW_HEADER_CANDIDATES = {
   representativeName: ['대표자명', '대표자', '대표', '대표자 성명'],
   businessAddress: ['사업자등록증상 법인 주소', '사업자등록증상 법인주소', '사업자등록증 주소', '사업자등록증상 주소', '법인 주소', '법인주소'],
   grade: ['관리등급', '관리 등급', '등급', '연면적유형', '연면적 유형'],
-  customerRank: ['고객등급', '고객 등급', '영업등급', '고객관리등급', '고객 관리 등급']
+  customerRank: ['고객등급', '고객 등급', '영업등급', '고객관리등급', '고객 관리 등급'],
+  longNoContactTransferred: ['장기미접촉 이관 여부', '장기미접촉이관여부', '장기 미접촉 이관 여부'],
+  tmProgressStatus: ['TM 진행 현황', 'TM진행현황', 'TM 진행현황', 'TM진행 현황'],
+  tmContactContent: ['TM 컨택 내용', 'TM컨택내용', 'TM 컨택내용', 'TM컨택 내용']
 };
 
 function renderCustomerExpandedContent_(rowNo, rowSummary) {
@@ -2082,6 +2085,8 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
       '</div>' +
     '</div>' +
   '</div>';
+
+  html += renderPortalLongNoContactTmBlockP475_(detail, 'expand');
 
   html += '</div></div>';
   return html;
@@ -2591,6 +2596,9 @@ function getCustomerExpandFieldValue_(detail, sectionKey, key) {
     vendor: detail.vendor,
     status: detail.status,
     memo: detail.memo,
+    longNoContactTransferred: detail.longNoContactTransferred,
+    tmProgressStatus: detail.tmProgressStatus,
+    tmContactContent: detail.tmContactContent,
     businessRegistrationReceived: detail.businessRegistrationReceived,
     serviceApplicationReceived: detail.serviceApplicationReceived,
     appointmentReportReceived: detail.appointmentReportReceived,
@@ -4181,6 +4189,9 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     businessLegalName: row.businessLegalName || '',
     representativeName: row.representativeName || '',
     businessAddress: row.businessAddress || '',
+    longNoContactTransferred: row.longNoContactTransferred || '',
+    tmProgressStatus: row.tmProgressStatus || '',
+    tmContactContent: row.tmContactContent || '',
 
     contactRounds: [],
     contactMethods: [],

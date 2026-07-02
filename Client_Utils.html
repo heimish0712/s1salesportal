@@ -168,6 +168,64 @@ function showGlobalError(err){ toast(err&&err.message?err.message:String(err||'�
 function disp(value){ const text=String(value==null?'':value).trim(); return text?text:'-'; }
 function escAttr(value){ return esc(value).replace(/`/g,'&#096;'); }
 function esc(value){ return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
+
+
+// P475: 장기미접촉 TM 이관 정보 읽기 전용 표시 헬퍼
+function normalizePortalLongNoContactFlagP475_(value) {
+  const s = String(value == null ? '' : value).trim().toLowerCase();
+  return value === true || s === 'o' || s === 'ok' || s === 'y' || s === 'yes' || s === 'true' || s === '1' || s === '완료';
+}
+
+function getPortalDetailRawValueByHeadersP475_(detail, headers) {
+  detail = detail || {};
+  const raw = detail.raw || {};
+  const list = Array.isArray(headers) ? headers : [headers];
+  const norm = function(v) { return String(v == null ? '' : v).replace(/[\s(){}\[\]_.\-·ㆍ/\\]/g, '').toLowerCase().trim(); };
+  const rawKeys = Object.keys(raw || {});
+  for (let i = 0; i < list.length; i++) {
+    const h = String(list[i] || '').trim();
+    if (!h) continue;
+    if (Object.prototype.hasOwnProperty.call(raw, h) && String(raw[h] || '').trim() !== '') return raw[h];
+    const wanted = norm(h);
+    for (let k = 0; k < rawKeys.length; k++) {
+      if (norm(rawKeys[k]) === wanted && String(raw[rawKeys[k]] || '').trim() !== '') return raw[rawKeys[k]];
+    }
+  }
+  return '';
+}
+
+function getPortalLongNoContactFieldP475_(detail, key) {
+  detail = detail || {};
+  if (key && Object.prototype.hasOwnProperty.call(detail, key) && String(detail[key] || '').trim() !== '') return detail[key];
+  const map = {
+    longNoContactTransferred: ['장기미접촉 이관 여부', '장기미접촉이관여부', '장기 미접촉 이관 여부'],
+    tmProgressStatus: ['TM 진행 현황', 'TM진행현황', 'TM 진행현황', 'TM진행 현황'],
+    tmContactContent: ['TM 컨택 내용', 'TM컨택내용', 'TM 컨택내용', 'TM컨택 내용']
+  };
+  return getPortalDetailRawValueByHeadersP475_(detail, map[key] || [key]);
+}
+
+function shouldRenderPortalLongNoContactBlockP475_(detail) {
+  return normalizePortalLongNoContactFlagP475_(getPortalLongNoContactFieldP475_(detail, 'longNoContactTransferred'));
+}
+
+function renderPortalLongNoContactTmBlockP475_(detail, mode) {
+  if (!shouldRenderPortalLongNoContactBlockP475_(detail)) return '';
+  const progress = String(getPortalLongNoContactFieldP475_(detail, 'tmProgressStatus') || '').trim();
+  const content = String(getPortalLongNoContactFieldP475_(detail, 'tmContactContent') || '').trim();
+  const message = progress
+    ? '* TM 장기미접촉 ' + progress + ' 인 건입니다.'
+    : '* TM 장기미접촉 이관 건입니다.';
+  const cls = 'portal-tm-long-no-contact-block-p475 ' + (mode === 'modal' ? 'portal-tm-long-no-contact-modal-p475' : 'portal-tm-long-no-contact-expand-p475');
+  return '' +
+    '<div class="' + cls + '">' +
+      '<div class="portal-tm-long-no-contact-alert-p475">' + esc(message) + '</div>' +
+      '<div class="portal-tm-long-no-contact-field-p475">' +
+        '<div class="portal-tm-long-no-contact-label-p475">TM 컨택 내용</div>' +
+        '<textarea class="portal-tm-long-no-contact-textarea-p475" readonly tabindex="-1">' + esc(content || '-') + '</textarea>' +
+      '</div>' +
+    '</div>';
+}
 function formatDateInput_(date) {
   date = date instanceof Date ? date : new Date(date);
   const pad = n => String(n).padStart(2, '0');

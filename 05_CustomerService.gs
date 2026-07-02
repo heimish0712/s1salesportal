@@ -1524,6 +1524,10 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   const discountRate = getCustomerMasterHeaderValueK2_(obj, 'discountRate');
   const specialTerms = getCustomerMasterHeaderValueK2_(obj, 'specialTerms');
   const s1Referrer = getCustomerMasterHeaderValueK2_(obj, 's1Referrer');
+  // P475: 장기미접촉 TM 이관 정보는 마스터 메모와 분리된 읽기 전용 표시 영역에서 사용합니다.
+  const longNoContactTransferred = getCustomerMasterHeaderValueK2_(obj, 'longNoContactTransferred');
+  const tmProgressStatus = getCustomerMasterHeaderValueK2_(obj, 'tmProgressStatus');
+  const tmContactContent = getCustomerMasterHeaderValueK2_(obj, 'tmContactContent');
 
   // P453: 고객상세의 발주여부는 마스터시트 해당 행의 `발주번호`를 기준으로 봅니다.
   // 수주확정/계약완료 시트에 부분 행이 있더라도 마스터 발주번호가 비어 있으면 X(발주하기)로 표시해야 합니다.
@@ -1551,6 +1555,9 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     discountRate: discountRate,
     specialTerms: specialTerms,
     s1Referrer: s1Referrer,
+    longNoContactTransferred: longNoContactTransferred,
+    tmProgressStatus: tmProgressStatus,
+    tmContactContent: tmContactContent,
     contact: getCustomerMasterHeaderValueK2_(obj, 'contact'),
     phone: getCustomerMasterHeaderValueK2_(obj, 'phone'),
     directPhone: getCustomerMasterHeaderValueK2_(obj, 'directPhone'),

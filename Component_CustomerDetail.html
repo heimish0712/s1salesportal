@@ -153,6 +153,7 @@ function renderDetail(d, options) {
   let html = '';
   if (d.__summary || d.__lite) html += '<div class="section-card" style="border-color:#bae6fd;background:#f0f9ff;color:#075985;font-weight:800;">기본 정보를 먼저 표시했습니다. 전체 상세정보와 최근 이력은 뒤에서 보강 중입니다.</div>';
   html += renderCustomerBasicSection(d);
+  html += renderPortalLongNoContactTmBlockP475_(d, 'modal');
   html += renderContractSection(d);
   if (!d.isNew) html += renderContactQuickPanel(d);
   if (!d.isNew) html += renderTempMemoPanel();

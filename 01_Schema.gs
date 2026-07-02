@@ -28,6 +28,9 @@ const PORTAL_MASTER_FIELD_SCHEMA = {
   email: { label: '담당자 이메일 주소', headers: ['담당자 이메일 주소', '담당자 이메일', '이메일주소', '이메일 주소', '이메일'], type: 'email' },
   address: { label: '고객사 상세 주소', headers: ['고객사 상세 주소', '도로명주소', '지번주소', '주소', '상세주소'], type: 'text', wide: true },
   memo: { label: '마스터시트 메모', headers: ['메모', '비고', '영업메모', '마스터시트 메모'], type: 'textarea', wide: true },
+  longNoContactTransferred: { label: '장기미접촉 이관 여부', headers: ['장기미접촉 이관 여부', '장기미접촉이관여부', '장기 미접촉 이관 여부'], type: 'text' },
+  tmProgressStatus: { label: 'TM 진행 현황', headers: ['TM 진행 현황', 'TM진행현황', 'TM 진행현황', 'TM진행 현황'], type: 'text' },
+  tmContactContent: { label: 'TM 컨택 내용', headers: ['TM 컨택 내용', 'TM컨택내용', 'TM 컨택내용', 'TM컨택 내용'], type: 'textarea', wide: true },
 
   area: { label: '연면적', headers: ['연면적', '연면적(㎡)', '연면적㎡', '면적'], type: 'numberText' },
   buildingType: { label: '건물 유형', headers: ['건물 유형', '건물유형'], type: 'select', options: ['', '기업', '공동주택', '학교', '공공', '기타'] },
