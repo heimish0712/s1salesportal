@@ -2619,7 +2619,7 @@ function getPortalMasterNumberFormatP433_(key) {
   if (key === 'maintenance' || key === 'performance') return '0"회"';
   if (key === 'area') return '#,##0.##';
   if (key === 'finalQuote') return '₩#,##0';
-  if (key === 'discountRate') return '0.###';
+  if (key === 'discountRate') return '0.##';
   return '';
 }
 
@@ -2673,30 +2673,6 @@ function parsePortalDecimalNumberP433_(value) {
   return isNaN(n) ? '' : n;
 }
 
-function normalizePortalDiscountRatePercentP484_(value) {
-  const n = typeof value === 'number' ? value : parsePortalDecimalNumberP433_(value);
-  if (n === '' || !isFinite(Number(n))) return '';
-  const num = Number(n);
-  // 할인율은 "할인한 비율(%)"로 저장합니다. 0.733 같은 "최종가 ÷ 원가" 잔존비율은 26.7%대로 복구합니다.
-  // 0.5% 같은 정상 소수 할인율을 보호하기 위해 0.5 초과~1 미만만 보정합니다.
-  if (num > 0.5 && num < 1) return (1 - num) * 100;
-  return num;
-}
-
-// P485: 최종 견적가 정제 기준.
-// 체크 상태(기본): 천원 이하 절삭 = 1만원 단위 내림(예: 1,234,000 → 1,230,000)
-// 체크 해제: 백원 이하 절삭 = 1천원 단위 내림(예: 1,234,000 → 1,234,000)
-function normalizePortalQuoteRoundingUnitP485_(value) {
-  const n = Number(value);
-  return n === 1000 ? 1000 : 10000;
-}
-function roundPortalFinalQuoteByUnitP485_(value, unit) {
-  const n = parsePortalDecimalNumberP433_(value);
-  if (n === '' || !isFinite(Number(n))) return '';
-  unit = normalizePortalQuoteRoundingUnitP485_(unit);
-  return Math.floor(Number(n) / unit) * unit;
-}
-
 function roundPortalNumberP433_(num, decimals) {
   num = Number(num);
   if (!isFinite(num)) return '';
@@ -2740,11 +2716,8 @@ function getPortalMasterWriteValueP280_(key, value) {
     return n === '' ? '' : Math.round(n);
   }
   if (key === 'discountRate') {
-    const n = normalizePortalDiscountRatePercentP484_(value);
-    // P483/P484: 할인율은 계산 정확도를 위해 원본 소수값을 그대로 저장합니다.
-    // 단, 0.733 같은 잔존비율이 들어오면 26.666... 할인율 %로 복구합니다.
-    // 표시 형식만 소수점 셋째자리까지 반올림합니다.
-    return n === '' ? '' : n;
+    const n = parsePortalDecimalNumberP433_(value);
+    return n === '' ? '' : roundPortalNumberP433_(n, 2);
   }
   if (isPortalMasterDateKeyP433_(key)) {
     const d = parsePortalContractDateP420_(value);
@@ -2762,7 +2735,7 @@ function getPortalMasterCompareTextP280_(key, value) {
   if (key === 'maintenance' || key === 'performance') return String(writeValue) + '회';
   if (key === 'area') return formatPortalNumberTextP433_(writeValue, 2, true);
   if (key === 'finalQuote') return '₩' + formatPortalNumberTextP433_(writeValue, 0, true);
-  if (key === 'discountRate') return formatPortalNumberTextP433_(writeValue, 3, false);
+  if (key === 'discountRate') return formatPortalNumberTextP433_(writeValue, 2, false);
   return String(writeValue).trim();
 }
 
@@ -2819,18 +2792,6 @@ function preparePortalContractValuesForSaveP112_(values, options) {
     } catch (err) {}
   }
   values = normalizePortalContractDatePayloadFieldsP420_(values, { requireFull: requireFull, current: currentForDatesP420 });
-
-  // P485: 최종견적가는 포털에서 선택한 절삭 기준으로 정제된 값만 마스터시트에 저장합니다.
-  // __quoteRoundingUnitP485/quoteRoundingUnit은 저장용 헤더가 아니라 정제 기준용 transient 값입니다.
-  const quoteRoundingUnitP485 = normalizePortalQuoteRoundingUnitP485_(values.__quoteRoundingUnitP485 || values.quoteRoundingUnit || values.quoteRoundingUnitP485 || options.quoteRoundingUnit);
-  if (Object.prototype.hasOwnProperty.call(values, 'finalQuote')) {
-    const cleanedFinalQuoteP485 = roundPortalFinalQuoteByUnitP485_(values.finalQuote, quoteRoundingUnitP485);
-    if (cleanedFinalQuoteP485 !== '') values.finalQuote = cleanedFinalQuoteP485;
-  }
-  delete values.__quoteRoundingUnitP485;
-  delete values.quoteRoundingUnit;
-  delete values.quoteRoundingUnitP485;
-
   const shouldValidate = requireFull || touchedContractP461;
   if (!shouldValidate) return values;
 
@@ -2996,24 +2957,21 @@ function calculateQuoteDiscount(payload) {
   const vatMultiplier = vatText.indexOf('포함') >= 0 ? 1.1 : 1;
   const originPrice = subtotal * vatMultiplier;
 
-  const quoteRoundingUnitP485 = normalizePortalQuoteRoundingUnitP485_(payload.quoteRoundingUnit || payload.__quoteRoundingUnitP485 || payload.quoteRoundingUnitP485);
-  const targetFinalRawP485 = parseMoney_(payload.targetFinalPrice);
-  const targetFinal = targetFinalRawP485 > 0 ? roundDownToUnit_(targetFinalRawP485, quoteRoundingUnitP485) : 0;
-  let discountRate = normalizePortalDiscountRatePercentP484_(discountText);
+  const targetFinal = parseMoney_(payload.targetFinalPrice);
+  let discountRate = parseFloat(String(discountText).replace(/[^0-9.\-]/g, ''));
   let finalPrice = 0;
 
   if (targetFinal > 0 && originPrice > 0) {
     discountRate = (1 - targetFinal / originPrice) * 100;
-    finalPrice = targetFinal;
+    finalPrice = roundDownToUnit_(targetFinal, 10000);
   } else if (!isNaN(discountRate)) {
-    finalPrice = roundDownToUnit_(originPrice * (1 - discountRate / 100), quoteRoundingUnitP485);
+    finalPrice = roundDownToUnit_(originPrice * (1 - discountRate / 100), 10000);
   } else {
     discountRate = 0;
-    finalPrice = roundDownToUnit_(originPrice, quoteRoundingUnitP485);
+    finalPrice = roundDownToUnit_(originPrice, 10000);
   }
 
-  const displayDiscountRate = Math.round(discountRate * 1000) / 1000;
-  const discountRateText = formatPortalNumberTextP433_(displayDiscountRate, 3, false);
+  const roundedDiscountRate = Math.round(discountRate * 100) / 100;
 
   return {
     ok: true,
@@ -3035,13 +2993,9 @@ function calculateQuoteDiscount(payload) {
     subtotal: subtotal,
     vatMultiplier: vatMultiplier,
     originPrice: originPrice,
-    discountRate: discountRate,
-    discountRateRaw: discountRate,
-    discountRateText: discountRateText,
-    discountRateDisplay: discountRateText,
+    discountRate: roundedDiscountRate,
     finalPrice: finalPrice,
     finalPriceText: formatWon_(finalPrice),
-    quoteRoundingUnit: quoteRoundingUnitP485,
     message: '계산 완료'
   };
 }

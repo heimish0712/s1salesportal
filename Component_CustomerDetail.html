@@ -198,7 +198,7 @@ function collectCurrentDetailInputValues_() {
   const values = {};
   document.querySelectorAll('.detail-edit-input').forEach(function(el) {
     const key = el.getAttribute('data-key');
-    if (key) values[key] = readDetailInputValueForSaveP483_(el);
+    if (key) values[key] = el.value || '';
   });
   return values;
 }
@@ -207,62 +207,6 @@ function collectCurrentDetailInputValues_() {
 // 상세정보가 아직 __summary/__lite 상태일 때 보이지 않던 계약조건 빈값이 마스터시트 값을 덮어쓰는 사고를 막습니다.
 function normalizeDetailSaveCompareValue_(value) {
   return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
-}
-
-// P483/P484: 할인율은 "할인된 뒤 남는 비율"이 아니라 "할인한 비율(%)"로 관리합니다.
-// 예: 원가 4,500,000 / 목표 3,300,000 이면 저장값은 0.733이 아니라 26.666666... 이어야 합니다.
-function parseDetailDiscountRateNumberP484_(value) {
-  if (value == null || value === '') return NaN;
-  const n = Number(String(value).replace(/,/g, '').replace(/%/g, '').replace(/[^0-9.\-]/g, ''));
-  return isFinite(n) ? n : NaN;
-}
-function normalizeDetailDiscountRatePercentP484_(value) {
-  const n = parseDetailDiscountRateNumberP484_(value);
-  if (!isFinite(n)) return NaN;
-  // 과거 패치/수식 경로에서 0.733처럼 "최종가 ÷ 원가" 비율이 들어온 경우만 할인율 %로 복구합니다.
-  // 정상적인 0%, 0.5% 같은 소수 할인율 입력은 건드리지 않기 위해 0.5 초과~1 미만만 보정합니다.
-  if (n > 0.5 && n < 1) return (1 - n) * 100;
-  return n;
-}
-function formatDetailDiscountRateDisplayP483_(value) {
-  const n = normalizeDetailDiscountRatePercentP484_(value);
-  if (!isFinite(n)) return '';
-  const rounded = Math.round(n * 1000) / 1000;
-  let text = String(rounded);
-  if (text.indexOf('e') >= 0 || text.indexOf('E') >= 0) text = rounded.toFixed(3);
-  if (text.indexOf('.') >= 0) text = text.replace(/0+$/g, '').replace(/\.$/, '');
-  return text;
-}
-function normalizeDetailDiscountRateTextP483_(value) {
-  return String(value == null ? '' : value).replace(/,/g, '').replace(/%/g, '').trim();
-}
-function readDetailInputValueForSaveP483_(el) {
-  if (!el) return '';
-  const key = el.getAttribute('data-key');
-  const value = el.value || '';
-  if (key !== 'discountRate') return value;
-  const raw = el.getAttribute('data-discount-rate-raw-p483');
-  if (raw == null || raw === '') return value;
-  const rawPercent = normalizeDetailDiscountRatePercentP484_(raw);
-  const rawDisplay = formatDetailDiscountRateDisplayP483_(rawPercent);
-  const currentText = normalizeDetailDiscountRateTextP483_(value);
-  // 사용자가 자동 계산된 표시값을 직접 고치지 않은 경우에만 raw 전체값을 저장 payload로 사용합니다.
-  // raw가 0.733 같은 잔존비율로 들어온 경우에도 26.666... 할인율 %로 저장합니다.
-  if (rawDisplay && currentText === rawDisplay && isFinite(rawPercent)) return String(rawPercent);
-  return value;
-}
-function setDetailDiscountRateCalculatedValueP483_(rawValue, displayValue) {
-  const el = document.querySelector('.detail-edit-input[data-key="discountRate"]');
-  const rawPercent = normalizeDetailDiscountRatePercentP484_(rawValue);
-  const rawText = isFinite(rawPercent) ? String(rawPercent) : (rawValue == null || rawValue === '' ? '' : String(rawValue));
-  const displayText = displayValue != null && displayValue !== '' ? formatDetailDiscountRateDisplayP483_(displayValue) : formatDetailDiscountRateDisplayP483_(rawText);
-  if (el) {
-    el.value = displayText || '';
-    if (rawText) el.setAttribute('data-discount-rate-raw-p483', rawText);
-    else el.removeAttribute('data-discount-rate-raw-p483');
-    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_('discountRate', readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}
-    try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
-  }
 }
 
 function parseDetailAreaNumberP451_(value) {
@@ -345,10 +289,7 @@ function restoreDetailInputValues_(values) {
   Object.keys(values).forEach(function(key) {
     const selector = '.detail-edit-input[data-key="' + String(key).replace(/"/g, '\"') + '"]';
     const el = document.querySelector(selector);
-    if (el) {
-      el.value = values[key] || '';
-      if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
-    }
+    if (el) el.value = values[key] || '';
   });
 }
 
@@ -1071,19 +1012,6 @@ function renderButtonCell(text, onclick, cls, id) {
   return '<div class="field-item button-cell"><button ' + (id ? 'id="' + escAttr(id) + '" ' : '') + 'class="' + escAttr(cls || '') + '" onclick="' + onclick + '">' + esc(text) + '</button></div>';
 }
 
-// P485: 최종 견적가는 기본적으로 1만원 단위(천원 이하 절삭)로 정제하고,
-// 체크 해제 시 1천원 단위(백원 이하 절삭)로 정제합니다.
-function renderDetailQuoteRoundingControlP485_() {
-  return '' +
-    '<div class="quote-rounding-inline-p485">' +
-      '<label class="quote-rounding-check-p485" title="체크: 1,230,000 / 해제: 1,234,000">' +
-        '<input type="checkbox" id="detailQuoteRoundingThousandP485" checked' + (isDetailEditMode ? '' : ' disabled') + '>' +
-        '<span>천원 이하 절삭</span>' +
-      '</label>' +
-      '<div class="readonly-note quote-rounding-note-p485">체크 시 1,230,000 · 해제 시 1,234,000</div>' +
-    '</div>';
-}
-
 
 function getDetailFieldHelpTextP13_(key) {
   key = String(key || '');
@@ -1127,13 +1055,8 @@ function renderDetailField(f, sectionKey, forceWide, extraClass) {
     const inputType = f.type === 'email' ? 'email' : 'text';
     const placeholderP420 = isDateTextP420 ? ' placeholder="2026.07.01."' : '';
     const dateClsP420 = isDateTextP420 ? ' portal-contract-date-input' : '';
-    const rawValueP484 = f.value == null ? '' : String(f.value);
-    const discountPercentP484 = key === 'discountRate' ? normalizeDetailDiscountRatePercentP484_(rawValueP484) : NaN;
-    const displayValueP484 = key === 'discountRate' ? formatDetailDiscountRateDisplayP483_(discountPercentP484) : (isDateTextP420 ? normalizePortalContractDateDisplayClientP420_(f.value || '') : (f.value || ''));
-    const discountRawAttrP484 = key === 'discountRate' && isFinite(discountPercentP484) ? ' data-discount-rate-raw-p483="' + escAttr(String(discountPercentP484)) + '"' : '';
-    html += '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(displayValueP484) + '"' + placeholderP420 + data + discountRawAttrP484 + ' disabled>';
+    html += '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(isDateTextP420 ? normalizePortalContractDateDisplayClientP420_(f.value || '') : (f.value || '')) + '"' + placeholderP420 + data + ' disabled>';
   }
-  if (key === 'finalQuote') html += renderDetailQuoteRoundingControlP485_();
   html += '</div>';
   return html;
 }
@@ -1199,8 +1122,6 @@ function toggleDetailEdit(enable) {
     el.disabled = !(enable && editable);
   });
   enforceRegionReadonly_();
-  const quoteRoundingElP485 = document.getElementById('detailQuoteRoundingThousandP485');
-  if (quoteRoundingElP485) quoteRoundingElP485.disabled = !enable;
 
   const editBtn = document.getElementById('footerEditDetail');
   const saveBtn = document.getElementById('footerSaveDetail');
@@ -1299,18 +1220,6 @@ function prepareDetailContractValuesForClientSaveP112_(values, options) {
     values.discountRate = '0';
     const discountEl = getDetailInputByKey_ ? getDetailInputByKey_('discountRate') : null;
     if (discountEl) discountEl.value = '0';
-  }
-
-  // P485: 최종견적가가 dirty로 저장될 때는 화면의 절삭 기준에 맞춰 정제된 금액만 저장합니다.
-  if (Object.prototype.hasOwnProperty.call(values, 'finalQuote')) {
-    const cleanedFinalQuoteP485 = formatCleanDetailFinalQuoteByRoundingP485_(values.finalQuote);
-    if (cleanedFinalQuoteP485) {
-      values.finalQuote = cleanedFinalQuoteP485;
-      effective.finalQuote = cleanedFinalQuoteP485;
-      const finalElP485 = getDetailInputByKey_ ? getDetailInputByKey_('finalQuote') : null;
-      if (finalElP485) finalElP485.value = cleanedFinalQuoteP485;
-    }
-    values.__quoteRoundingUnitP485 = getDetailQuoteRoundingUnitP485_();
   }
 
   const missing = [];
@@ -1476,12 +1385,8 @@ function saveDetailFields() {
 
 function gatherValuesForCalc(targetFinalPrice) {
   const obj = {};
-  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
-    const key = el.getAttribute('data-key');
-    if (key) obj[key] = readDetailInputValueForSaveP483_(el);
-  });
+  document.querySelectorAll('.detail-edit-input').forEach(el => obj[el.getAttribute('data-key')] = el.value || '');
   obj.targetFinalPrice = targetFinalPrice || '';
-  obj.quoteRoundingUnit = getDetailQuoteRoundingUnitP485_();
   return obj;
 }
 
@@ -1525,7 +1430,7 @@ function handleDiscountModeClick() {
   const payload = gatherValuesForCalc(targetValue);
   google.script.run.withSuccessHandler(function(res){
     lastCalcResult = res;
-    setDetailDiscountRateCalculatedValueP483_(res.discountRateRaw !== undefined ? res.discountRateRaw : res.discountRate, res.discountRateText || res.discountRateDisplay);
+    setInputValueByKey('discountRate', String(res.discountRate));
     setInputValueByKey('finalQuote', res.finalPriceText || targetValue);
     if (res.contractUnit) {
       setInputValueByKey('contractUnit', res.contractUnit);
@@ -1539,8 +1444,7 @@ function setInputValueByKey(key, value) {
   const el = document.querySelector('.detail-edit-input[data-key="' + key + '"]');
   if (el) {
     el.value = value || '';
-    if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
-    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_(key, readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}
+    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_(key, el.value || '', { force: true }); } catch (err) {}
     try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
   }
   if (key === 'status') applyPortalStatusControlStyles_();
@@ -1559,33 +1463,6 @@ function formatPortalClientWonP462_(value) {
 function roundDownToUnitClientP462_(value, unit) {
   unit = Number(unit) || 1;
   return Math.floor((Number(value) || 0) / unit) * unit;
-}
-function getDetailQuoteRoundingUnitP485_() {
-  const el = document.getElementById('detailQuoteRoundingThousandP485');
-  // 기본값은 체크: 천원 이하 절삭 = 1만원 단위로 내림
-  if (!el) return 10000;
-  return el.checked ? 10000 : 1000;
-}
-function cleanDetailFinalQuoteByRoundingP485_(value) {
-  const n = parsePortalClientMoneyP462_(value);
-  if (!(n > 0)) return '';
-  return roundDownToUnitClientP462_(n, getDetailQuoteRoundingUnitP485_());
-}
-function formatCleanDetailFinalQuoteByRoundingP485_(value) {
-  const n = cleanDetailFinalQuoteByRoundingP485_(value);
-  return n ? formatPortalClientWonP462_(n) : '';
-}
-function applyDetailFinalQuoteRoundingP485_(options) {
-  options = options || {};
-  const el = getDetailInputByKey_ ? getDetailInputByKey_('finalQuote') : null;
-  if (!el) return false;
-  const cleanedText = formatCleanDetailFinalQuoteByRoundingP485_(el.value);
-  if (!cleanedText) return false;
-  if (String(el.value || '') !== cleanedText) {
-    setInputValueByKey('finalQuote', cleanedText);
-    return true;
-  }
-  return false;
 }
 function normalizeGradeClientP462_(grade) {
   const text = String(grade || '').replace(/\s+/g, '').trim();
@@ -1699,30 +1576,25 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
   const subtotal = appointmentAmount + maintenanceAmount + performanceAmount + areaSurchargeAmount;
   const vatMultiplier = vatText.indexOf('포함') >= 0 ? 1.1 : 1;
   const originPrice = subtotal * vatMultiplier;
-  const quoteRoundingUnitP485 = Number(values.quoteRoundingUnit || values.__quoteRoundingUnitP485 || getDetailQuoteRoundingUnitP485_()) === 1000 ? 1000 : 10000;
-  const targetFinalRawP485 = parsePortalClientMoneyP462_(targetFinalValue || '');
-  const targetFinal = targetFinalRawP485 > 0 ? roundDownToUnitClientP462_(targetFinalRawP485, quoteRoundingUnitP485) : 0;
-  let discountRate = normalizeDetailDiscountRatePercentP484_(values.discountRate == null || values.discountRate === '' ? '0' : values.discountRate);
+  const targetFinal = parsePortalClientMoneyP462_(targetFinalValue || '');
+  let discountRate = parseFloat(String(values.discountRate == null || values.discountRate === '' ? '0' : values.discountRate).replace(/[^0-9.\-]/g, ''));
   let finalPrice = 0;
   if (targetFinal > 0 && originPrice > 0) {
     discountRate = (1 - targetFinal / originPrice) * 100;
-    finalPrice = targetFinal;
+    finalPrice = roundDownToUnitClientP462_(targetFinal, 10000);
   } else if (!isNaN(discountRate)) {
-    finalPrice = roundDownToUnitClientP462_(originPrice * (1 - discountRate / 100), quoteRoundingUnitP485);
+    finalPrice = roundDownToUnitClientP462_(originPrice * (1 - discountRate / 100), 10000);
   } else {
     discountRate = 0;
-    finalPrice = roundDownToUnitClientP462_(originPrice, quoteRoundingUnitP485);
+    finalPrice = roundDownToUnitClientP462_(originPrice, 10000);
   }
   return {
     ok: true,
     grade: grade,
     contractUnit: String(months),
-    discountRate: discountRate,
-    discountRateRaw: discountRate,
-    discountRateText: formatDetailDiscountRateDisplayP483_(discountRate),
+    discountRate: Math.round(discountRate * 100) / 100,
     finalPrice: finalPrice,
     finalPriceText: formatPortalClientWonP462_(finalPrice),
-    quoteRoundingUnit: quoteRoundingUnitP485,
     originPrice: originPrice,
     areaAddUnit: Number(basis.areaAddUnit) || 0,
     areaSurchargeAmount: areaSurchargeAmount,
@@ -1738,7 +1610,7 @@ function recalcDetailQuoteRealtimeP462_(options) {
   const res = calculateDetailQuoteClientP462_(collectDetailContractCalcValuesP462_(), targetValue);
   if (!res || !res.ok) return false;
   if (res.grade) setInputValueByKey('grade', res.grade);
-  if (targetValue && res.discountRate !== undefined) setDetailDiscountRateCalculatedValueP483_(res.discountRateRaw !== undefined ? res.discountRateRaw : res.discountRate, res.discountRateText);
+  if (targetValue && res.discountRate !== undefined) setInputValueByKey('discountRate', String(res.discountRate));
   if (res.finalPriceText) setInputValueByKey('finalQuote', res.finalPriceText);
   lastCalcResult = res;
   return true;
@@ -1757,17 +1629,6 @@ function bindDetailRealtimeCalculatedFieldsP462_() {
     el.addEventListener('change', handler);
     el.addEventListener('blur', handler);
   });
-  const roundingElP485 = document.getElementById('detailQuoteRoundingThousandP485');
-  if (roundingElP485 && !roundingElP485.__detailRealtimeBoundP485) {
-    roundingElP485.__detailRealtimeBoundP485 = true;
-    roundingElP485.addEventListener('change', function() {
-      try {
-        const recalculatedP485 = recalcDetailQuoteRealtimeP462_({ reason: 'quoteRoundingUnit' });
-        if (!recalculatedP485) applyDetailFinalQuoteRoundingP485_({ reason: 'quoteRoundingUnit' });
-        try { toast(roundingElP485.checked ? '천원 이하 절삭 기준으로 최종 견적가를 정제합니다.' : '백원 이하 절삭 기준으로 최종 견적가를 정제합니다.'); } catch(e) {}
-      } catch (e) { console.warn('견적가 절삭 기준 변경 처리 실패', e); }
-    });
-  }
   const target = document.getElementById('calcTargetFinal');
   if (target && !target.__detailRealtimeBoundP462) {
     target.__detailRealtimeBoundP462 = true;
@@ -2101,9 +1962,8 @@ function applyPortalStatusControlStyles_() {
 
 function gatherRegistrationValues() {
   const values = {};
-  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
-    const key = el.getAttribute('data-key');
-    if (key) values[key] = readDetailInputValueForSaveP483_(el);
+  document.querySelectorAll('.detail-edit-input').forEach(el => {
+    values[el.getAttribute('data-key')] = el.value || '';
   });
   return values;
 }
