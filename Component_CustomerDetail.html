@@ -209,10 +209,23 @@ function normalizeDetailSaveCompareValue_(value) {
   return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
 }
 
-// P483: 할인율은 계산 정확도 보존을 위해 내부값(raw)은 소수점 전체를 유지하고,
-// 화면 표시만 소수점 셋째자리까지 반올림합니다.
+// P483/P484: 할인율은 "할인된 뒤 남는 비율"이 아니라 "할인한 비율(%)"로 관리합니다.
+// 예: 원가 4,500,000 / 목표 3,300,000 이면 저장값은 0.733이 아니라 26.666666... 이어야 합니다.
+function parseDetailDiscountRateNumberP484_(value) {
+  if (value == null || value === '') return NaN;
+  const n = Number(String(value).replace(/,/g, '').replace(/%/g, '').replace(/[^0-9.\-]/g, ''));
+  return isFinite(n) ? n : NaN;
+}
+function normalizeDetailDiscountRatePercentP484_(value) {
+  const n = parseDetailDiscountRateNumberP484_(value);
+  if (!isFinite(n)) return NaN;
+  // 과거 패치/수식 경로에서 0.733처럼 "최종가 ÷ 원가" 비율이 들어온 경우만 할인율 %로 복구합니다.
+  // 정상적인 0%, 0.5% 같은 소수 할인율 입력은 건드리지 않기 위해 0.5 초과~1 미만만 보정합니다.
+  if (n > 0.5 && n < 1) return (1 - n) * 100;
+  return n;
+}
 function formatDetailDiscountRateDisplayP483_(value) {
-  const n = Number(String(value == null ? '' : value).replace(/,/g, '').replace(/%/g, '').replace(/[^0-9.\-]/g, ''));
+  const n = normalizeDetailDiscountRatePercentP484_(value);
   if (!isFinite(n)) return '';
   const rounded = Math.round(n * 1000) / 1000;
   let text = String(rounded);
@@ -230,16 +243,19 @@ function readDetailInputValueForSaveP483_(el) {
   if (key !== 'discountRate') return value;
   const raw = el.getAttribute('data-discount-rate-raw-p483');
   if (raw == null || raw === '') return value;
-  const rawDisplay = formatDetailDiscountRateDisplayP483_(raw);
+  const rawPercent = normalizeDetailDiscountRatePercentP484_(raw);
+  const rawDisplay = formatDetailDiscountRateDisplayP483_(rawPercent);
   const currentText = normalizeDetailDiscountRateTextP483_(value);
   // 사용자가 자동 계산된 표시값을 직접 고치지 않은 경우에만 raw 전체값을 저장 payload로 사용합니다.
-  if (rawDisplay && currentText === rawDisplay) return raw;
+  // raw가 0.733 같은 잔존비율로 들어온 경우에도 26.666... 할인율 %로 저장합니다.
+  if (rawDisplay && currentText === rawDisplay && isFinite(rawPercent)) return String(rawPercent);
   return value;
 }
 function setDetailDiscountRateCalculatedValueP483_(rawValue, displayValue) {
   const el = document.querySelector('.detail-edit-input[data-key="discountRate"]');
-  const rawText = rawValue == null || rawValue === '' ? '' : String(rawValue);
-  const displayText = displayValue != null && displayValue !== '' ? String(displayValue) : formatDetailDiscountRateDisplayP483_(rawText);
+  const rawPercent = normalizeDetailDiscountRatePercentP484_(rawValue);
+  const rawText = isFinite(rawPercent) ? String(rawPercent) : (rawValue == null || rawValue === '' ? '' : String(rawValue));
+  const displayText = displayValue != null && displayValue !== '' ? formatDetailDiscountRateDisplayP483_(displayValue) : formatDetailDiscountRateDisplayP483_(rawText);
   if (el) {
     el.value = displayText || '';
     if (rawText) el.setAttribute('data-discount-rate-raw-p483', rawText);
@@ -1098,7 +1114,11 @@ function renderDetailField(f, sectionKey, forceWide, extraClass) {
     const inputType = f.type === 'email' ? 'email' : 'text';
     const placeholderP420 = isDateTextP420 ? ' placeholder="2026.07.01."' : '';
     const dateClsP420 = isDateTextP420 ? ' portal-contract-date-input' : '';
-    html += '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(isDateTextP420 ? normalizePortalContractDateDisplayClientP420_(f.value || '') : (f.value || '')) + '"' + placeholderP420 + data + ' disabled>';
+    const rawValueP484 = f.value == null ? '' : String(f.value);
+    const discountPercentP484 = key === 'discountRate' ? normalizeDetailDiscountRatePercentP484_(rawValueP484) : NaN;
+    const displayValueP484 = key === 'discountRate' ? formatDetailDiscountRateDisplayP483_(discountPercentP484) : (isDateTextP420 ? normalizePortalContractDateDisplayClientP420_(f.value || '') : (f.value || ''));
+    const discountRawAttrP484 = key === 'discountRate' && isFinite(discountPercentP484) ? ' data-discount-rate-raw-p483="' + escAttr(String(discountPercentP484)) + '"' : '';
+    html += '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(displayValueP484) + '"' + placeholderP420 + data + discountRawAttrP484 + ' disabled>';
   }
   html += '</div>';
   return html;
@@ -1624,7 +1644,7 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
   const vatMultiplier = vatText.indexOf('포함') >= 0 ? 1.1 : 1;
   const originPrice = subtotal * vatMultiplier;
   const targetFinal = parsePortalClientMoneyP462_(targetFinalValue || '');
-  let discountRate = parseFloat(String(values.discountRate == null || values.discountRate === '' ? '0' : values.discountRate).replace(/[^0-9.\-]/g, ''));
+  let discountRate = normalizeDetailDiscountRatePercentP484_(values.discountRate == null || values.discountRate === '' ? '0' : values.discountRate);
   let finalPrice = 0;
   if (targetFinal > 0 && originPrice > 0) {
     discountRate = (1 - targetFinal / originPrice) * 100;

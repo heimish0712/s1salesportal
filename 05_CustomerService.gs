@@ -2673,6 +2673,16 @@ function parsePortalDecimalNumberP433_(value) {
   return isNaN(n) ? '' : n;
 }
 
+function normalizePortalDiscountRatePercentP484_(value) {
+  const n = typeof value === 'number' ? value : parsePortalDecimalNumberP433_(value);
+  if (n === '' || !isFinite(Number(n))) return '';
+  const num = Number(n);
+  // 할인율은 "할인한 비율(%)"로 저장합니다. 0.733 같은 "최종가 ÷ 원가" 잔존비율은 26.7%대로 복구합니다.
+  // 0.5% 같은 정상 소수 할인율을 보호하기 위해 0.5 초과~1 미만만 보정합니다.
+  if (num > 0.5 && num < 1) return (1 - num) * 100;
+  return num;
+}
+
 function roundPortalNumberP433_(num, decimals) {
   num = Number(num);
   if (!isFinite(num)) return '';
@@ -2716,8 +2726,9 @@ function getPortalMasterWriteValueP280_(key, value) {
     return n === '' ? '' : Math.round(n);
   }
   if (key === 'discountRate') {
-    const n = parsePortalDecimalNumberP433_(value);
-    // P483: 할인율은 계산 정확도를 위해 원본 소수값을 그대로 저장합니다.
+    const n = normalizePortalDiscountRatePercentP484_(value);
+    // P483/P484: 할인율은 계산 정확도를 위해 원본 소수값을 그대로 저장합니다.
+    // 단, 0.733 같은 잔존비율이 들어오면 26.666... 할인율 %로 복구합니다.
     // 표시 형식만 소수점 셋째자리까지 반올림합니다.
     return n === '' ? '' : n;
   }
@@ -2960,7 +2971,7 @@ function calculateQuoteDiscount(payload) {
   const originPrice = subtotal * vatMultiplier;
 
   const targetFinal = parseMoney_(payload.targetFinalPrice);
-  let discountRate = parseFloat(String(discountText).replace(/[^0-9.\-]/g, ''));
+  let discountRate = normalizePortalDiscountRatePercentP484_(discountText);
   let finalPrice = 0;
 
   if (targetFinal > 0 && originPrice > 0) {
