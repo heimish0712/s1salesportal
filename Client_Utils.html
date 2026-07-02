@@ -209,22 +209,147 @@ function shouldRenderPortalLongNoContactBlockP475_(detail) {
   return normalizePortalLongNoContactFlagP475_(getPortalLongNoContactFieldP475_(detail, 'longNoContactTransferred'));
 }
 
-function renderPortalLongNoContactTmBlockP475_(detail, mode) {
-  if (!shouldRenderPortalLongNoContactBlockP475_(detail)) return '';
+function getPortalLongNoContactBlockIdP476_(detail, mode) {
+  detail = detail || {};
+  const rowNo = Number(detail.rowNo || 0) || 0;
+  const customerNo = String(detail.customerNo || '').trim().replace(/[^A-Za-z0-9_-]/g, '_');
+  return 'portalTmLongNoContact_' + String(mode || 'view') + '_' + (rowNo || '0') + '_' + (customerNo || 'none');
+}
+
+function getPortalLongNoContactBlockViewModelP476_(detail) {
+  detail = detail || {};
+  const flagOn = shouldRenderPortalLongNoContactBlockP475_(detail);
   const progress = String(getPortalLongNoContactFieldP475_(detail, 'tmProgressStatus') || '').trim();
   const content = String(getPortalLongNoContactFieldP475_(detail, 'tmContactContent') || '').trim();
   const message = progress
     ? '* TM 장기미접촉 ' + progress + ' 인 건입니다.'
     : '* TM 장기미접촉 이관 건입니다.';
+  return { flagOn: flagOn, progress: progress, content: content, message: message };
+}
+
+function renderPortalLongNoContactTmBlockP475_(detail, mode) {
+  const vm = getPortalLongNoContactBlockViewModelP476_(detail);
+  if (!vm.flagOn) return '';
   const cls = 'portal-tm-long-no-contact-block-p475 ' + (mode === 'modal' ? 'portal-tm-long-no-contact-modal-p475' : 'portal-tm-long-no-contact-expand-p475');
+  const id = getPortalLongNoContactBlockIdP476_(detail, mode);
   return '' +
-    '<div class="' + cls + '">' +
-      '<div class="portal-tm-long-no-contact-alert-p475">' + esc(message) + '</div>' +
+    '<div id="' + escAttr(id) + '" class="' + cls + '" data-tm-long-no-contact-block="Y" data-mode="' + escAttr(mode || 'view') + '" data-row-no="' + escAttr(detail && detail.rowNo || '') + '" data-customer-no="' + escAttr(detail && detail.customerNo || '') + '">' +
+      '<div class="portal-tm-long-no-contact-alert-p475" data-tm-long-no-contact-role="message">' + esc(vm.message) + '</div>' +
       '<div class="portal-tm-long-no-contact-field-p475">' +
         '<div class="portal-tm-long-no-contact-label-p475">TM 컨택 내용</div>' +
-        '<textarea class="portal-tm-long-no-contact-textarea-p475" readonly tabindex="-1">' + esc(content || '-') + '</textarea>' +
+        '<textarea class="portal-tm-long-no-contact-textarea-p475" data-tm-long-no-contact-role="content" readonly tabindex="-1">' + esc(vm.content || '-') + '</textarea>' +
       '</div>' +
     '</div>';
+}
+
+function findPortalLongNoContactBlockP476_(detail, mode) {
+  const id = getPortalLongNoContactBlockIdP476_(detail, mode);
+  let el = document.getElementById(id);
+  if (el) return el;
+  const rowNo = Number(detail && detail.rowNo || 0) || 0;
+  const customerNo = String(detail && detail.customerNo || '').trim();
+  const selector = '[data-tm-long-no-contact-block="Y"][data-mode="' + String(mode || 'view') + '"]' +
+    (rowNo ? '[data-row-no="' + rowNo + '"]' : '');
+  try { el = document.querySelector(selector); } catch (err) { el = null; }
+  return el;
+}
+
+function ensurePortalLongNoContactBlockP476_(detail, mode) {
+  let block = findPortalLongNoContactBlockP476_(detail, mode);
+  if (block) return block;
+  if (!shouldRenderPortalLongNoContactBlockP475_(detail)) return null;
+
+  const html = renderPortalLongNoContactTmBlockP475_(detail, mode);
+  if (!html) return null;
+
+  if (mode === 'expand') {
+    const rowNo = Number(detail && detail.rowNo || 0) || 0;
+    const memoBox = rowNo ? document.getElementById('expandedMemoBox_' + rowNo) : null;
+    if (memoBox && memoBox.parentNode) {
+      memoBox.insertAdjacentHTML('afterend', html);
+      return findPortalLongNoContactBlockP476_(detail, mode);
+    }
+  }
+
+  if (mode === 'modal') {
+    const modalBodyEl = document.getElementById('modalBody');
+    if (modalBodyEl) {
+      const existing = modalBodyEl.querySelector('[data-tm-long-no-contact-block="Y"][data-mode="modal"]');
+      if (existing) return existing;
+      const firstCard = modalBodyEl.querySelector('.section-card');
+      if (firstCard) firstCard.insertAdjacentHTML('afterend', html);
+      else modalBodyEl.insertAdjacentHTML('afterbegin', html);
+      return findPortalLongNoContactBlockP476_(detail, mode);
+    }
+  }
+
+  return null;
+}
+
+function updatePortalLongNoContactTmBlockP476_(detail, mode) {
+  detail = detail || {};
+  const vm = getPortalLongNoContactBlockViewModelP476_(detail);
+  let block = findPortalLongNoContactBlockP476_(detail, mode);
+
+  // P476: 실제로 O가 빠진 경우에만 숨깁니다. O 상태에서는 박스를 제거하지 않고 내부 텍스트만 교체합니다.
+  if (!vm.flagOn) {
+    if (block) block.classList.add('portal-tm-long-no-contact-hidden-p476');
+    return false;
+  }
+
+  block = block || ensurePortalLongNoContactBlockP476_(detail, mode);
+  if (!block) return false;
+  block.classList.remove('portal-tm-long-no-contact-hidden-p476');
+
+  const msgEl = block.querySelector('[data-tm-long-no-contact-role="message"]');
+  const contentEl = block.querySelector('[data-tm-long-no-contact-role="content"]');
+  if (msgEl && msgEl.textContent !== vm.message) msgEl.textContent = vm.message;
+  if (contentEl) {
+    const next = vm.content || '-';
+    if (contentEl.value !== next) contentEl.value = next;
+  }
+  return true;
+}
+
+function isPortalLongNoContactFieldP476_(field) {
+  field = String(field || '').trim();
+  return field === 'longNoContactTransferred' || field === 'tmProgressStatus' || field === 'tmContactContent';
+}
+
+function patchPortalLongNoContactFieldsP476_(rowNo, customerNo, patch) {
+  rowNo = Number(rowNo) || 0;
+  customerNo = String(customerNo || '').trim();
+  patch = patch || {};
+  if (!rowNo || !Object.keys(patch).length) return false;
+
+  try {
+    if (typeof patchCustomerSearchIndexAndPagesK1_ === 'function') {
+      patchCustomerSearchIndexAndPagesK1_({ rowNo: rowNo, customerNo: customerNo }, patch, { source: 'tmLongNoContactP476', remember: true });
+    }
+  } catch (err) {}
+
+  let detail = null;
+  try { detail = getCustomerDetailCache_(rowNo, customerNo) || null; } catch (err) { detail = null; }
+  if (!detail) detail = { rowNo: rowNo, customerNo: customerNo, raw: {} };
+  Object.keys(patch).forEach(function(k) {
+    detail[k] = patch[k];
+    if (!detail.raw) detail.raw = {};
+    if (k === 'longNoContactTransferred') detail.raw['장기미접촉 이관 여부'] = patch[k];
+    if (k === 'tmProgressStatus') detail.raw['TM 진행 현황'] = patch[k];
+    if (k === 'tmContactContent') detail.raw['TM 컨택 내용'] = patch[k];
+  });
+  try { setCustomerDetailCache_(detail, { force: true, source: 'tmLongNoContactP476', allowIndexPatch: false, skipStorage: false }); } catch (err) {}
+
+  if (typeof updatePortalLongNoContactTmBlockP476_ === 'function') {
+    try { updatePortalLongNoContactTmBlockP476_(detail, 'expand'); } catch (err) {}
+    try {
+      if (typeof currentDetail !== 'undefined' && currentDetail && Number(currentDetail.rowNo) === rowNo) {
+        Object.keys(patch).forEach(function(k) { currentDetail[k] = patch[k]; });
+        updatePortalLongNoContactTmBlockP476_(currentDetail, 'modal');
+      }
+    } catch (err) {}
+  }
+  return true;
 }
 function formatDateInput_(date) {
   date = date instanceof Date ? date : new Date(date);

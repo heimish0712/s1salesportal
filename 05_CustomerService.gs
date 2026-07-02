@@ -3261,3 +3261,51 @@ function generateNextCustomerNo_(sheet) {
   return String(maxNo ? maxNo + 1 : 10000);
 }
 
+
+/**
+ * P476: TM 장기미접촉 표시 영역 전용 lightweight polling.
+ * - TM 시트 Apps Script가 마스터시트를 직접 수정하면 필드변경로그_DB에는 남지 않습니다.
+ * - 그래서 현재 사용자가 보고 있는 고객(상세 모달/하단 펼침)만 대상으로 마스터의 3개 헤더를 직접 읽습니다.
+ * - 읽기 전용 표시값만 반환하며, 저장/락/상세 전체 재조회는 수행하지 않습니다.
+ */
+function getVisibleCustomerLongNoContactTmFieldsP476(payload) {
+  payload = payload || {};
+  const visible = Array.isArray(payload.visibleCustomers) ? payload.visibleCustomers : [];
+  if (!visible.length) return { ok: true, rows: [], nowMs: Date.now() };
+
+  const masterSheet = getMasterSheet_();
+  const headerMap = getHeaderMap_(masterSheet);
+  const customerNoCol = findFirstExistingHeaderCol_(headerMap, (getMasterFieldDef_('customerNo') || {}).headers || ['고객번호']);
+  const longNoContactCol = findFirstExistingHeaderCol_(headerMap, (getMasterFieldDef_('longNoContactTransferred') || {}).headers || ['장기미접촉 이관 여부']);
+  const tmProgressCol = findFirstExistingHeaderCol_(headerMap, (getMasterFieldDef_('tmProgressStatus') || {}).headers || ['TM 진행 현황']);
+  const tmContactCol = findFirstExistingHeaderCol_(headerMap, (getMasterFieldDef_('tmContactContent') || {}).headers || ['TM 컨택 내용']);
+
+  const lastRow = masterSheet.getLastRow();
+  const out = [];
+  const seen = {};
+
+  visible.slice(0, 10).forEach(function(item) {
+    let rowNo = Number(item && item.rowNo || 0) || 0;
+    const customerNo = normalizeCustomerNoForKey_(item && item.customerNo || '');
+    if ((!rowNo || rowNo < PORTAL_CONFIG.DATA_START_ROW || rowNo > lastRow) && customerNo) {
+      rowNo = findMasterRowNoByCustomerNoSafe_(masterSheet, customerNo);
+    }
+    if (!rowNo || rowNo < PORTAL_CONFIG.DATA_START_ROW || rowNo > lastRow) return;
+    const key = rowNo + ':' + customerNo;
+    if (seen[key]) return;
+    seen[key] = true;
+
+    const sheetCustomerNo = customerNoCol ? normalizeCustomerNoForKey_(masterSheet.getRange(rowNo, customerNoCol).getDisplayValue()) : customerNo;
+    if (customerNo && sheetCustomerNo && sheetCustomerNo !== customerNo) return;
+
+    out.push({
+      rowNo: rowNo,
+      customerNo: sheetCustomerNo || customerNo,
+      longNoContactTransferred: longNoContactCol ? String(masterSheet.getRange(rowNo, longNoContactCol).getDisplayValue() || '') : '',
+      tmProgressStatus: tmProgressCol ? String(masterSheet.getRange(rowNo, tmProgressCol).getDisplayValue() || '') : '',
+      tmContactContent: tmContactCol ? String(masterSheet.getRange(rowNo, tmContactCol).getDisplayValue() || '') : ''
+    });
+  });
+
+  return { ok: true, rows: out, nowMs: Date.now() };
+}

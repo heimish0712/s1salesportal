@@ -532,6 +532,11 @@ function applyServerDetailSafelyP457_(serverDetail, options) {
 
   if (shouldNotRender) {
     // 사용자가 입력 중이면 DOM은 절대 갈아엎지 않습니다. 안전한 캐시만 갱신합니다.
+    try { if (typeof updatePortalLongNoContactTmBlockP476_ === 'function') updatePortalLongNoContactTmBlockP476_(view, 'modal'); } catch (err) {}
+    return true;
+  }
+  if (options && options.tmLongNoContactOnlyP476 === true) {
+    try { if (typeof updatePortalLongNoContactTmBlockP476_ === 'function') updatePortalLongNoContactTmBlockP476_(view, 'modal'); } catch (err) {}
     return true;
   }
   renderDetail(view, { preserveP457Session: true, reason: options.reason || 'safeServerDetail' });

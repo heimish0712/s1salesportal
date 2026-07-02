@@ -1192,6 +1192,16 @@ function applyCustomerExternalFieldChangeP474_(change) {
   const customerNo = String(change.customerNo || '').trim();
   const field = String(change.field || '').trim();
   if (!rowNo || !field) return;
+
+  // P476: TM 장기미접촉 표시 영역은 읽기 전용 박스 내부 텍스트만 조용히 교체합니다.
+  // 고객 상세/하단 펼침 전체를 다시 그리면 박스가 사라졌다가 생기며 스크롤/포커스가 튀므로 금지합니다.
+  if (typeof isPortalLongNoContactFieldP476_ === 'function' && isPortalLongNoContactFieldP476_(field)) {
+    const patch = {};
+    patch[field] = String(change.value == null ? (change.valueSummary == null ? '' : change.valueSummary) : change.value);
+    try { patchPortalLongNoContactFieldsP476_(rowNo, customerNo, patch); } catch(e) {}
+    return;
+  }
+
   if (isCustomerFieldDirtyOrFocusedP474_(rowNo, customerNo, field)) return;
   // 메모는 장문이므로 polling summary로 덮지 않습니다. 메모 충돌은 팝업/최신값 불러오기로 처리합니다.
   if (field === 'memo') return;
@@ -1221,6 +1231,69 @@ try {
     window.__customerFieldChangePollTimerP474 = setInterval(function(){
       try { pollCustomerFieldChangesP474_(); } catch(e) {}
     }, 15000);
+  }
+} catch(e) {}
+
+
+// P476: TM 장기미접촉 표시값 전용 polling.
+// 외부 TM 시트 스크립트가 마스터를 직접 갱신하는 경우 필드변경로그_DB에 남지 않으므로,
+// 현재 보고 있는 고객상세/하단 펼침 고객만 가볍게 읽어 박스 내부 텍스트만 갱신합니다.
+let customerLongNoContactTmPollRunningP476 = false;
+
+function collectVisibleLongNoContactCustomersP476_() {
+  const map = {};
+  const out = [];
+  function add(rowNo, customerNo) {
+    rowNo = Number(rowNo) || 0;
+    customerNo = normalizeCustomerNoForKey_(customerNo || '');
+    if (!rowNo && !customerNo) return;
+    const key = rowNo + ':' + customerNo;
+    if (map[key]) return;
+    map[key] = true;
+    out.push({ rowNo: rowNo, customerNo: customerNo });
+  }
+  try {
+    if (customerExpandedRowNo) {
+      const r = findCustomerRowSummaryByRowNo_(customerExpandedRowNo) || {};
+      const d = getCustomerDetailCache_(customerExpandedRowNo, r.customerNo) || {};
+      add(customerExpandedRowNo, d.customerNo || r.customerNo);
+    }
+  } catch(e) {}
+  try {
+    if (typeof currentDetail !== 'undefined' && currentDetail && currentDetail.rowNo) {
+      add(currentDetail.rowNo, currentDetail.customerNo || currentDetailCustomerNo || '');
+    }
+  } catch(e) {}
+  return out.slice(0, 5);
+}
+
+function pollLongNoContactTmFieldsP476_() {
+  if (customerLongNoContactTmPollRunningP476) return;
+  const visible = collectVisibleLongNoContactCustomersP476_();
+  if (!visible.length) return;
+  customerLongNoContactTmPollRunningP476 = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      customerLongNoContactTmPollRunningP476 = false;
+      const rows = res && Array.isArray(res.rows) ? res.rows : [];
+      rows.forEach(function(item) {
+        const patch = {
+          longNoContactTransferred: item.longNoContactTransferred || '',
+          tmProgressStatus: item.tmProgressStatus || '',
+          tmContactContent: item.tmContactContent || ''
+        };
+        try { patchPortalLongNoContactFieldsP476_(item.rowNo, item.customerNo, patch); } catch(e) {}
+      });
+    })
+    .withFailureHandler(function() { customerLongNoContactTmPollRunningP476 = false; })
+    .getVisibleCustomerLongNoContactTmFieldsP476({ visibleCustomers: visible });
+}
+
+try {
+  if (!window.__customerLongNoContactTmPollTimerP476) {
+    window.__customerLongNoContactTmPollTimerP476 = setInterval(function(){
+      try { pollLongNoContactTmFieldsP476_(); } catch(e) {}
+    }, 8000);
   }
 } catch(e) {}
 
@@ -4378,7 +4451,11 @@ function applyDetailValuesToDetailObject_(detail, values) {
     'appointmentReportReceived',
     'businessNo',
     'businessLegalName',
-    'representativeName'
+    'representativeName',
+    'businessAddress',
+    'longNoContactTransferred',
+    'tmProgressStatus',
+    'tmContactContent'
   ];
 
   Object.keys(values).forEach(function(key) {
@@ -4477,7 +4554,13 @@ function prefetchCustomerDetailsForRows_(rows, options) {
             // 실제로 보강된 경우에만 부분 렌더링을 허용합니다.
             const expandedNo = Number(customerExpandedRowNo || 0);
             if (expandedNo && visibleMap[expandedNo]) {
-              try { renderResults(lastCustomerResultResponse, lastCustomerResultFromCache); } catch (err) {}
+              // P476: 상세 프리패치/실시간 보강이 도착해도 펼침 row 전체를 다시 그리지 않습니다.
+              // TM 장기미접촉 읽기 전용 박스 등 표시 전용 영역만 조용히 갱신해 화면 튐을 막습니다.
+              try {
+                const r = findCustomerRowSummaryByRowNo_(expandedNo) || {};
+                const d = getCustomerDetailCache_(expandedNo, r.customerNo);
+                if (d && typeof updatePortalLongNoContactTmBlockP476_ === 'function') updatePortalLongNoContactTmBlockP476_(d, 'expand');
+              } catch (err) {}
             }
             try {
               const favSection = document.getElementById('customerFavoritesSection');
@@ -4552,6 +4635,14 @@ function setCustomerDetailCache_(detail, options) {
   customerDetailInlineCache['ROW:' + rowNo] = detail;
   customerDetailInlineCache[rowNo] = detail;
   pruneCustomerDetailInlineCacheP240_();
+
+  // P476: 캐시 갱신 시 현재 화면의 TM 장기미접촉 박스가 있으면 DOM을 유지하고 내부 텍스트만 업데이트합니다.
+  try {
+    if (typeof updatePortalLongNoContactTmBlockP476_ === 'function') {
+      updatePortalLongNoContactTmBlockP476_(detail, 'expand');
+      if (typeof currentDetail !== 'undefined' && currentDetail && Number(currentDetail.rowNo) === rowNo) updatePortalLongNoContactTmBlockP476_(detail, 'modal');
+    }
+  } catch (err) {}
 
   // PATCH K-1: 인덱스/요약 detail은 검색결과/검색인덱스를 역패치하지 않습니다.
   if (options.allowIndexPatch === true && !isIndexLikeDetailK1_(detail)) {
