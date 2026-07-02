@@ -35,7 +35,7 @@ const PORTAL_MASTER_FIELD_SCHEMA = {
 
   area: { label: '연면적', headers: ['연면적', '연면적(㎡)', '연면적㎡', '면적'], type: 'numberText' },
   areaCheckNeeded: { label: '연면적 확인 필요', headers: ['연면적확인필요', '연면적 확인 필요'], type: 'checkbox' },
-  buildingType: { label: '건물 유형', headers: ['건물 유형', '건물유형'], type: 'select', options: ['', '기업', '공동주택', '학교', '공공', '기타'] },
+  buildingType: { label: '건물 유형', headers: ['건물 유형', '건물유형'], type: 'select', options: ['', '기업', '공공기관', '집합건물'] },
   finalQuote: { label: '최종 견적가', headers: ['최종 견적가', '최종견적가', '최종단가', '최종 견적금액', '견적금액'], type: 'money' },
   contractUnit: { label: '계약단위', headers: ['계약단위', '계약 단위'], type: 'select', options: buildPortalContractUnitOptionsP280_() },
   contractStartDate: { label: '계약시작일', headers: ['계약시작일', '계약 시작일'], type: 'dateText' },

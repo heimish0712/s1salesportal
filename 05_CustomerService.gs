@@ -2629,7 +2629,7 @@ function getPortalMasterNumberFormatP433_(key) {
   if (key === 'maintenance' || key === 'performance') return '0"회"';
   if (key === 'area') return '#,##0.##';
   if (key === 'finalQuote') return '₩#,##0';
-  if (key === 'discountRate') return '0.###';
+  if (key === 'discountRate') return '0.000';
   return '';
 }
 
@@ -2673,10 +2673,28 @@ function normalizePortalContractPayloadFieldsP280_(values) {
   return values;
 }
 
+function normalizePortalBuildingTypeP487_(value) {
+  const compact = String(value == null ? '' : value).replace(/\s+/g, '').trim();
+  if (!compact) return '';
+  if (compact.indexOf('기업') >= 0) return '기업';
+  if (compact.indexOf('공공') >= 0 || compact.indexOf('학교') >= 0) return '공공기관';
+  if (compact.indexOf('집합') >= 0 || compact.indexOf('공동주택') >= 0 || compact.indexOf('아파트') >= 0 || compact.indexOf('오피스텔') >= 0) return '집합건물';
+  return '';
+}
+
+function formatPortalDiscountRateTextP487_(value) {
+  const n = Number(value);
+  if (!isFinite(n)) return '';
+  return (Math.round(n * 1000) / 1000).toFixed(3);
+}
+
 function normalizePortalDetailSaveValuesP484_(values) {
   values = Object.assign({}, values || {});
   if (Object.prototype.hasOwnProperty.call(values, 'contact') && typeof normalizePortalContactProfileNameP484_ === 'function') {
     values.contact = normalizePortalContactProfileNameP484_(values.contact);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'buildingType')) {
+    values.buildingType = normalizePortalBuildingTypeP487_(values.buildingType);
   }
   ['areaCheckNeeded', 'addressCheckNeeded'].forEach(function(key) {
     if (!Object.prototype.hasOwnProperty.call(values, key)) return;
@@ -2764,7 +2782,7 @@ function getPortalMasterCompareTextP280_(key, value) {
   if (key === 'maintenance' || key === 'performance') return String(writeValue) + '회';
   if (key === 'area') return formatPortalNumberTextP433_(writeValue, 2, true);
   if (key === 'finalQuote') return '₩' + formatPortalNumberTextP433_(writeValue, 0, true);
-  if (key === 'discountRate') return formatPortalNumberTextP433_(writeValue, 3, false);
+  if (key === 'discountRate') return formatPortalDiscountRateTextP487_(writeValue);
   if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') return String(writeValue || '').toUpperCase() === 'TRUE' ? 'TRUE' : 'FALSE';
   return String(writeValue).trim();
 }

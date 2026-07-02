@@ -386,6 +386,29 @@ function renderCustomerSearchSortableThP15_(col) {
   return makePortalSortableThP15_(col.label || col.key, col.key || '', info.key, info.dir, 'toggleCustomerSearchHeaderSortP15_', '');
 }
 
+function formatCustomerMoneyDisplayP487_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  const raw = text.replace(/,/g, '').replace(/[₩￦원]/g, '').replace(/\s+/g, '');
+  const n = Number(raw.replace(/[^0-9.\-]/g, ''));
+  if (!isFinite(n)) return text;
+  return '₩ ' + Math.round(n).toLocaleString('ko-KR');
+}
+
+function formatCustomerDiscountRateDisplayP487_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text === '-' || text === '–' || text === '—') return '';
+  const n = Number(text.replace(/,/g, '').replace(/%/g, '').replace(/[^0-9.\-]/g, ''));
+  if (!isFinite(n)) return text;
+  return (Math.round(n * 1000) / 1000).toFixed(3);
+}
+
+function formatCustomerResultDisplayValueP487_(key, value) {
+  if (key === 'finalQuote') return formatCustomerMoneyDisplayP487_(value) || disp(value);
+  if (key === 'discountRate') return formatCustomerDiscountRateDisplayP487_(value) || disp(value);
+  return disp(value);
+}
+
 function toggleCustomerSearchHeaderSortP15_(key) {
   key = String(key || '').trim();
   if (!key) return;
@@ -402,7 +425,7 @@ function toggleCustomerSearchHeaderSortP15_(key) {
 function renderCustomerResultCell_(row, col) {
   const key = col.key || '';
   const rawValue = row && row[key] != null ? row[key] : '';
-  let value = disp(rawValue);
+  let value = formatCustomerResultDisplayValueP487_(key, rawValue);
   let title = value;
 
   if (key === 'memo') {
@@ -695,7 +718,7 @@ function cancelCustomerInlineEdit_(inputId) {
 }
 
 function renderCustomerInlineDisplayHtml_(key, rawValue) {
-  let value = disp(rawValue);
+  let value = formatCustomerResultDisplayValueP487_(key, rawValue);
   if (key === 'memo') {
     value = shortenCustomerMemo_(value, CUSTOMER_RESULT_TABLE.memoMaxLength || 90);
   }
@@ -2214,6 +2237,12 @@ function formatCustomerExpandDisplayValue_(key, value, detail) {
   if (key === 'maintenance' || key === 'performance') {
     const v = normalizePortalContractDisplayValueClientP280_(key, normalized);
     return v !== '' ? v + '회' : disp(normalized);
+  }
+  if (key === 'finalQuote') {
+    return formatCustomerMoneyDisplayP487_(normalized) || disp(normalized);
+  }
+  if (key === 'discountRate') {
+    return formatCustomerDiscountRateDisplayP487_(normalized) || disp(normalized);
   }
   if (key === 'phone' || key === 'directPhone') {
     return splitCustomerExpandPhoneLines_(normalized) || disp(normalized);
@@ -4193,7 +4222,7 @@ function getPortalContractFieldOptionsClientP280_(key) {
   // P477: 검색인덱스 summary/lite 기반 상세 모달에서도 서버 스키마와 동일한 select 옵션을 제공합니다.
   // 이 옵션이 없으면 renderGenericOptions()가 현재값 1개만 보존해 `선임` 같은 단일 선택지 드롭다운으로 보입니다.
   if (key === 'appointment') return ['', '선임', '비선임', '해당없음'];
-  if (key === 'buildingType') return ['', '기업', '공동주택', '학교', '공공', '기타'];
+  if (key === 'buildingType') return ['', '기업', '공공기관', '집합건물'];
   if (key === 'vat') return ['', '별도', '포함'];
   return null;
 }
