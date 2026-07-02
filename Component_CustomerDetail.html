@@ -1311,11 +1311,8 @@ function initializeContactProfileStateP484_(d, options) {
 }
 
 function renderContactProfileControlsP484_() {
-  if (currentDetail && currentDetail.isNew) return '';
-  return '<div class="contact-profile-actions-p484">'
-    + '<button type="button" class="secondary contact-profile-btn-p484" onclick="toggleContactProfilePanelP484_()">담당자 프로필</button>'
-    + '<button type="button" class="secondary contact-profile-btn-p484" onclick="toggleContactProfilePanelP484_(true)">대표담당자 변경</button>'
-    + '</div>';
+  // P486: 담당자 프로필 기능은 유지하되, 고객상세 팝업의 웹 버튼만 임시 숨김 처리.
+  return '';
 }
 
 function renderContactProfilePanelP484_() {
