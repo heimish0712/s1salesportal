@@ -4,6 +4,10 @@ let customerDetailModalRequestSeq = 0;
 let contactSelectedTagsP11 = [];
 let contactNextActionTagsP119 = [];
 let customerDetailFullRequestMapP468 = {};
+let contactProfileStateP484 = { rowNo: 0, customerNo: '', profiles: [], representativeProfileId: '', dirty: false, open: false };
+let quoteLastManualFieldP484 = 'discountRate';
+let quoteRoundTenThousandP484 = true;
+let masterMemoSelectionP484 = { start: 0, end: 0, focused: false };
 
 function getCustomerDetailFastDedupeP468_(rowNo, customerNo) {
   rowNo = Number(rowNo) || 0;
@@ -144,6 +148,8 @@ function renderDetail(d, options) {
   if (!preserveEditMode) {
     lastCalcResult = null;
     discountTargetMode = false;
+    quoteLastManualFieldP484 = 'discountRate';
+    quoteRoundTenThousandP484 = true;
   }
   registrationMode = !!d.isNew;
   registrationApplied = d.isNew ? false : registrationApplied;
@@ -157,14 +163,20 @@ function renderDetail(d, options) {
     modalTitle.innerHTML = renderDetailModalTitle_(d);
   }
 
-  let html = '';
-  if (d.__summary || d.__lite) html += '<div class="section-card" style="border-color:#bae6fd;background:#f0f9ff;color:#075985;font-weight:800;">기본 정보를 먼저 표시했습니다. 전체 상세정보와 최근 이력은 뒤에서 보강 중입니다.</div>';
+  initializeContactProfileStateP484_(d, { preserveEditMode: preserveEditMode });
+
+  let html = '<div class="customer-detail-modern-p484">';
+  if (d.__summary || d.__lite) {
+    html += '<div class="section-card detail-summary-banner-p484">기본 정보를 먼저 표시했습니다. 전체 상세정보와 최근 컨택 이력은 뒤에서 보강 중입니다.</div>';
+  }
   html += renderCustomerBasicSection(d);
   html += renderPortalLongNoContactTmBlockP475_(d, 'modal');
-  html += renderContractSection(d);
-  if (!d.isNew) html += renderContactQuickPanel(d);
+  html += '<div class="detail-two-column-p484">';
+  html += '<div class="detail-column-p484 detail-column-left-p484">' + renderContractSection(d) + renderMasterMemoSectionP484_(d) + '</div>';
+  html += '<div class="detail-column-p484 detail-column-right-p484">' + renderQuoteInfoSectionP484_(d) + renderRecentContactSectionP484_(d) + '</div>';
+  html += '</div>';
   if (!d.isNew) html += renderTempMemoPanel();
-  html += '<div class="section-card"><div class="section-title">최근 이력</div>' + renderTimeline(d.contactLogs || []) + '</div>';
+  html += '</div>';
 
   modalBody.innerHTML = html;
   modalActionFooter.style.display = 'flex';
@@ -179,6 +191,8 @@ function renderDetail(d, options) {
     bindPortalAreaGradeAutoUpdateP451_();
     bindCustomerAddressAutoRegionVendor_();
     bindDetailRealtimeCalculatedFieldsP462_();
+    bindMasterMemoTemplateButtonsP484_();
+    bindContactProfileInputsP484_();
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
     setRegistrationSaveEnabled(true);
@@ -192,11 +206,14 @@ function renderDetail(d, options) {
     bindPortalAreaGradeAutoUpdateP451_();
     bindCustomerAddressAutoRegionVendor_();
     bindDetailRealtimeCalculatedFieldsP462_();
+    bindMasterMemoTemplateButtonsP484_();
+    bindContactProfileInputsP484_();
     enforceRegionReadonly_();
     applyPortalStatusControlStyles_();
     setTempMemoDefaultTime();
     // P457: 서버 보강/저장 상태 표시는 focus를 뺏지 않는 footer badge만 사용합니다.
   }
+  try { refreshQuoteInfoPanelP484_({ displayOnly: true, reason: 'render' }); } catch (err) {}
   try { if (typeof bindDetailDraftProtectionP457_ === 'function') bindDetailDraftProtectionP457_(); } catch (err) {}
   try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch (err) {}
 }
@@ -233,6 +250,7 @@ function normalizeDetailDiscountRateTextP483_(value) {
 function readDetailInputValueForSaveP483_(el) {
   if (!el) return '';
   const key = el.getAttribute('data-key');
+  if (el.type === 'checkbox') return el.checked ? 'TRUE' : 'FALSE';
   const value = el.value || '';
   if (key !== 'discountRate') return value;
   const raw = el.getAttribute('data-discount-rate-raw-p483');
@@ -337,7 +355,8 @@ function restoreDetailInputValues_(values) {
     const selector = '.detail-edit-input[data-key="' + String(key).replace(/"/g, '\"') + '"]';
     const el = document.querySelector(selector);
     if (el) {
-      el.value = values[key] || '';
+      if (el.type === 'checkbox') el.checked = isTruthyDetailCheckboxP484_(values[key]);
+      else el.value = values[key] || '';
       if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
     }
   });
@@ -554,7 +573,8 @@ function updateDetailSaveButtonDirtyStateP457_() {
   const saveBtn = document.getElementById('footerSaveDetail');
   if (!saveBtn || !isDetailEditMode) return;
   const dirty = getDirtyDetailInputValues_();
-  saveBtn.disabled = Object.keys(dirty).length === 0;
+  const profileDirty = !!(contactProfileStateP484 && contactProfileStateP484.dirty);
+  saveBtn.disabled = Object.keys(dirty).length === 0 && !profileDirty;
 }
 
 function applyServerDetailSafelyP457_(serverDetail, options) {
@@ -1016,40 +1036,574 @@ function renderDetailModalTitle_(d) {
   return '<span class="modal-title-prefix">[회사명]</span><span class="modal-title-company">' + esc(company) + '</span>';
 }
 
+function getDetailFieldValueP484_(f, fallback) {
+  if (f && f.value != null) return f.value;
+  return fallback == null ? '' : fallback;
+}
+
+function isTruthyDetailCheckboxP484_(value) {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+  const text = String(value).trim().toLowerCase();
+  if (!text || text === 'false' || text === 'n' || text === 'no' || text === '0' || text === '미해당') return false;
+  return text === 'true' || text === 'y' || text === 'yes' || text === '1' || text === 'checked' || text === '확인필요' || text === '필요';
+}
+
+function renderDetailControlP484_(f, sectionKey, extraClass, options) {
+  options = options || {};
+  if (!f) return '<input disabled value="-">';
+  const key = String(f.key || '');
+  const cls = extraClass ? ' ' + extraClass : '';
+  const editableFlag = options.editableOverride != null
+    ? (options.editableOverride ? 'Y' : 'N')
+    : (key === 'region' ? 'N' : (f.editable !== false ? 'Y' : 'N'));
+  const data = ' data-section="' + escAttr(sectionKey) + '" data-key="' + escAttr(key) + '" data-editable="' + editableFlag + '"';
+  if (f.type === 'textarea') {
+    return '<textarea class="detail-edit-input' + cls + '"' + data + ' disabled>' + esc(f.value || '') + '</textarea>';
+  }
+  if (f.type === 'select') {
+    if (key === 'status') {
+      return '<select class="detail-edit-input portal-status-select' + cls + '"' + data + ' disabled>' + renderStatusOptionsForDetail_(f.value || '') + '</select>';
+    }
+    return '<select class="detail-edit-input' + cls + '"' + data + ' disabled>' + renderGenericOptions(f.options || [], f.value || '', key) + '</select>';
+  }
+  if (f.type === 'checkbox') {
+    return '<input class="detail-edit-input detail-checkbox-input-p484' + cls + '" type="checkbox"' + (isTruthyDetailCheckboxP484_(f.value) ? ' checked' : '') + data + ' disabled>';
+  }
+  const isDateTextP420 = f.type === 'dateText' || key === 'contractStartDate' || key === 'contractEndDate';
+  const inputType = f.type === 'email' ? 'email' : 'text';
+  const placeholderP420 = isDateTextP420 ? ' placeholder="2026.07.01."' : '';
+  const dateClsP420 = isDateTextP420 ? ' portal-contract-date-input' : '';
+  return '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(isDateTextP420 ? normalizePortalContractDateDisplayClientP420_(f.value || '') : (f.value || '')) + '"' + placeholderP420 + data + ' disabled>';
+}
+
+function renderDetailFieldInlineCheckP484_(mainField, checkField, sectionKey, extraClass) {
+  if (!mainField) return renderDetailField(mainField, sectionKey, false, extraClass);
+  let html = '<div class="field-item field-with-check-p484' + (mainField.wide ? ' wide' : '') + (extraClass ? ' ' + escAttr(extraClass) : '') + '">';
+  html += '<div class="field-label-row-p484"><div class="field-label">' + renderDetailFieldLabelP13_(mainField) + '</div>';
+  if (checkField) {
+    html += '<label class="detail-inline-check-p484">' + renderDetailControlP484_(checkField, sectionKey, 'detail-inline-check-input-p484') + '<span>차후 확인 필요</span></label>';
+  }
+  html += '</div>';
+  html += renderDetailControlP484_(mainField, sectionKey, '');
+  html += '</div>';
+  return html;
+}
+
+function renderReadonlyMetaChipP484_(label, field, fallback, icon) {
+  const value = getDetailFieldValueP484_(field, fallback);
+  if (value == null || String(value).trim() === '') return '';
+  return '<span class="detail-meta-chip-p484"><span class="detail-meta-icon-p484">' + esc(icon || '•') + '</span><span class="detail-meta-label-p484">' + esc(label) + '</span><b>' + esc(value) + '</b></span>';
+}
+
 function renderCustomerBasicSection(d) {
   const f = getFieldMap('basic');
-  let html = '<div class="section-card section-card-basic"><div class="section-title">고객사 기본 정보</div><div class="field-grid">';
-  ['customerNo','company','salesRep','firstRegisteredAt','region','vendor','grade','status','customerRank','contact','phone','directPhone','email'].forEach(k => html += renderDetailField(f[k], 'basic'));
-  html += renderDetailField(f.address, 'basic', true);
-  html += renderDetailField(f.memo, 'basic', true, 'master-memo-input');
-  html += '</div></div>';
+  let html = '<div class="section-card customer-basic-card-p484">';
+  html += '<div class="detail-top-grid-p484">';
+  html += '<div class="detail-basic-main-p484">';
+  html += renderDetailField(f.company, 'basic', false, 'detail-company-input-p484');
+  html += '<div class="detail-meta-row-p484">';
+  html += renderReadonlyMetaChipP484_('고객번호', f.customerNo, d.customerNo, '⌘');
+  html += renderReadonlyMetaChipP484_('지역구분', f.region, d.region, '◎');
+  html += renderReadonlyMetaChipP484_('수행사', f.vendor, d.vendor, '⚙');
+  html += renderReadonlyMetaChipP484_('관리등급', f.grade, d.grade, '▣');
+  html += '</div>';
+  html += '<div class="detail-status-line-p484"><span>영업 진행 현황</span>' + renderDetailControlP484_(f.status, 'basic', 'detail-status-inline-p484') + '</div>';
+  html += '<div class="detail-hidden-basics-p484">';
+  ['customerNo','region','vendor','grade','salesRep','firstRegisteredAt','customerRank'].forEach(function(k) {
+    if (f[k]) html += renderDetailControlP484_(f[k], 'basic', 'detail-hidden-input-p484', { editableOverride: false });
+  });
+  html += '</div>';
+  html += '</div>';
+  html += '<div class="detail-contact-main-p484">';
+  html += '<div class="detail-contact-header-p484"><div class="section-subtitle-p484">대표 담당자 정보</div>' + renderContactProfileControlsP484_() + '</div>';
+  html += '<div class="detail-contact-grid-p484">';
+  html += renderDetailField(f.contact, 'basic');
+  html += renderDetailField(f.phone, 'basic');
+  html += renderDetailField(f.directPhone, 'basic');
+  html += renderDetailField(f.email, 'basic');
+  html += renderDetailFieldInlineCheckP484_(f.address, f.addressCheckNeeded, 'basic', 'wide address-field-p484');
+  html += '</div>';
+  html += renderContactProfilePanelP484_();
+  html += '</div>';
+  html += '</div>';
+  html += '</div>';
   return html;
 }
 
 function renderContractSection(d) {
-  const b = getFieldMap('basic');
   const f = getFieldMap('contract');
-  let html = '<div class="section-card section-card-contract"><div class="section-title">상세 계약조건</div><div class="field-grid">';
-  html += renderDetailField(f.area, 'contract');
+  let html = '<div class="section-card section-card-contract-p484"><div class="section-header-p484"><div class="section-title">계약 조건</div></div>';
+  html += '<div class="detail-contract-grid-p484">';
+  html += renderDetailFieldInlineCheckP484_(f.area, f.areaCheckNeeded, 'contract');
+  html += renderDetailField(f.appointment, 'contract');
   html += renderDetailField(f.buildingType, 'contract');
-  html += renderButtonCell('견적가 계산', 'calculateFinalQuoteFromCurrent()', 'soft');
-  html += renderDetailField(f.finalQuote, 'contract');
+  html += renderDetailField(f.maintenance, 'contract');
   html += renderDetailField(f.contractUnit, 'contract');
+  html += renderDetailField(f.performance, 'contract');
   html += renderDetailField(f.contractStartDate, 'contract');
+  html += renderDetailField(f.vat, 'contract');
   html += renderDetailField(f.contractEndDate, 'contract');
   html += renderDetailField(f.s1Referrer, 'contract');
-  html += renderDetailField(f.appointment, 'contract');
-  html += renderDetailField(f.maintenance, 'contract');
-  html += renderDetailField(f.performance, 'contract');
-  html += renderDetailField(f.vat, 'contract');
-  html += renderDetailField(f.discountRate, 'contract');
-  html += renderButtonCell('할인율 계산하기', 'handleDiscountModeClick()', 'soft', 'discountModeBtn');
-  html += '<div class="field-item"><div class="field-label">목표 최종견적가</div><input id="calcTargetFinal" disabled placeholder="원하는 최종견적가를 입력하세요"><div class="readonly-note">할인율 계산하기 클릭 후 입력</div></div>';
-  html += renderDetailField(f.specialTerms, 'contract', true);
+  html += renderDetailField(f.specialTerms, 'contract', true, 'special-terms-input-p484');
   html += '</div></div>';
   return html;
 }
 
+function renderMasterMemoSectionP484_(d) {
+  const f = getFieldMap('basic');
+  const memoField = f.memo || { key: 'memo', label: '마스터시트 메모', type: 'textarea', editable: true, value: (d && d.memo) || '' };
+  let html = '<div class="section-card master-memo-card-p484">';
+  html += '<div class="section-header-p484"><div class="section-title">마스터시트 메모</div></div>';
+  html += renderDetailField(memoField, 'basic', true, 'master-memo-input master-memo-input-p484');
+  html += '<div class="memo-template-row-p484"><span class="memo-template-label-p484">텍스트 템플릿</span>';
+  html += '<button type="button" class="secondary memo-template-btn-p484" data-memo-template-p484="contact">#컨택이력</button>';
+  html += '<button type="button" class="secondary memo-template-btn-p484" data-memo-template-p484="now">#지금시간</button>';
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+function renderQuoteInfoSectionP484_(d) {
+  const f = getFieldMap('contract');
+  const discountField = f.discountRate || { key: 'discountRate', label: '할인율(%)', type: 'text', editable: true, value: '' };
+  const finalField = Object.assign({}, f.finalQuote || { key: 'finalQuote', label: '최종 견적가', type: 'text', editable: true, value: '' }, { editable: true });
+  let html = '<div class="section-card quote-info-card-p484">';
+  html += '<div class="section-header-p484"><div class="section-title">견적 정보</div></div>';
+  html += '<div class="quote-info-table-p484">';
+  html += '<div class="quote-row-p484"><div class="quote-label-p484">견적원가(할인전)</div><div class="quote-value-p484"><span id="quoteOriginPriceP484">-</span></div></div>';
+  html += '<div class="quote-row-p484 quote-input-row-p484"><div class="quote-label-p484">할인율(%)</div><div class="quote-value-p484">' + renderDetailControlP484_(discountField, 'contract', 'quote-input-p484 quote-discount-rate-input-p484') + '</div></div>';
+  html += '<div class="quote-row-p484 quote-check-row-p484"><div class="quote-label-p484">만원 단위 미만 절삭</div><div class="quote-value-p484 quote-round-value-p484"><label class="quote-round-check-p484"><input id="quoteRoundTenThousandP484" type="checkbox"' + (quoteRoundTenThousandP484 ? ' checked' : '') + ' disabled><span>적용</span></label><span class="quote-small-hint-p484">해제 시 천원 단위 미만 절삭</span></div></div>';
+  html += '<div class="quote-row-p484 quote-input-row-p484"><div class="quote-label-p484">할인 금액</div><div class="quote-value-p484"><input id="quoteDiscountAmountP484" class="quote-input-p484 quote-derived-input-p484" type="text" value="" disabled><span class="quote-suffix-p484">원</span></div></div>';
+  html += '<div class="quote-row-p484 quote-final-row-p484"><div class="quote-label-p484">최종 견적가</div><div class="quote-value-p484 quote-final-value-wrap-p484">' + renderDetailControlP484_(finalField, 'contract', 'quote-input-p484 quote-final-input-p484', { editableOverride: true }) + '<span class="quote-final-suffix-p484">원</span></div></div>';
+  html += '</div>';
+  html += '<div class="quote-help-p484">실시간 계산값은 화면에서만 반영되며, 실제 마스터시트 저장은 저장 버튼을 눌렀을 때만 실행됩니다.</div>';
+  html += '</div>';
+  return html;
+}
+
+function renderRecentContactSectionP484_(d) {
+  const rowNo = Number(d && d.rowNo) || 0;
+  const customerNo = normalizeCustomerNoForKey_((d && d.customerNo) || currentDetailCustomerNo || '');
+  let html = '<div class="section-card recent-contact-card-p484">';
+  html += '<div class="section-header-p484"><div class="section-title">최근 컨택 이력</div>';
+  if (rowNo) html += '<button type="button" class="secondary section-action-btn-p484" onclick="openContactHistoryModal(' + rowNo + ',\'' + escAttr(customerNo) + '\')">컨택 이력 추가</button>';
+  html += '</div>' + renderTimeline((d && d.contactLogs) || []) + '</div>';
+  return html;
+}
+
+function normalizeContactProfileNameClientP484_(value) {
+  let text = String(value == null ? '' : value).trim();
+  if (text.length >= 4 && text.endsWith('님')) text = text.slice(0, -1).trim();
+  return text;
+}
+
+function makeTempContactProfileIdP484_() {
+  return 'TMP_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+}
+
+function getDetailFieldValueByKeyP484_(section, key, fallback) {
+  const fields = (currentDetail && currentDetail.detailFields && currentDetail.detailFields[section]) || [];
+  for (let i = 0; i < fields.length; i++) {
+    if (fields[i] && fields[i].key === key) return fields[i].value == null ? '' : String(fields[i].value);
+  }
+  return fallback == null ? '' : String(fallback);
+}
+
+function buildDefaultContactProfileP484_(d) {
+  d = d || currentDetail || {};
+  return {
+    profileId: 'MASTER_' + (normalizeCustomerNoForKey_(d.customerNo || currentDetailCustomerNo || '') || (Number(d.rowNo) || 0)),
+    customerNo: normalizeCustomerNoForKey_(d.customerNo || currentDetailCustomerNo || ''),
+    rowNo: Number(d.rowNo) || 0,
+    company: getDetailFieldValueByKeyP484_('basic', 'company', d.company || ''),
+    contact: normalizeContactProfileNameClientP484_(getDetailFieldValueByKeyP484_('basic', 'contact', d.contact || '')),
+    phone: getDetailFieldValueByKeyP484_('basic', 'phone', d.phone || ''),
+    directPhone: getDetailFieldValueByKeyP484_('basic', 'directPhone', d.directPhone || ''),
+    email: getDetailFieldValueByKeyP484_('basic', 'email', d.email || ''),
+    representative: true,
+    active: true,
+    fromMaster: true
+  };
+}
+
+function normalizeContactProfileClientP484_(profile, d, index) {
+  profile = profile || {};
+  const id = String(profile.profileId || profile.id || '').trim() || makeTempContactProfileIdP484_();
+  return {
+    profileId: id,
+    customerNo: normalizeCustomerNoForKey_(profile.customerNo || (d && d.customerNo) || currentDetailCustomerNo || ''),
+    rowNo: Number(profile.rowNo || profile.masterRow || (d && d.rowNo) || 0) || 0,
+    company: String(profile.company || (d && d.company) || '').trim(),
+    contact: normalizeContactProfileNameClientP484_(profile.contact || profile.contactName || profile.name || profile.person || ''),
+    phone: String(profile.phone || profile.mainPhone || '').trim(),
+    directPhone: String(profile.directPhone || profile.mobile || profile.tel || '').trim(),
+    email: String(profile.email || '').trim(),
+    representative: isTruthyDetailCheckboxP484_(profile.representative || profile.isRepresentative || profile.representativeProfile || (index === 0 && profile.fromMaster ? true : false)),
+    active: profile.active === false ? false : !/^false$/i.test(String(profile.active || 'true')),
+    fromMaster: !!profile.fromMaster
+  };
+}
+
+function initializeContactProfileStateP484_(d, options) {
+  options = options || {};
+  d = d || {};
+  const rowNo = Number(d.rowNo) || 0;
+  const customerNo = normalizeCustomerNoForKey_(d.customerNo || currentDetailCustomerNo || '');
+  const sameTarget = contactProfileStateP484 && Number(contactProfileStateP484.rowNo) === rowNo && normalizeCustomerNoForKey_(contactProfileStateP484.customerNo || '') === customerNo;
+  if (sameTarget && options.preserveEditMode && contactProfileStateP484.dirty) return;
+  let profiles = Array.isArray(d.contactProfiles) ? d.contactProfiles.slice() : [];
+  profiles = profiles.map(function(p, idx) { return normalizeContactProfileClientP484_(p, d, idx); }).filter(function(p) { return p.active !== false; });
+  if (!profiles.length) profiles = [buildDefaultContactProfileP484_(d)];
+  let representative = profiles.find(function(p) { return p.representative; });
+  if (!representative) {
+    profiles[0].representative = true;
+    representative = profiles[0];
+  }
+  profiles.forEach(function(p) { p.representative = String(p.profileId) === String(representative.profileId); });
+  contactProfileStateP484 = {
+    rowNo: rowNo,
+    customerNo: customerNo,
+    profiles: profiles,
+    representativeProfileId: representative.profileId,
+    dirty: false,
+    open: sameTarget ? !!contactProfileStateP484.open : false
+  };
+}
+
+function renderContactProfileControlsP484_() {
+  if (currentDetail && currentDetail.isNew) return '';
+  return '<div class="contact-profile-actions-p484">'
+    + '<button type="button" class="secondary contact-profile-btn-p484" onclick="toggleContactProfilePanelP484_()">담당자 프로필</button>'
+    + '<button type="button" class="secondary contact-profile-btn-p484" onclick="toggleContactProfilePanelP484_(true)">대표담당자 변경</button>'
+    + '</div>';
+}
+
+function renderContactProfilePanelP484_() {
+  if (currentDetail && currentDetail.isNew) return '';
+  return '<div id="contactProfilePanelHolderP484">' + renderContactProfilePanelInnerP484_() + '</div>';
+}
+
+function renderContactProfilePanelInnerP484_() {
+  const state = contactProfileStateP484 || { profiles: [] };
+  const display = state.open ? '' : ' style="display:none;"';
+  let html = '<div id="contactProfilePanelP484" class="contact-profile-panel-p484"' + display + '>';
+  html += '<div class="contact-profile-panel-head-p484"><b>담당자 프로필</b><span>대표로 선택한 프로필만 마스터시트 담당자 필드에 반영됩니다.</span><button type="button" class="secondary" onclick="addContactProfileRowP484_()">프로필 추가</button></div>';
+  html += '<div class="contact-profile-rows-p484">';
+  (state.profiles || []).forEach(function(profile, idx) {
+    const id = String(profile.profileId || makeTempContactProfileIdP484_());
+    const checked = String(id) === String(state.representativeProfileId) || profile.representative;
+    html += '<div class="contact-profile-row-p484" data-profile-id="' + escAttr(id) + '">';
+    html += '<label class="contact-profile-rep-p484"><input class="contact-profile-radio-p484" name="contactProfileRepresentativeP484" type="radio" value="' + escAttr(id) + '"' + (checked ? ' checked' : '') + ' disabled><span>대표</span></label>';
+    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="contact" placeholder="담당자명" value="' + escAttr(profile.contact || '') + '" disabled>';
+    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="phone" placeholder="대표번호" value="' + escAttr(profile.phone || '') + '" disabled>';
+    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="directPhone" placeholder="직통번호" value="' + escAttr(profile.directPhone || '') + '" disabled>';
+    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="email" placeholder="이메일" value="' + escAttr(profile.email || '') + '" disabled>';
+    html += '</div>';
+  });
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+function refreshContactProfilePanelP484_() {
+  const holder = document.getElementById('contactProfilePanelHolderP484');
+  if (holder) {
+    holder.innerHTML = renderContactProfilePanelInnerP484_();
+    bindContactProfileInputsP484_();
+    toggleDetailEdit(isDetailEditMode);
+  }
+}
+
+function toggleContactProfilePanelP484_(forceOpen) {
+  contactProfileStateP484.open = forceOpen === true ? true : !contactProfileStateP484.open;
+  refreshContactProfilePanelP484_();
+}
+
+function findContactProfileStateItemP484_(id) {
+  id = String(id || '');
+  return (contactProfileStateP484.profiles || []).find(function(p) { return String(p.profileId) === id; }) || null;
+}
+
+function markContactProfileDirtyP484_() {
+  contactProfileStateP484.dirty = true;
+  const saveBtn = document.getElementById('footerSaveDetail');
+  if (saveBtn && isDetailEditMode) saveBtn.disabled = false;
+}
+
+function addContactProfileRowP484_() {
+  if (!isDetailEditMode) toggleDetailEdit(true);
+  contactProfileStateP484.open = true;
+  contactProfileStateP484.profiles.push({
+    profileId: makeTempContactProfileIdP484_(),
+    customerNo: contactProfileStateP484.customerNo,
+    rowNo: contactProfileStateP484.rowNo,
+    company: getDetailInputByKey_('company') ? getDetailInputByKey_('company').value : '',
+    contact: '', phone: '', directPhone: '', email: '', representative: false, active: true
+  });
+  markContactProfileDirtyP484_();
+  refreshContactProfilePanelP484_();
+  setTimeout(function() {
+    const rows = document.querySelectorAll('.contact-profile-row-p484');
+    const last = rows[rows.length - 1];
+    const input = last && last.querySelector('.contact-profile-input-p484[data-profile-field="contact"]');
+    if (input) input.focus();
+  }, 0);
+}
+
+function applyRepresentativeProfileToDetailP484_(profile) {
+  if (!profile) return;
+  if (!isDetailEditMode) toggleDetailEdit(true);
+  setInputValueByKey('contact', normalizeContactProfileNameClientP484_(profile.contact || ''));
+  setInputValueByKey('phone', profile.phone || '');
+  setInputValueByKey('directPhone', profile.directPhone || '');
+  setInputValueByKey('email', profile.email || '');
+}
+
+function selectRepresentativeContactProfileP484_(id) {
+  const profile = findContactProfileStateItemP484_(id);
+  if (!profile) return;
+  contactProfileStateP484.representativeProfileId = String(profile.profileId);
+  (contactProfileStateP484.profiles || []).forEach(function(p) { p.representative = String(p.profileId) === String(profile.profileId); });
+  applyRepresentativeProfileToDetailP484_(profile);
+  markContactProfileDirtyP484_();
+  refreshContactProfilePanelP484_();
+}
+
+function bindContactProfileInputsP484_() {
+  document.querySelectorAll('.contact-profile-input-p484').forEach(function(input) {
+    if (input.__contactProfileBoundP484) return;
+    input.__contactProfileBoundP484 = true;
+    const handler = function() {
+      const id = input.getAttribute('data-profile-id');
+      const field = input.getAttribute('data-profile-field');
+      const profile = findContactProfileStateItemP484_(id);
+      if (!profile || !field) return;
+      profile[field] = field === 'contact' ? normalizeContactProfileNameClientP484_(input.value) : String(input.value || '').trim();
+      markContactProfileDirtyP484_();
+    };
+    input.addEventListener('input', function() {
+      const id = input.getAttribute('data-profile-id');
+      const field = input.getAttribute('data-profile-field');
+      const profile = findContactProfileStateItemP484_(id);
+      if (!profile || !field) return;
+      profile[field] = input.value || '';
+      markContactProfileDirtyP484_();
+    });
+    input.addEventListener('blur', function() {
+      if (input.getAttribute('data-profile-field') === 'contact') input.value = normalizeContactProfileNameClientP484_(input.value);
+      handler();
+    });
+    input.addEventListener('change', handler);
+  });
+  document.querySelectorAll('.contact-profile-radio-p484').forEach(function(radio) {
+    if (radio.__contactProfileBoundP484) return;
+    radio.__contactProfileBoundP484 = true;
+    radio.addEventListener('change', function() {
+      if (radio.checked) selectRepresentativeContactProfileP484_(radio.value);
+    });
+  });
+}
+
+function syncContactProfileStateFromDomP484_() {
+  document.querySelectorAll('.contact-profile-input-p484').forEach(function(input) {
+    const id = input.getAttribute('data-profile-id');
+    const field = input.getAttribute('data-profile-field');
+    const profile = findContactProfileStateItemP484_(id);
+    if (!profile || !field) return;
+    profile[field] = field === 'contact' ? normalizeContactProfileNameClientP484_(input.value) : String(input.value || '').trim();
+    if (field === 'contact') input.value = profile[field];
+  });
+  const checked = document.querySelector('.contact-profile-radio-p484:checked');
+  if (checked) {
+    contactProfileStateP484.representativeProfileId = checked.value;
+    (contactProfileStateP484.profiles || []).forEach(function(p) { p.representative = String(p.profileId) === String(checked.value); });
+  }
+}
+
+function collectContactProfileSavePayloadP484_() {
+  if (!contactProfileStateP484 || !contactProfileStateP484.dirty) return null;
+  const rowNo = Number(contactProfileStateP484.rowNo || (currentDetail && currentDetail.rowNo) || 0) || 0;
+  const customerNo = normalizeCustomerNoForKey_(contactProfileStateP484.customerNo || (currentDetail && currentDetail.customerNo) || currentDetailCustomerNo || '');
+  if (!rowNo || !customerNo) return null;
+  syncContactProfileStateFromDomP484_();
+  const companyEl = getDetailInputByKey_('company');
+  const company = companyEl ? String(companyEl.value || '').trim() : getDetailFieldValueByKeyP484_('basic', 'company', currentDetail && currentDetail.company || '');
+  const profiles = (contactProfileStateP484.profiles || []).map(function(p) {
+    return {
+      profileId: p.profileId,
+      contact: normalizeContactProfileNameClientP484_(p.contact || ''),
+      phone: String(p.phone || '').trim(),
+      directPhone: String(p.directPhone || '').trim(),
+      email: String(p.email || '').trim(),
+      representative: String(p.profileId) === String(contactProfileStateP484.representativeProfileId),
+      active: p.active !== false
+    };
+  }).filter(function(p) { return p.active !== false && (p.contact || p.phone || p.directPhone || p.email || p.representative); });
+  if (!profiles.length) return null;
+  return { rowNo: rowNo, customerNo: customerNo, company: company, representativeProfileId: contactProfileStateP484.representativeProfileId || '', profiles: profiles };
+}
+
+function saveContactProfilesOnlyP484_(profilePayload) {
+  if (!profilePayload) return;
+  try { if (typeof setCustomerDetailSaveUiP430_ === 'function') setCustomerDetailSaveUiP430_(true); } catch(e) {}
+  google.script.run
+    .withSuccessHandler(function(res) {
+      contactProfileStateP484.dirty = false;
+      try { if (typeof setCustomerDetailSaveUiP430_ === 'function') setCustomerDetailSaveUiP430_(false); } catch(e) {}
+      try { if (res && Array.isArray(res.profiles)) { contactProfileStateP484.profiles = res.profiles.map(function(p, idx) { return normalizeContactProfileClientP484_(p, currentDetail, idx); }); } } catch(e) {}
+      toast('담당자 프로필을 저장했습니다.');
+      try { updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
+    })
+    .withFailureHandler(function(err) {
+      try { if (typeof setCustomerDetailSaveUiP430_ === 'function') setCustomerDetailSaveUiP430_(false); } catch(e) {}
+      showModalError('담당자 프로필 저장 실패: ' + getErrorMessage_(err));
+    })
+    .saveCustomerContactProfilesP484(profilePayload);
+}
+
+function saveContactProfilesAfterDetailSaveP484_(profilePayload) {
+  if (!profilePayload) return;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      contactProfileStateP484.dirty = false;
+      try { if (res && Array.isArray(res.profiles)) { contactProfileStateP484.profiles = res.profiles.map(function(p, idx) { return normalizeContactProfileClientP484_(p, currentDetail, idx); }); } } catch(e) {}
+      try { updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
+    })
+    .withFailureHandler(function(err) {
+      showModalError('마스터시트는 저장됐지만 담당자 프로필 저장이 실패했습니다: ' + getErrorMessage_(err));
+    })
+    .saveCustomerContactProfilesP484(profilePayload);
+}
+
+function getMasterMemoTextareaP484_() {
+  return document.querySelector('.detail-edit-input[data-key="memo"]');
+}
+
+function formatMemoTemplateTimeP484_() {
+  const d = new Date();
+  const yy = String(d.getFullYear() % 100).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return yy + '.' + mm + '.' + dd + ' ' + hh + ':' + mi + ' ';
+}
+
+function buildMasterMemoTemplateTextP484_(kind) {
+  const now = formatMemoTemplateTimeP484_();
+  if (kind === 'contact') return '[컨택이력][0차][전화] ' + now;
+  return now;
+}
+
+function rememberMasterMemoSelectionP484_() {
+  const el = getMasterMemoTextareaP484_();
+  if (!el) return;
+  try {
+    masterMemoSelectionP484 = {
+      start: Number(el.selectionStart) || 0,
+      end: Number(el.selectionEnd) || 0,
+      focused: document.activeElement === el
+    };
+  } catch (err) {}
+}
+
+function insertMasterMemoTemplateP484_(kind) {
+  const el = getMasterMemoTextareaP484_();
+  if (!el) return;
+  if (!isDetailEditMode && !(currentDetail && currentDetail.isNew)) toggleDetailEdit(true);
+  const template = buildMasterMemoTemplateTextP484_(kind);
+  const value = String(el.value || '');
+  let next = '';
+  let cursor = 0;
+  const hasLiveCursor = document.activeElement === el && typeof el.selectionStart === 'number';
+  const hasStoredCursor = masterMemoSelectionP484 && masterMemoSelectionP484.focused;
+  if (hasLiveCursor || hasStoredCursor) {
+    const start = hasLiveCursor ? el.selectionStart : masterMemoSelectionP484.start;
+    const end = hasLiveCursor ? el.selectionEnd : masterMemoSelectionP484.end;
+    next = value.slice(0, start) + template + value.slice(end);
+    cursor = start + template.length;
+  } else {
+    const prefix = value && !/\n$/.test(value) ? value + '\n' : value;
+    next = prefix + template;
+    cursor = next.length;
+  }
+  el.value = next;
+  try { el.focus(); el.setSelectionRange(cursor, cursor); } catch (err) {}
+  rememberMasterMemoSelectionP484_();
+  try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_('memo', readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}
+  try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
+}
+
+function bindMasterMemoTemplateButtonsP484_() {
+  const el = getMasterMemoTextareaP484_();
+  if (el && !el.__memoSelectionBoundP484) {
+    el.__memoSelectionBoundP484 = true;
+    ['focus','click','keyup','mouseup','select','input'].forEach(function(evt) {
+      el.addEventListener(evt, rememberMasterMemoSelectionP484_);
+    });
+    el.addEventListener('blur', function() {
+      setTimeout(function() {
+        const active = document.activeElement;
+        if (!active || !active.classList || !active.classList.contains('memo-template-btn-p484')) {
+          masterMemoSelectionP484.focused = false;
+        }
+      }, 0);
+    });
+  }
+  document.querySelectorAll('.memo-template-btn-p484').forEach(function(btn) {
+    if (btn.__memoTemplateBoundP484) return;
+    btn.__memoTemplateBoundP484 = true;
+    btn.addEventListener('mousedown', function(evt) { evt.preventDefault(); rememberMasterMemoSelectionP484_(); });
+    btn.addEventListener('click', function(evt) {
+      evt.preventDefault();
+      insertMasterMemoTemplateP484_(btn.getAttribute('data-memo-template-p484') || 'now');
+    });
+  });
+}
+
+function isMemoTemplateLineP484_(line) {
+  const text = String(line || '');
+  if (/\[컨택이력\]\[[^\]]*\]\[[^\]]*\]\s+\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2}/.test(text)) return true;
+  if (/(^|\s)\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2}/.test(text)) return true;
+  return false;
+}
+
+function appendCurrentUserToMemoTemplateLinesP484_(memo, baselineMemo) {
+  const author = (typeof getPortalCurrentUserNameForContactP432_ === 'function') ? getPortalCurrentUserNameForContactP432_() : '';
+  if (!author) return memo;
+  const baselineSet = {};
+  String(baselineMemo == null ? '' : baselineMemo).split(/\r?\n/).forEach(function(line) {
+    baselineSet[String(line || '')] = true;
+  });
+  return String(memo == null ? '' : memo).split(/\r?\n/).map(function(line) {
+    if (!line || baselineSet[line] || !isMemoTemplateLineP484_(line)) return line;
+    if (/\([^()]{1,20}\)\s*$/.test(line)) return line;
+    return line.replace(/\s*$/, '') + ' (' + author + ')';
+  }).join('\n');
+}
+
+function prepareDetailValuesForSaveP484_(values) {
+  values = Object.assign({}, values || {});
+  if (Object.prototype.hasOwnProperty.call(values, 'contact')) {
+    values.contact = normalizeContactProfileNameClientP484_(values.contact);
+    const contactEl = getDetailInputByKey_('contact');
+    if (contactEl) contactEl.value = values.contact;
+  }
+  ['areaCheckNeeded','addressCheckNeeded'].forEach(function(key) {
+    if (Object.prototype.hasOwnProperty.call(values, key)) values[key] = isTruthyDetailCheckboxP484_(values[key]) ? 'TRUE' : 'FALSE';
+  });
+  if (Object.prototype.hasOwnProperty.call(values, 'memo')) {
+    const baseline = (detailEditBaselineValues && Object.prototype.hasOwnProperty.call(detailEditBaselineValues, 'memo')) ? detailEditBaselineValues.memo : (buildDetailBaselineFallbackP461_().memo || '');
+    const nextMemo = appendCurrentUserToMemoTemplateLinesP484_(values.memo, baseline);
+    if (nextMemo !== values.memo) {
+      values.memo = nextMemo;
+      const memoEl = getMasterMemoTextareaP484_();
+      if (memoEl) memoEl.value = nextMemo;
+    }
+  }
+  return values;
+}
 
 function getDetailButtonHelpTextP13_(text) {
   text = String(text || '');
@@ -1083,29 +1637,17 @@ function renderDetailFieldLabelP13_(f) {
 function renderDetailField(f, sectionKey, forceWide, extraClass) {
   if (!f) return '<div class="field-item"><div class="field-label">-</div><input disabled value="-"></div>';
   const wide = forceWide || f.wide ? ' wide' : '';
-  const cls = extraClass ? ' ' + extraClass : '';
   const key = String(f.key || '');
   let fieldItemClass = 'field-item' + wide;
   if (key === 'discountRate' || key === 'finalQuote') fieldItemClass += ' field-item-emphasis';
   if (key === 'discountRate') fieldItemClass += ' field-item-discount';
   if (key === 'finalQuote') fieldItemClass += ' field-item-final-quote';
+  if (f.type === 'checkbox') fieldItemClass += ' field-item-checkbox-p484';
   let html = '<div class="' + fieldItemClass + '"><div class="field-label">' + renderDetailFieldLabelP13_(f) + '</div>';
-  const editableFlag = key === 'region' ? 'N' : (f.editable !== false ? 'Y' : 'N');
-  const data = ' data-section="' + escAttr(sectionKey) + '" data-key="' + escAttr(f.key) + '" data-editable="' + editableFlag + '"';
-  if (f.type === 'textarea') {
-    html += '<textarea class="detail-edit-input' + cls + '"' + data + ' disabled>' + esc(f.value || '') + '</textarea>';
-  } else if (f.type === 'select') {
-    if (f.key === 'status') {
-      html += '<select class="detail-edit-input portal-status-select"' + data + ' disabled>' + renderStatusOptionsForDetail_(f.value || '') + '</select>';
-    } else {
-      html += '<select class="detail-edit-input"' + data + ' disabled>' + renderGenericOptions(f.options || [], f.value || '', f.key) + '</select>';
-    }
+  if (f.type === 'checkbox') {
+    html += '<label class="detail-standalone-check-p484">' + renderDetailControlP484_(f, sectionKey, extraClass || '') + '<span>' + esc(f.label || '') + '</span></label>';
   } else {
-    const isDateTextP420 = f.type === 'dateText' || key === 'contractStartDate' || key === 'contractEndDate';
-    const inputType = f.type === 'email' ? 'email' : 'text';
-    const placeholderP420 = isDateTextP420 ? ' placeholder="2026.07.01."' : '';
-    const dateClsP420 = isDateTextP420 ? ' portal-contract-date-input' : '';
-    html += '<input class="detail-edit-input' + cls + dateClsP420 + '" type="' + inputType + '" value="' + escAttr(isDateTextP420 ? normalizePortalContractDateDisplayClientP420_(f.value || '') : (f.value || '')) + '"' + placeholderP420 + data + ' disabled>';
+    html += renderDetailControlP484_(f, sectionKey, extraClass || '');
   }
   html += '</div>';
   return html;
@@ -1171,6 +1713,13 @@ function toggleDetailEdit(enable) {
     const editable = el.getAttribute('data-editable') === 'Y';
     el.disabled = !(enable && editable);
   });
+  document.querySelectorAll('.contact-profile-input-p484,.contact-profile-radio-p484').forEach(function(el) {
+    el.disabled = !enable;
+  });
+  const roundCheckP484 = document.getElementById('quoteRoundTenThousandP484');
+  if (roundCheckP484) roundCheckP484.disabled = !enable;
+  const discountAmountP484 = document.getElementById('quoteDiscountAmountP484');
+  if (discountAmountP484) discountAmountP484.disabled = !enable;
   enforceRegionReadonly_();
 
   const editBtn = document.getElementById('footerEditDetail');
@@ -1191,6 +1740,8 @@ function toggleDetailEdit(enable) {
     if (target) { target.disabled = true; target.value = ''; }
     if (btn) btn.textContent = '할인율 계산하기';
     discountTargetMode = false;
+  } else {
+    try { refreshQuoteInfoPanelP484_({ displayOnly: true, reason: 'toggleEdit' }); } catch (err) {}
   }
   try { if (typeof bindDetailDraftProtectionP457_ === 'function') bindDetailDraftProtectionP457_(); } catch (err) {}
   try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
@@ -1310,17 +1861,24 @@ function saveDetailFields() {
 
   // P457: 전체 객체 저장 금지. 사용자가 실제로 바꾼 dirty 필드만 field patch operation으로 저장합니다.
   let values = getDirtyDetailInputValues_();
+  let profilePayloadP484 = null;
   try {
     values = prepareDetailContractValuesForClientSaveP112_(values, { requireFull: false });
     if (Object.prototype.hasOwnProperty.call(values, 'area')) {
       values.grade = applyDetailAreaGradeAutoUpdateP451_();
     }
+    values = prepareDetailValuesForSaveP484_(values);
+    profilePayloadP484 = collectContactProfileSavePayloadP484_();
   } catch (err) {
     showModalError(err);
     return;
   }
-  if (!Object.keys(values).length) {
+  if (!Object.keys(values).length && !profilePayloadP484) {
     toast('변경된 항목이 없습니다.');
+    return;
+  }
+  if (!Object.keys(values).length && profilePayloadP484) {
+    saveContactProfilesOnlyP484_(profilePayloadP484);
     return;
   }
 
@@ -1406,6 +1964,7 @@ function saveDetailFields() {
         repaintCustomerResultsIfVisible_();
         try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, res || { message: '마스터시트 저장 완료' });
+        if (profilePayloadP484) saveContactProfilesAfterDetailSaveP484_(profilePayloadP484);
         if (detailModalStillActiveP456) {
           try { renderDetailSyncStatusP457_(); } catch(e) {}
         }
@@ -1466,6 +2025,14 @@ function handleDiscountModeClick() {
   if (!isDetailEditMode) toggleDetailEdit(true);
   const target = document.getElementById('calcTargetFinal');
   const btn = document.getElementById('discountModeBtn');
+  if (!target || !btn) {
+    if (recalcDetailQuoteRealtimeP462_({ reason: 'manualDiscountButton', source: 'discountRate' })) {
+      toast('견적 정보를 즉시 계산했습니다. 저장 버튼을 눌러 마스터시트에 반영하세요.');
+    } else {
+      toast('견적 정보를 계산할 계약 조건을 먼저 입력하세요.');
+    }
+    return;
+  }
   if (!discountTargetMode) {
     discountTargetMode = true;
     target.disabled = false;
@@ -1496,7 +2063,8 @@ function handleDiscountModeClick() {
 function setInputValueByKey(key, value) {
   const el = document.querySelector('.detail-edit-input[data-key="' + key + '"]');
   if (el) {
-    el.value = value || '';
+    if (el.type === 'checkbox') el.checked = isTruthyDetailCheckboxP484_(value);
+    else el.value = value || '';
     if (key === 'discountRate') el.removeAttribute('data-discount-rate-raw-p483');
     try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_(key, readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}
     try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
@@ -1505,14 +2073,19 @@ function setInputValueByKey(key, value) {
 }
 
 function parsePortalClientMoneyP462_(value) {
-  const raw = String(value == null ? '' : value).replace(/,/g, '').replace(/원/g, '').trim();
+  const raw = String(value == null ? '' : value).replace(/,/g, '').replace(/[₩￦원]/g, '').trim();
   const n = Number(raw.replace(/[^0-9.\-]/g, ''));
   return isFinite(n) ? n : 0;
+}
+function formatPortalClientMoneyPlainP484_(value) {
+  const n = Number(value) || 0;
+  if (!n) return '';
+  return Math.round(n).toLocaleString('ko-KR');
 }
 function formatPortalClientWonP462_(value) {
   const n = Number(value) || 0;
   if (!n) return '';
-  return '￦ ' + Math.round(n).toLocaleString('ko-KR');
+  return formatPortalClientMoneyPlainP484_(n) + ' 원';
 }
 function roundDownToUnitClientP462_(value, unit) {
   unit = Number(unit) || 1;
@@ -1546,28 +2119,36 @@ function normalizeInspectionCountClientP462_(value) {
   const n = Number(m[0]);
   return n >= 0 && n <= 12 ? n : '';
 }
+
+const PORTAL_FIXED_QUOTE_BASIS_CLIENT_P484 = {
+  '초급': { grade: '초급', minArea: 10000, description: '15000 미만', appointmentUnit: 60000, maintenanceUnit: 850000, performanceUnit: 1580000, areaAddUnit: 0 },
+  '중급': { grade: '중급', minArea: 15000, description: '15000 이상 30000 미만', appointmentUnit: 80000, maintenanceUnit: 950000, performanceUnit: 1640000, areaAddUnit: 0 },
+  '고급': { grade: '고급', minArea: 30000, description: '30000 이상', appointmentUnit: 120000, maintenanceUnit: 1000000, performanceUnit: 2560000, areaAddUnit: 0 },
+  '특급': { grade: '특급', minArea: 60000, description: '60000 이상', appointmentUnit: 160000, maintenanceUnit: 1300000, performanceUnit: 3480000, areaAddUnit: 200000, surchargeStartArea: 90000, surchargeAreaUnit: 10000 }
+};
+
 function calculatePortalSpecialAreaSurchargeClientP464_(area, basis) {
   area = Number(area) || 0;
   basis = basis || {};
   const basisGrade = normalizeGradeClientP462_(basis.grade || basis.managementGrade || '');
-  // P465: 기존 브라우저/서버 캐시에 areaAddUnit이 빠져 있어도 특급은 기본 가산단가 200,000원을 적용합니다.
-  // 계약기준 시트에 단가_연면적가산 값이 있으면 그 값을 우선합니다.
   let addUnit = Number(basis.areaAddUnit) || Number(basis.specialAreaAddUnit) || 0;
   if (!(addUnit > 0) && basisGrade === '특급') addUnit = 200000;
-  const flooredArea = Math.floor(Math.max(area, 0) / 10000) * 10000;
-  if (!(area > 90000) || !(addUnit > 0)) {
+  const areaUnit = Number(basis.surchargeAreaUnit) || 10000;
+  const startArea = Number(basis.surchargeStartArea) || 90000;
+  const flooredArea = Math.floor(Math.max(area, 0) / areaUnit) * areaUnit;
+  if (!(area > startArea) || !(addUnit > 0)) {
     return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
   }
-  // 90,000㎡ 초과분만 계산하고, 10,000㎡ 미만은 절삭합니다.
-  const surchargeArea = Math.max(0, flooredArea - 90000);
-  const surchargeUnits = Math.floor(surchargeArea / 10000);
+  const surchargeArea = Math.max(0, flooredArea - startArea);
+  const surchargeUnits = Math.floor(surchargeArea / areaUnit);
   return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: surchargeArea, surchargeUnits: surchargeUnits, surchargeAmount: surchargeUnits * addUnit };
 }
 
 function getPortalQuoteBasisClientP462_(grade, months) {
+  const key = normalizeGradeClientP462_(grade);
+  if (PORTAL_FIXED_QUOTE_BASIS_CLIENT_P484[key]) return Object.assign({}, PORTAL_FIXED_QUOTE_BASIS_CLIENT_P484[key]);
   const rawMap = portalQuoteBasisMapP462 || null;
   if (!rawMap) return null;
-  const key = normalizeGradeClientP462_(grade);
   const m = normalizeContractMonthsClientP462_(months);
   const byGradeMonth = rawMap.byGradeMonth || rawMap.monthlyBasis || null;
   let basis = null;
@@ -1580,11 +2161,12 @@ function getPortalQuoteBasisClientP462_(grade, months) {
     basis = (basisMap && (basisMap[key] || basisMap[String(grade || '').trim()])) || null;
   }
   if (basis && key === '특급' && !(Number(basis.areaAddUnit) > 0)) {
-    basis = Object.assign({}, basis, { grade: basis.grade || '특급', areaAddUnit: 200000 });
+    basis = Object.assign({}, basis, { grade: basis.grade || '특급', areaAddUnit: 200000, surchargeStartArea: 90000, surchargeAreaUnit: 10000 });
   }
   return basis;
 }
 function preloadPortalQuoteBasisP462_() {
+  // P484: 견적 기준은 포털 고정표를 우선 사용합니다. 서버 기준표 호출은 하위 호환용입니다.
   if (portalQuoteBasisMapP462 || portalQuoteBasisLoadingP462) return;
   portalQuoteBasisLoadingP462 = true;
   try {
@@ -1608,7 +2190,7 @@ function collectDetailContractCalcValuesP462_() {
   const grade = v.grade || calculateDetailGradeByAreaP451_(area);
   return Object.assign({}, v, { area: area, grade: grade });
 }
-function calculateDetailQuoteClientP462_(values, targetFinalValue) {
+function calculateDetailQuoteClientP462_(values) {
   values = values || collectDetailContractCalcValuesP462_();
   const area = Number(values.area || parseDetailAreaNumberP451_(values.area)) || 0;
   const grade = values.grade || calculateDetailGradeByAreaP451_(area);
@@ -1630,72 +2212,168 @@ function calculateDetailQuoteClientP462_(values, targetFinalValue) {
   const subtotal = appointmentAmount + maintenanceAmount + performanceAmount + areaSurchargeAmount;
   const vatMultiplier = vatText.indexOf('포함') >= 0 ? 1.1 : 1;
   const originPrice = subtotal * vatMultiplier;
-  const targetFinal = parsePortalClientMoneyP462_(targetFinalValue || '');
-  let discountRate = parseFloat(String(values.discountRate == null || values.discountRate === '' ? '0' : values.discountRate).replace(/[^0-9.\-]/g, ''));
-  let finalPrice = 0;
-  if (targetFinal > 0 && originPrice > 0) {
-    discountRate = (1 - targetFinal / originPrice) * 100;
-    finalPrice = roundDownToUnitClientP462_(targetFinal, 10000);
-  } else if (!isNaN(discountRate)) {
-    finalPrice = roundDownToUnitClientP462_(originPrice * (1 - discountRate / 100), 10000);
-  } else {
-    discountRate = 0;
-    finalPrice = roundDownToUnitClientP462_(originPrice, 10000);
-  }
   return {
     ok: true,
     grade: grade,
     contractUnit: String(months),
+    originPrice: originPrice,
+    originPriceRounded: Math.round(originPrice),
+    appointmentAmount: appointmentAmount,
+    maintenanceAmount: maintenanceAmount,
+    performanceAmount: performanceAmount,
+    areaSurchargeAmount: areaSurchargeAmount,
+    specialAreaSurcharge: specialAreaSurcharge,
+    basis: basis
+  };
+}
+
+function parsePortalClientPercentP484_(value) {
+  const text = String(value == null ? '' : value).replace(/,/g, '').replace(/%/g, '').trim();
+  if (!text) return 0;
+  const n = Number(text.replace(/[^0-9.\-]/g, ''));
+  return isFinite(n) ? n : 0;
+}
+function getQuoteRoundingUnitP484_() {
+  const el = document.getElementById('quoteRoundTenThousandP484');
+  quoteRoundTenThousandP484 = el ? !!el.checked : quoteRoundTenThousandP484;
+  return quoteRoundTenThousandP484 ? 10000 : 1000;
+}
+function setQuoteDiscountAmountDisplayP484_(value) {
+  const el = document.getElementById('quoteDiscountAmountP484');
+  if (el) { const amountP484 = Math.max(0, Math.round(Number(value) || 0)); el.value = amountP484 ? formatPortalClientMoneyPlainP484_(amountP484) : '0'; }
+}
+function setQuoteFinalValueP484_(value, options) {
+  options = options || {};
+  const el = getDetailInputByKey_('finalQuote');
+  if (!el) return;
+  el.value = formatPortalClientMoneyPlainP484_(Math.max(0, Math.round(Number(value) || 0)));
+  if (options.mark !== false) {
+    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_('finalQuote', readDetailInputValueForSaveP483_(el), { force: true }); } catch (err) {}
+    try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
+  }
+}
+function refreshQuoteInfoPanelP484_(options) {
+  options = options || {};
+  const displayOnly = !!options.displayOnly || (!isDetailEditMode && !(currentDetail && currentDetail.isNew));
+  const source = options.source || options.reason || '';
+  if (!displayOnly) applyDetailAreaGradeAutoUpdateP451_();
+  const calc = calculateDetailQuoteClientP462_(collectDetailContractCalcValuesP462_());
+  const originEl = document.getElementById('quoteOriginPriceP484');
+  if (!calc || !calc.ok) {
+    if (originEl) originEl.textContent = '-';
+    setQuoteDiscountAmountDisplayP484_(0);
+    return false;
+  }
+  const origin = Number(calc.originPrice) || 0;
+  if (originEl) originEl.textContent = formatPortalClientWonP462_(origin) || '-';
+  const finalEl = getDetailInputByKey_('finalQuote');
+  const rateEl = getDetailInputByKey_('discountRate');
+  const amountEl = document.getElementById('quoteDiscountAmountP484');
+  const roundEl = document.getElementById('quoteRoundTenThousandP484');
+  if (!displayOnly && calc.grade) setInputValueByKey('grade', calc.grade);
+  if (displayOnly) {
+    const existingFinal = finalEl ? parsePortalClientMoneyP462_(finalEl.value) : 0;
+    if (existingFinal > 0) setQuoteDiscountAmountDisplayP484_(Math.max(0, origin - existingFinal));
+    else {
+      const rate = rateEl ? parsePortalClientPercentP484_(readDetailInputValueForSaveP483_(rateEl)) : 0;
+      const finalPrice = roundDownToUnitClientP462_(origin * (1 - rate / 100), getQuoteRoundingUnitP484_());
+      setQuoteDiscountAmountDisplayP484_(Math.max(0, origin - finalPrice));
+    }
+    lastCalcResult = Object.assign({}, calc, { finalPrice: existingFinal || 0 });
+    return true;
+  }
+  let finalPrice = 0;
+  let discountAmount = 0;
+  let discountRate = 0;
+  if (source === 'finalQuote') {
+    if (roundEl) {
+      roundEl.checked = false;
+      quoteRoundTenThousandP484 = false;
+    }
+    quoteLastManualFieldP484 = 'finalQuote';
+    finalPrice = finalEl ? parsePortalClientMoneyP462_(finalEl.value) : 0;
+    finalPrice = Math.max(0, Math.round(finalPrice));
+    discountAmount = Math.max(0, origin - finalPrice);
+    discountRate = origin > 0 ? (1 - finalPrice / origin) * 100 : 0;
+    setDetailDiscountRateCalculatedValueP483_(discountRate, formatDetailDiscountRateDisplayP483_(discountRate));
+    setQuoteDiscountAmountDisplayP484_(discountAmount);
+  } else if (source === 'discountAmount') {
+    quoteLastManualFieldP484 = 'discountAmount';
+    const manualAmount = amountEl ? parsePortalClientMoneyP462_(amountEl.value) : 0;
+    finalPrice = roundDownToUnitClientP462_(Math.max(0, origin - manualAmount), getQuoteRoundingUnitP484_());
+    discountAmount = Math.max(0, origin - finalPrice);
+    discountRate = origin > 0 ? (1 - finalPrice / origin) * 100 : 0;
+    setQuoteFinalValueP484_(finalPrice);
+    setDetailDiscountRateCalculatedValueP483_(discountRate, formatDetailDiscountRateDisplayP483_(discountRate));
+    setQuoteDiscountAmountDisplayP484_(discountAmount);
+  } else {
+    if (source === 'discountRate') quoteLastManualFieldP484 = 'discountRate';
+    discountRate = rateEl ? parsePortalClientPercentP484_(readDetailInputValueForSaveP483_(rateEl)) : 0;
+    finalPrice = roundDownToUnitClientP462_(origin * (1 - discountRate / 100), getQuoteRoundingUnitP484_());
+    discountAmount = Math.max(0, origin - finalPrice);
+    setQuoteFinalValueP484_(finalPrice);
+    setQuoteDiscountAmountDisplayP484_(discountAmount);
+  }
+  lastCalcResult = Object.assign({}, calc, {
     discountRate: discountRate,
     discountRateRaw: discountRate,
     discountRateText: formatDetailDiscountRateDisplayP483_(discountRate),
     finalPrice: finalPrice,
     finalPriceText: formatPortalClientWonP462_(finalPrice),
-    originPrice: originPrice,
-    areaAddUnit: Number(basis.areaAddUnit) || 0,
-    areaSurchargeAmount: areaSurchargeAmount,
-    specialAreaSurcharge: specialAreaSurcharge
-  };
+    discountAmount: discountAmount
+  });
+  return true;
 }
 function recalcDetailQuoteRealtimeP462_(options) {
-  options = options || {};
-  if (!isDetailEditMode && !(currentDetail && currentDetail.isNew)) return false;
-  applyDetailAreaGradeAutoUpdateP451_();
-  const target = document.getElementById('calcTargetFinal');
-  const targetValue = discountTargetMode && target && !target.disabled ? String(target.value || '') : '';
-  const res = calculateDetailQuoteClientP462_(collectDetailContractCalcValuesP462_(), targetValue);
-  if (!res || !res.ok) return false;
-  if (res.grade) setInputValueByKey('grade', res.grade);
-  if (targetValue && res.discountRate !== undefined) setDetailDiscountRateCalculatedValueP483_(res.discountRateRaw !== undefined ? res.discountRateRaw : res.discountRate, res.discountRateText);
-  if (res.finalPriceText) setInputValueByKey('finalQuote', res.finalPriceText);
-  lastCalcResult = res;
-  return true;
+  return refreshQuoteInfoPanelP484_(options || {});
 }
 function bindDetailRealtimeCalculatedFieldsP462_() {
   preloadPortalQuoteBasisP462_();
-  const keys = ['area','contractUnit','appointment','maintenance','performance','vat','discountRate','contractStartDate','contractEndDate'];
-  keys.forEach(function(key) {
+  const contractKeys = ['area','contractUnit','appointment','maintenance','performance','vat','discountRate','contractStartDate','contractEndDate'];
+  contractKeys.forEach(function(key) {
     const el = getDetailInputByKey_(key);
     if (!el || el.__detailRealtimeBoundP462) return;
     el.__detailRealtimeBoundP462 = true;
     const handler = function() {
-      try { recalcDetailQuoteRealtimeP462_({ reason: key }); } catch (err) { console.warn('실시간 견적 계산 실패', err); }
+      try { recalcDetailQuoteRealtimeP462_({ reason: key, source: key }); } catch (err) { console.warn('실시간 견적 계산 실패', err); }
     };
     el.addEventListener('input', handler);
     el.addEventListener('change', handler);
-    el.addEventListener('blur', handler);
+    el.addEventListener('blur', function() {
+      if (key === 'discountRate') {
+        el.value = formatDetailDiscountRateDisplayP483_(parsePortalClientPercentP484_(el.value));
+        el.removeAttribute('data-discount-rate-raw-p483');
+      }
+      handler();
+    });
   });
-  const target = document.getElementById('calcTargetFinal');
-  if (target && !target.__detailRealtimeBoundP462) {
-    target.__detailRealtimeBoundP462 = true;
-    const targetHandler = function(){ try { recalcDetailQuoteRealtimeP462_({ reason: 'targetFinal' }); } catch(e){} };
-    target.addEventListener('input', targetHandler);
-    target.addEventListener('change', targetHandler);
-    target.addEventListener('blur', targetHandler);
+  const amountEl = document.getElementById('quoteDiscountAmountP484');
+  if (amountEl && !amountEl.__detailRealtimeBoundP484) {
+    amountEl.__detailRealtimeBoundP484 = true;
+    const handler = function() { try { recalcDetailQuoteRealtimeP462_({ reason: 'discountAmount', source: 'discountAmount' }); } catch(e){} };
+    amountEl.addEventListener('input', handler);
+    amountEl.addEventListener('change', handler);
+    amountEl.addEventListener('blur', function(){ amountEl.value = formatPortalClientMoneyPlainP484_(parsePortalClientMoneyP462_(amountEl.value)); handler(); });
   }
-  setTimeout(function(){ try { recalcDetailQuoteRealtimeP462_({ reason: 'bindInitial' }); } catch(e){} }, 0);
+  const finalEl = getDetailInputByKey_('finalQuote');
+  if (finalEl && !finalEl.__detailFinalRealtimeBoundP484) {
+    finalEl.__detailFinalRealtimeBoundP484 = true;
+    const handler = function(){ try { recalcDetailQuoteRealtimeP462_({ reason: 'finalQuote', source: 'finalQuote' }); } catch(e){} };
+    finalEl.addEventListener('input', handler);
+    finalEl.addEventListener('change', handler);
+    finalEl.addEventListener('blur', function(){ finalEl.value = formatPortalClientMoneyPlainP484_(parsePortalClientMoneyP462_(finalEl.value)); handler(); });
+  }
+  const roundEl = document.getElementById('quoteRoundTenThousandP484');
+  if (roundEl && !roundEl.__detailRealtimeBoundP484) {
+    roundEl.__detailRealtimeBoundP484 = true;
+    roundEl.addEventListener('change', function() {
+      quoteRoundTenThousandP484 = !!roundEl.checked;
+      quoteLastManualFieldP484 = 'discountRate';
+      try { recalcDetailQuoteRealtimeP462_({ reason: 'discountRate', source: 'discountRate' }); } catch(e){}
+    });
+  }
+  setTimeout(function(){ try { recalcDetailQuoteRealtimeP462_({ reason: 'bindInitial', displayOnly: true }); } catch(e){} }, 0);
 }
-
 
 
 // STEP42/P420: 계약시작일/계약종료일 클라이언트 표시·자동계산
@@ -1931,8 +2609,9 @@ function setInputValueByKeyIfExists_(key, value, options) {
   options = options || {};
   const el = getDetailInputByKey_(key);
   if (!el) return;
-  if (options.onlyBlank && String(el.value || '').trim()) return;
-  el.value = value == null ? '' : String(value);
+  if (options.onlyBlank && String(el.type === 'checkbox' ? readDetailInputValueForSaveP483_(el) : (el.value || '')).trim()) return;
+  if (el.type === 'checkbox') el.checked = isTruthyDetailCheckboxP484_(value);
+  else el.value = value == null ? '' : String(value);
 }
 
 function normalizeContractUnitValue_(value) {
@@ -2053,6 +2732,7 @@ function saveRegistrationCustomerFromModal() {
   let values = gatherRegistrationValues();
   try {
     values = prepareDetailContractValuesForClientSaveP112_(values, { requireFull: true });
+    values = prepareDetailValuesForSaveP484_(values);
   } catch (err) {
     showModalError(err);
     return;

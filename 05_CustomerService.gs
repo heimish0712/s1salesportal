@@ -1505,12 +1505,14 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
   const status = getStatusValueFromObj_(obj);
   const customerRank = getCustomerMasterHeaderValueK2_(obj, 'customerRank');
   const address = getCustomerMasterHeaderValueK2_(obj, 'address');
+  const addressCheckNeeded = getCustomerMasterHeaderValueK2_(obj, 'addressCheckNeeded');
 
   // PATCH M-FIX2: 펼침/상세 화면에서 바로 쓰는 계약조건 필드는 detail 객체에 직접 싣습니다.
   // 특히 관리등급은 마스터시트 O열의 '관리등급' 헤더 값을 기준으로 읽되, 열주소가 아니라 헤더명으로만 매핑합니다.
   const firstRegisteredAt = getCustomerMasterHeaderValueK2_(obj, 'firstRegisteredAt');
   const region = getCustomerMasterHeaderValueK2_(obj, 'region');
   const area = getCustomerMasterHeaderValueK2_(obj, 'area');
+  const areaCheckNeeded = getCustomerMasterHeaderValueK2_(obj, 'areaCheckNeeded');
   const grade = getCustomerMasterHeaderValueK2_(obj, 'grade');
   const buildingType = getCustomerMasterHeaderValueK2_(obj, 'buildingType');
   const finalQuote = getCustomerMasterHeaderValueK2_(obj, 'finalQuote');
@@ -1539,9 +1541,11 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     customerNo: customerNo,
     orderNo: orderNo,
     address: address,
+    addressCheckNeeded: addressCheckNeeded,
     firstRegisteredAt: firstRegisteredAt,
     region: region,
     area: area,
+    areaCheckNeeded: areaCheckNeeded,
     grade: grade,
     buildingType: buildingType,
     finalQuote: finalQuote,
@@ -1582,6 +1586,7 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     contactMethods: PORTAL_CONFIG.CONTACT_METHODS,
     detailFields: buildDetailFieldValues_(obj),
     quoteCalcDefaults: buildQuoteCalcDefaults_(obj),
+    contactProfiles: (typeof getContactProfilesForCustomerP484_ === 'function') ? getContactProfilesForCustomerP484_(customerNo, rowNo) : [],
     contactLogs: options.includeLogs === false ? [] : getContactHistoryByCustomer_(customerNo, rowNo),
     orderInfo: orderInfoP250 || { exists: false, contractNo: '', rowNo: 0, customerNo: customerNo, company: company },
     raw: options.includeRaw === false ? {} : obj,
@@ -1701,6 +1706,7 @@ function saveCustomerDetailThinCoreP462_(payload) {
   const customerNo = target.customerNo;
   const sheet = target.sheet;
   let values = normalizePortalCustomerLocationValues_(Object.assign({}, payload.values || {}));
+  values = normalizePortalDetailSaveValuesP484_(values);
   values = preparePortalContractValuesForSaveP112_(values || {}, { sheet: sheet, rowNo: rowNo, requireFull: false });
   values = applyPortalAutoGradeByAreaForSaveP451_(values);
 
@@ -2146,6 +2152,8 @@ function canWritePortalDetailFieldP451_(def, values) {
 
   // 관리등급은 사용자가 직접 수정하는 필드가 아니라 연면적 변경의 파생값으로만 저장 허용.
   if (def.key === 'grade' && Object.prototype.hasOwnProperty.call(values || {}, 'area')) return true;
+  // P484: 최종 견적가는 견적 정보 패널에서 직접 입력/계산된 경우만 저장 허용합니다.
+  if (def.key === 'finalQuote' && Object.prototype.hasOwnProperty.call(values || {}, 'finalQuote')) return true;
   return false;
 }
 
@@ -2157,6 +2165,7 @@ function saveCustomerDetailCoreP202_(payload) {
   const customerNo = target.customerNo;
   let values = payload.values || {};
   values = normalizePortalCustomerLocationValues_(values);
+  values = normalizePortalDetailSaveValuesP484_(values);
   const sheet = target.sheet;
   assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload);
   values = preparePortalContractValuesForSaveP112_(values, { sheet: sheet, rowNo: rowNo, requireFull: false });
@@ -2251,6 +2260,7 @@ function saveCustomerDetailFastCoreP202_(payload) {
   const customerNo = target.customerNo;
   let values = payload.values || {};
   values = normalizePortalCustomerLocationValues_(values);
+  values = normalizePortalDetailSaveValuesP484_(values);
   const sheet = target.sheet;
   assertPortalCustomerVersionFreshP202_(sheet, rowNo, payload);
   values = preparePortalContractValuesForSaveP112_(values, { sheet: sheet, rowNo: rowNo, requireFull: false });
@@ -2663,6 +2673,19 @@ function normalizePortalContractPayloadFieldsP280_(values) {
   return values;
 }
 
+function normalizePortalDetailSaveValuesP484_(values) {
+  values = Object.assign({}, values || {});
+  if (Object.prototype.hasOwnProperty.call(values, 'contact') && typeof normalizePortalContactProfileNameP484_ === 'function') {
+    values.contact = normalizePortalContactProfileNameP484_(values.contact);
+  }
+  ['areaCheckNeeded', 'addressCheckNeeded'].forEach(function(key) {
+    if (!Object.prototype.hasOwnProperty.call(values, key)) return;
+    const text = String(values[key] == null ? '' : values[key]).trim().toUpperCase();
+    values[key] = (values[key] === true || text === 'TRUE' || text === 'Y' || text === 'YES' || text === '1') ? 'TRUE' : 'FALSE';
+  });
+  return values;
+}
+
 function parsePortalDecimalNumberP433_(value) {
   if (value == null || value === '') return '';
   if (value instanceof Date) return '';
@@ -2721,6 +2744,10 @@ function getPortalMasterWriteValueP280_(key, value) {
     // 표시 형식만 소수점 셋째자리까지 반올림합니다.
     return n === '' ? '' : n;
   }
+  if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') {
+    const text = String(value == null ? '' : value).trim().toUpperCase();
+    return (value === true || text === 'TRUE' || text === 'Y' || text === 'YES' || text === '1') ? 'TRUE' : 'FALSE';
+  }
   if (isPortalMasterDateKeyP433_(key)) {
     const d = parsePortalContractDateP420_(value);
     return d || '';
@@ -2738,6 +2765,7 @@ function getPortalMasterCompareTextP280_(key, value) {
   if (key === 'area') return formatPortalNumberTextP433_(writeValue, 2, true);
   if (key === 'finalQuote') return '₩' + formatPortalNumberTextP433_(writeValue, 0, true);
   if (key === 'discountRate') return formatPortalNumberTextP433_(writeValue, 3, false);
+  if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') return String(writeValue || '').toUpperCase() === 'TRUE' ? 'TRUE' : 'FALSE';
   return String(writeValue).trim();
 }
 
@@ -2838,6 +2866,29 @@ function normalizePortalQuoteBasisMonthKeyP463_(value) {
   const n = normalizePortalContractUnitMonthsP280_(value);
   return n === '' ? '' : String(n);
 }
+
+const PORTAL_FIXED_QUOTE_BASIS_P484 = {
+  '초급': { grade: '초급', minArea: 10000, description: '15000 미만', appointmentUnit: 60000, maintenanceUnit: 850000, performanceUnit: 1580000, areaAddUnit: 0 },
+  '중급': { grade: '중급', minArea: 15000, description: '15000 이상 30000 미만', appointmentUnit: 80000, maintenanceUnit: 950000, performanceUnit: 1640000, areaAddUnit: 0 },
+  '고급': { grade: '고급', minArea: 30000, description: '30000 이상', appointmentUnit: 120000, maintenanceUnit: 1000000, performanceUnit: 2560000, areaAddUnit: 0 },
+  '특급': { grade: '특급', minArea: 60000, description: '60000 이상', appointmentUnit: 160000, maintenanceUnit: 1300000, performanceUnit: 3480000, areaAddUnit: 200000, surchargeStartArea: 90000, surchargeAreaUnit: 10000 }
+};
+
+function getPortalFixedQuoteBasisP484_(grade) {
+  const norm = normalizeGrade_(grade);
+  const basis = PORTAL_FIXED_QUOTE_BASIS_P484[norm] || null;
+  return basis ? Object.assign({}, basis) : null;
+}
+
+function buildPortalFixedQuoteBasisMapP484_() {
+  const result = { ok: true, loadedAt: new Date().toISOString(), source: 'fixedP484', basis: {}, byGradeMonth: {} };
+  Object.keys(PORTAL_FIXED_QUOTE_BASIS_P484).forEach(function(key) {
+    const basis = Object.assign({}, PORTAL_FIXED_QUOTE_BASIS_P484[key]);
+    result.basis[key] = basis;
+    for (let m = 1; m <= 12; m++) result.byGradeMonth[key + '|' + m] = Object.assign({}, basis);
+  });
+  return result;
+}
 function makePortalQuoteBasisObjectP463_(row, map, grade) {
   const norm = normalizeGrade_(grade);
   let areaAddUnit = parseMoney_(cellByHeaderIndex_(row, map, ['단가_연면적가산', '연면적가산', '연면적 가산', '면적가산단가', '단가_면적가산']));
@@ -2858,48 +2909,24 @@ function calculatePortalSpecialAreaSurchargeP464_(area, basis) {
   const basisGrade = normalizeGrade_(basis.grade || basis.managementGrade || '');
   let addUnit = Number(basis.areaAddUnit) || Number(basis.specialAreaAddUnit) || 0;
   if (!(addUnit > 0) && basisGrade.indexOf('특급') >= 0) addUnit = 200000;
-  const flooredArea = Math.floor(Math.max(area, 0) / 10000) * 10000;
-  if (!(area > 90000) || !(addUnit > 0)) {
+  const areaUnit = Number(basis.surchargeAreaUnit) || 10000;
+  const startArea = Number(basis.surchargeStartArea) || 90000;
+  const flooredArea = Math.floor(Math.max(area, 0) / areaUnit) * areaUnit;
+  if (!(area > startArea) || !(addUnit > 0)) {
     return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: 0, surchargeUnits: 0, surchargeAmount: 0 };
   }
-  // P465: 특급은 90,000㎡까지 기본단가 적용, 초과분은 10,000㎡ 미만 절삭 후 10,000㎡당 단가_연면적가산을 더합니다.
-  // 예: 197,200㎡ → 190,000㎡로 보고, (190,000-90,000)/10,000=10단위 × 200,000 = 2,000,000원 가산.
-  const surchargeArea = Math.max(0, flooredArea - 90000);
-  const surchargeUnits = Math.floor(surchargeArea / 10000);
+  // P484: 특급은 90,000㎡까지 기본단가 적용, 초과분은 10,000㎡ 미만 절삭 후 10,000㎡당 단가_연면적가산을 더합니다.
+  // 예: 197,500㎡ → 190,000㎡로 보고, (190,000-90,000)/10,000=10단위 × 200,000 = 2,000,000원 가산.
+  const surchargeArea = Math.max(0, flooredArea - startArea);
+  const surchargeUnits = Math.floor(surchargeArea / areaUnit);
   const surchargeAmount = surchargeUnits * addUnit;
   return { areaAddUnit: addUnit, flooredArea: flooredArea, surchargeArea: surchargeArea, surchargeUnits: surchargeUnits, surchargeAmount: surchargeAmount };
 }
 
 function getPortalQuoteBasisMapP462() {
-  const cache = CacheService.getScriptCache();
-  const cacheKey = 'PORTAL_QUOTE_BASIS_MAP_P465';
-  try {
-    const raw = cache.get(cacheKey);
-    if (raw) return JSON.parse(raw);
-  } catch (err) {}
-  const ss = getMasterSpreadsheet_();
-  const sheet = ss.getSheetByName('계약기준');
-  if (!sheet) throw new Error('계약기준 시트를 찾지 못했습니다.');
-  const lastRow = sheet.getLastRow();
-  const lastCol = sheet.getLastColumn();
-  const result = { ok: true, loadedAt: new Date().toISOString(), basis: {}, byGradeMonth: {} };
-  if (lastRow < 2) return result;
-  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h){ return String(h || '').trim(); });
-  const map = {};
-  headers.forEach(function(h, i) { if (h) map[h] = i; });
-  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
-  values.forEach(function(row) {
-    const grade = cellByHeaderIndex_(row, map, ['등급', '관리등급']);
-    const norm = normalizeGrade_(grade);
-    if (!norm) return;
-    const basis = makePortalQuoteBasisObjectP463_(row, map, grade);
-    const monthValue = cellByHeaderIndex_(row, map, ['계약단위', '계약개월', '개월', '계약기간']);
-    const monthKey = normalizePortalQuoteBasisMonthKeyP463_(monthValue);
-    if (monthKey) result.byGradeMonth[norm + '|' + monthKey] = basis;
-    if (!result.basis[norm]) result.basis[norm] = basis;
-  });
-  try { cache.put(cacheKey, JSON.stringify(result), 21600); } catch (err) {}
-  return result;
+  // P484: 견적 기준은 현행 마스터 시트 수식이 아니라 아래 고정 기준표를 source of truth로 사용합니다.
+  // 나중에 가산단가 정책만 바꾸기 쉽도록 buildPortalFixedQuoteBasisMapP484_에서 한 번에 관리합니다.
+  return buildPortalFixedQuoteBasisMapP484_();
 }
 
 function calculateQuoteDiscount(payload) {
@@ -3007,32 +3034,8 @@ function calculateQuoteDiscount(payload) {
 }
 
 function getContractBasisForGrade_(grade, contractUnit) {
-  grade = String(grade || '').trim();
-  if (!grade) return null;
-  const ss = getMasterSpreadsheet_();
-  const sheet = ss.getSheetByName('계약기준');
-  if (!sheet) throw new Error('계약기준 시트를 찾지 못했습니다.');
-  const lastRow = sheet.getLastRow();
-  const lastCol = sheet.getLastColumn();
-  if (lastRow < 2) return null;
-
-  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(h => String(h || '').trim());
-  const map = {};
-  headers.forEach((h, i) => { if (h) map[h] = i; });
-  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
-
-  const gradeNorm = normalizeGrade_(grade);
-  const requestedMonth = normalizePortalQuoteBasisMonthKeyP463_(contractUnit);
-  let fallback = null;
-  for (const row of values) {
-    const rowGrade = cellByHeaderIndex_(row, map, ['등급', '관리등급']);
-    if (normalizeGrade_(rowGrade) !== gradeNorm) continue;
-    const basis = makePortalQuoteBasisObjectP463_(row, map, rowGrade);
-    const rowMonth = normalizePortalQuoteBasisMonthKeyP463_(cellByHeaderIndex_(row, map, ['계약단위', '계약개월', '개월', '계약기간']));
-    if (requestedMonth && rowMonth && rowMonth === requestedMonth) return basis;
-    if (!fallback) fallback = basis;
-  }
-  return fallback;
+  // P484: 등급별 단가는 고정 기준표를 우선 사용합니다. contractUnit은 선임단가 × 개월 계산에만 쓰고, 기준단가는 월별로 바꾸지 않습니다.
+  return getPortalFixedQuoteBasisP484_(grade);
 }
 
 function getNewCustomerTemplate() {
@@ -3108,6 +3111,7 @@ function saveRegistrationCustomer(payload) {
   const rowNoInput = Number(payload.rowNo || 0);
   let values = payload.values || {};
   values = normalizePortalCustomerLocationValues_(values);
+  values = normalizePortalDetailSaveValuesP484_(values);
   values = preparePortalContractValuesForSaveP112_(values, { requireFull: true });
   let calc = payload.calculation || {};
 

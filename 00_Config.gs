@@ -160,6 +160,24 @@ const PORTAL_CONFIG = {
   ],
   CONTACT_HISTORY_MAX_PER_CUSTOMER: 30,
 
+  CONTACT_PROFILE_SHEET_NAME: '담당자프로필_DB',
+  CONTACT_PROFILE_HEADERS: [
+    '프로필ID',
+    '고객번호',
+    '회사명',
+    '마스터행',
+    '담당자명',
+    '대표번호',
+    '직통번호',
+    '이메일',
+    '대표담당자여부',
+    '활성여부',
+    '작성일시',
+    '작성자',
+    '수정일시',
+    '수정자'
+  ],
+
   // P460: 웹앱 성능/저장 안정성 로그. 웹앱 DB 스프레드시트에 기록합니다.
   PERF_LOG_SHEET_NAME: '성능로그_DB',
   PERF_LOG_HEADERS: ['기록일시','사용자','세션ID','이벤트','구간','소요ms','rowNo','고객번호','화면','상태','오류','상세JSON']

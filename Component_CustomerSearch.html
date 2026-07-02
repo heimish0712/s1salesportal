@@ -4227,6 +4227,7 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     customerNo: row.customerNo || '',
     orderNo: row.orderNo || '',
     address: row.fullAddress || row.address || '',
+    addressCheckNeeded: row.addressCheckNeeded || row['주소확인필요'] || '',
     contact: row.contact || '',
     phone: row.phone || '',
     directPhone: row.directPhone || '',
@@ -4248,6 +4249,7 @@ function buildCustomerDetailFromRowSummary_(row, rowNo) {
     firstRegisteredAt: row.firstRegisteredAt || '',
     region: row.region || '',
     area: row.area || '',
+    areaCheckNeeded: row.areaCheckNeeded || row['연면적확인필요'] || '',
     grade: row.grade || '',
     buildingType: row.buildingType || '',
     finalQuote: row.finalQuote || '',
@@ -4297,11 +4299,11 @@ function buildDetailFieldsFromFlatDetail_(detail) {
   const basicDefs = [
     ['customerNo','고객번호',false,'text'], ['company','회사명',true,'text'], ['salesRep','영업담당자',true,'text'], ['firstRegisteredAt','마스터시트 최초등록일',false,'text'],
     ['region','지역구분',true,'text'], ['vendor','수행사',true,'select'], ['grade','관리등급',false,'text'], ['status','현재 영업 진행 상황',true,'select'], ['customerRank','고객등급',true,'select'],
-    ['contact','고객사 담당자',true,'text'], ['phone','대표전화번호',true,'text'], ['directPhone','직통번호',true,'text'], ['email','담당자 이메일 주소',true,'email'],
-    ['address','고객사 상세 주소',true,'text',true], ['memo','마스터시트 메모',true,'textarea',true]
+    ['contact','고객사 담당자',true,'text'], ['phone','대표번호',true,'text'], ['directPhone','직통번호',true,'text'], ['email','이메일',true,'email'],
+    ['address','고객사 주소',true,'text',true], ['addressCheckNeeded','주소 확인 필요',true,'checkbox'], ['memo','마스터시트 메모',true,'textarea',true]
   ];
   const contractDefs = [
-    ['area','연면적',true,'numberText'], ['buildingType','건물 유형',true,'select'], ['finalQuote','최종 견적가',false,'money'], ['contractUnit','계약단위',true,'select'],
+    ['area','연면적',true,'numberText'], ['areaCheckNeeded','연면적 확인 필요',true,'checkbox'], ['buildingType','건물 유형',true,'select'], ['finalQuote','최종 견적가',false,'money'], ['contractUnit','계약단위',true,'select'],
     ['contractStartDate','계약시작일',true,'dateText'], ['contractEndDate','계약종료일',true,'dateText'], ['s1Referrer','에스원제보자',true,'text'], ['appointment','관리자 선임 여부',true,'select'], ['maintenance','유지점검',true,'select'], ['performance','성능점검',true,'select'], ['vat','부가세',true,'select'],
     ['discountRate','할인율',true,'numberText'], ['specialTerms','용역신청서특약사항',true,'textarea',true]
   ];
