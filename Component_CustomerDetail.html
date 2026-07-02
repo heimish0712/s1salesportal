@@ -15,7 +15,14 @@ function getCustomerDetailFastDedupeP468_(rowNo, customerNo) {
   }
   const promise = new Promise(function(resolve, reject) {
     try {
-      getCustomerDetailFast_(rowNo, resolve, reject, { customerNo: normalizedCustomerNo });
+      // P477: 상세 모달의 비동기 보강 조회는 반드시 마스터 full detail만 resolve합니다.
+      // getCustomerDetailFast_는 summary/cache를 먼저 callback으로 반환할 수 있어 Promise가 요약 데이터에서 끝나고,
+      // 계약조건 select 옵션이 현재값 1개만 남는 현상이 발생할 수 있습니다.
+      if (typeof fetchCustomerDetailFromServer_ === 'function') {
+        fetchCustomerDetailFromServer_(rowNo, resolve, reject, { customerNo: normalizedCustomerNo });
+      } else {
+        getCustomerDetailFast_(rowNo, resolve, reject, { customerNo: normalizedCustomerNo, allowSummary: false, forceFull: true });
+      }
     } catch (err) {
       reject(err);
     }

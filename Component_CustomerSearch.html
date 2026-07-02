@@ -4190,6 +4190,11 @@ function normalizePortalContractDisplayValueClientP280_(key, value) {
 function getPortalContractFieldOptionsClientP280_(key) {
   if (key === 'contractUnit') return buildPortalContractUnitOptionsClientP280_();
   if (key === 'maintenance' || key === 'performance') return buildPortalInspectionCountOptionsClientP280_(12);
+  // P477: 검색인덱스 summary/lite 기반 상세 모달에서도 서버 스키마와 동일한 select 옵션을 제공합니다.
+  // 이 옵션이 없으면 renderGenericOptions()가 현재값 1개만 보존해 `선임` 같은 단일 선택지 드롭다운으로 보입니다.
+  if (key === 'appointment') return ['', '선임', '비선임', '해당없음'];
+  if (key === 'buildingType') return ['', '기업', '공동주택', '학교', '공공', '기타'];
+  if (key === 'vat') return ['', '별도', '포함'];
   return null;
 }
 
