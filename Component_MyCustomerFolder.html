@@ -1,5 +1,5 @@
 <script>
-// P497: 나의고객폴더 1차
+// P497: 나의 고객 폴더 1차
 let myCustomerFolderBundleP497 = null;
 let myCustomerFolderSelectedIdP497 = '';
 let myCustomerFolderExpandedRowNoP497 = null;
@@ -13,7 +13,7 @@ function loadMyCustomerFolderPageP497(force) {
   force = !!force;
   const area = document.getElementById('myCustomerFolderAreaP497');
   if (area && !myCustomerFolderBundleP497) {
-    area.innerHTML = '<div class="loading">나의고객폴더를 불러오는 중입니다.</div>';
+    area.innerHTML = '<div class="loading">나의 고객 폴더를 불러오는 중입니다.</div>';
   }
 
   if (!portalPermissionLoadedV63) {
@@ -54,9 +54,47 @@ function loadMyCustomerFolderPageP497(force) {
     .withFailureHandler(function(err) {
       myCustomerFolderServerLoadingP497 = false;
       const msg = getErrorMessage_(err);
-      if (area) area.innerHTML = '<div class="loading">나의고객폴더를 불러오지 못했습니다.<br>' + esc(msg) + '</div>';
+      myCustomerFolderBundleP497 = buildMyCustomerFolderFallbackBundleClientP497_(msg);
+      myCustomerFolderSelectedIdP497 = '';
+      renderMyCustomerFolderPageP497_();
     })
     .getMyCustomerFolderBundleP497({ force: force });
+}
+
+function buildMyCustomerFolderFallbackBundleClientP497_(message) {
+  const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
+  const email = String(p && p.email || '').trim();
+  return {
+    ok: true,
+    user: {
+      ownerEmail: email || String(p && p.name || '').trim(),
+      label: String(p && (p.displayName || p.name || p.email) || '').trim(),
+      level: String(p && p.level || '').trim(),
+      canClassifyAllCustomers: !!(p && (p.isAdmin || p.canUseAdminHome || p.level === 'ADMIN'))
+    },
+    folders: [],
+    items: [],
+    source: 'client-fallback-empty',
+    loadedAt: '',
+    dbReady: false,
+    dbWarning: '웹앱 DB 연결이 지연되어 빈 화면으로 열었습니다. DB 초기화/복구 후 다시 새로고침해 주세요.',
+    dbError: String(message || '')
+  };
+}
+
+function repairMyCustomerFolderDbP497_() {
+  setMyCustomerFolderBusyP497_(true, '고객분류 DB 초기화/복구 중입니다.');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      setMyCustomerFolderBusyP497_(false);
+      toast('고객분류 DB를 확인했습니다.');
+      loadMyCustomerFolderPageP497(true);
+    })
+    .withFailureHandler(function(err) {
+      setMyCustomerFolderBusyP497_(false);
+      alert('DB 초기화/복구 실패: ' + getErrorMessage_(err));
+    })
+    .setupMyCustomerFolderDbP497();
 }
 
 function resetMyCustomerFolderPageP497_() {
@@ -110,7 +148,7 @@ function renderMyCustomerFolderPageP497_(options) {
   if (!area) return;
 
   if (!myCustomerFolderBundleP497) {
-    area.innerHTML = '<div class="loading">나의고객폴더를 불러오는 중입니다.</div>';
+    area.innerHTML = '<div class="loading">나의 고객 폴더를 불러오는 중입니다.</div>';
     return;
   }
 
@@ -118,13 +156,15 @@ function renderMyCustomerFolderPageP497_(options) {
   const selected = getMyCustomerFolderSelectedFolderP497_();
   const selectedCount = selected ? getMyCustomerFolderItemsForFolderP497_(selected.folderId).length : 0;
   const user = myCustomerFolderBundleP497.user || {};
+  const dbWarning = String(myCustomerFolderBundleP497.dbWarning || '');
+  const dbError = String(myCustomerFolderBundleP497.dbError || '');
   const keywordBefore = options.keepFocus ? getMyCustomerFolderAddKeywordP497_() : '';
   const focusedId = options.keepFocus && document.activeElement ? document.activeElement.id : '';
 
   let html = '<div class="my-folder-layout-p497">';
   html += '<aside class="my-folder-tree-panel-p497">';
   html += '<div class="my-folder-tree-head-p497">';
-  html += '<div><div class="my-folder-tree-title-p497">나의고객폴더</div><div class="my-folder-tree-sub-p497">' + esc(user.label || '') + '</div></div>';
+  html += '<div><div class="my-folder-tree-title-p497">나의 고객 폴더</div><div class="my-folder-tree-sub-p497">' + esc(user.label || '') + '</div></div>';
   html += '<button type="button" class="my-folder-mini-btn-p497 primary" onclick="createMyCustomerFolderP497_(\'\')">+ 폴더</button>';
   html += '</div>';
   html += '<div class="my-folder-tree-tools-p497">';
@@ -143,8 +183,11 @@ function renderMyCustomerFolderPageP497_(options) {
   } else {
     html += '<div><div class="my-folder-content-title-p497">폴더를 만들어 주세요</div><div class="my-folder-content-sub-p497">왼쪽에서 폴더를 만든 뒤 고객을 추가할 수 있습니다.</div></div>';
   }
-  html += '<div class="my-folder-head-actions-p497"><button type="button" class="secondary" onclick="loadMyCustomerFolderPageP497(true)">새로고침</button></div>';
+  html += '<div class="my-folder-head-actions-p497"><button type="button" class="secondary" onclick="loadMyCustomerFolderPageP497(true)">새로고침</button><button type="button" class="secondary" onclick="repairMyCustomerFolderDbP497_()">DB 초기화/복구</button></div>';
   html += '</div>';
+  if (dbWarning || dbError) {
+    html += '<div class="my-folder-warning-p497"><b>' + esc(dbWarning || 'DB 연결 지연이 감지되었습니다.') + '</b>' + (dbError ? '<span>' + esc(dbError) + '</span>' : '') + '</div>';
+  }
 
   if (!selected) {
     html += '<div class="my-folder-empty-p497">아직 폴더가 없습니다.<br><span>왼쪽 상단의 <b>+ 폴더</b> 버튼으로 첫 폴더를 만들어 주세요.</span></div>';

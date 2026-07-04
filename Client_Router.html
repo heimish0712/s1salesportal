@@ -419,7 +419,7 @@ function switchPage(page, skipSearch) {
 
   if (page === 'myCustomerFolder') {
     document.getElementById('myCustomerFolderSectionP497').classList.add('active');
-    pageTitle.textContent = '나의고객폴더';
+    pageTitle.textContent = '나의 고객 폴더';
     pageSubtitle.textContent = '유저별 개인 폴더에 고객을 중복 분류하고 빠르게 조회합니다.';
     deferPortalRouteLoadP462_('myCustomerFolder', function(){ loadMyCustomerFolderPageP497(false); });
     setTimeout(function() { const el = document.getElementById('myCustomerFolderAddKeywordP497'); if (el) el.focus(); }, 120);

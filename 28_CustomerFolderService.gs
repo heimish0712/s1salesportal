@@ -1,6 +1,6 @@
 /***************************************
  * S1 Sales Portal - 28_CustomerFolderService.gs
- * P497: 나의고객폴더
+ * P497: 나의 고객 폴더
  * - 유저별 개인 폴더 트리
  * - 고객분류 DB는 웹앱 시트에 저장
  * - 영업담당자는 본인 담당 고객만 분류 가능
@@ -37,6 +37,7 @@ const PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497 = [
 
 const PORTAL_MY_CUSTOMER_FOLDER_CACHE_PREFIX_P497 = 'MY_CUSTOMER_FOLDER_P497_';
 const PORTAL_MY_CUSTOMER_FOLDER_CACHE_TTL_SEC_P497 = 60;
+const PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497 = '나의 고객 폴더';
 
 function getMyCustomerFolderBundleP497(options) {
   options = options || {};
@@ -44,36 +45,38 @@ function getMyCustomerFolderBundleP497(options) {
   const cacheKey = makeMyCustomerFolderCacheKeyP497_(user.key);
 
   if (!options.force) {
-    try {
-      const cached = CacheService.getUserCache().get(cacheKey);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed && parsed.ok) return parsed;
-      }
-    } catch (err) {}
+    const cached = getMyCustomerFolderCachedBundleP497_(cacheKey);
+    if (cached) return cached;
   }
 
-  const folders = readMyCustomerFolderRowsP497_(user.key);
-  const items = readMyCustomerFolderItemRowsP497_(user.key);
-  const result = {
-    ok: true,
-    user: {
-      ownerEmail: user.key,
-      label: user.label,
-      level: user.permission && user.permission.level || '',
-      canClassifyAllCustomers: isMyCustomerFolderAdminUserP497_(user.permission)
-    },
-    folders: folders,
-    items: items,
-    source: PORTAL_MY_CUSTOMER_FOLDER_SHEET_P497 + ' + ' + PORTAL_MY_CUSTOMER_FOLDER_ITEM_SHEET_P497,
-    loadedAt: getMyCustomerFolderNowTextP497_()
-  };
-
   try {
-    const payload = JSON.stringify(result);
-    if (payload.length < 90000) CacheService.getUserCache().put(cacheKey, payload, PORTAL_MY_CUSTOMER_FOLDER_CACHE_TTL_SEC_P497);
-  } catch (err) {}
-  return result;
+    // 조회 경로에서는 DB 시트 생성/헤더 보정을 하지 않습니다.
+    // 웹앱 DB가 순간적으로 timeout 나더라도 화면이 죽지 않도록 fallback bundle을 반환합니다.
+    const folders = readMyCustomerFolderRowsP497_(user.key, { noEnsure: true });
+    const items = readMyCustomerFolderItemRowsP497_(user.key, { noEnsure: true });
+    const result = buildMyCustomerFolderBundleP497_(user, folders, items, {
+      source: PORTAL_MY_CUSTOMER_FOLDER_SHEET_P497 + ' + ' + PORTAL_MY_CUSTOMER_FOLDER_ITEM_SHEET_P497,
+      dbReady: true
+    });
+    putMyCustomerFolderCachedBundleP497_(cacheKey, result);
+    return result;
+  } catch (err) {
+    const cached = getMyCustomerFolderCachedBundleP497_(cacheKey);
+    if (cached) {
+      cached.dbReady = false;
+      cached.fromCache = true;
+      cached.dbWarning = '웹앱 DB 연결이 지연되어 직전 캐시로 표시 중입니다. 새로고침 또는 DB 초기화/복구를 눌러 주세요.';
+      cached.dbError = getMyCustomerFolderErrorMessageP497_(err);
+      cached.loadedAt = cached.loadedAt || getMyCustomerFolderNowTextP497_();
+      return cached;
+    }
+    return buildMyCustomerFolderBundleP497_(user, [], [], {
+      source: 'fallback-empty',
+      dbReady: false,
+      dbWarning: '웹앱 DB 연결이 지연되어 빈 화면으로 열었습니다. DB 초기화/복구 후 다시 새로고침해 주세요.',
+      dbError: getMyCustomerFolderErrorMessageP497_(err)
+    });
+  }
 }
 
 function createMyCustomerFolderP497(payload) {
@@ -116,8 +119,8 @@ function createMyCustomerFolderP497(payload) {
     invalidateMyCustomerFolderCacheP497_(user.key);
     try {
       appendPortalActivityLog_({
-        actionType: '나의고객폴더',
-        screen: '나의고객폴더',
+        actionType: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        screen: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
         summary: '폴더 생성: ' + folderName,
         detail: { action: 'createFolder', folderId: folderId, parentFolderId: parentFolderId, folderName: folderName }
       });
@@ -164,8 +167,8 @@ function renameMyCustomerFolderP497(payload) {
     invalidateMyCustomerFolderCacheP497_(user.key);
     try {
       appendPortalActivityLog_({
-        actionType: '나의고객폴더',
-        screen: '나의고객폴더',
+        actionType: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        screen: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
         summary: '폴더명 변경: ' + target.folderName + ' → ' + folderName,
         detail: { action: 'renameFolder', folderId: folderId, before: target.folderName, after: folderName }
       });
@@ -220,8 +223,8 @@ function deleteMyCustomerFolderP497(payload) {
     invalidateMyCustomerFolderCacheP497_(user.key);
     try {
       appendPortalActivityLog_({
-        actionType: '나의고객폴더',
-        screen: '나의고객폴더',
+        actionType: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        screen: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
         summary: '폴더 삭제: ' + target.folderName,
         detail: { action: 'deleteFolder', folderId: folderId, folderName: target.folderName, deletedFolderCount: deleteIds.length, removedItems: removedItems }
       });
@@ -262,7 +265,7 @@ function addCustomersToMyFolderP497(payload) {
     const targets = [];
 
     customers.forEach(function(c) {
-      const target = assertCustomerTarget_({ customerNo: c && c.customerNo, rowNo: c && c.rowNo }, '나의고객폴더 고객 추가', { readObject: true });
+      const target = assertCustomerTarget_({ customerNo: c && c.customerNo, rowNo: c && c.rowNo }, PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497 + ' 고객 추가', { readObject: true });
       assertMyCustomerFolderCanClassifyTargetP497_(target, user.permission);
       const snapshot = buildMyCustomerFolderCustomerSnapshotP497_(target);
       const key = makeMyCustomerFolderItemKeyP497_(folderId, snapshot.customerNo, snapshot.rowNo);
@@ -317,8 +320,8 @@ function addCustomersToMyFolderP497(payload) {
     invalidateMyCustomerFolderCacheP497_(user.key);
     try {
       appendPortalActivityLog_({
-        actionType: '나의고객폴더',
-        screen: '나의고객폴더',
+        actionType: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        screen: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
         summary: '고객 폴더 추가: ' + folder.folderName + ' / ' + (added + restored) + '건',
         detail: { action: 'addCustomers', folderId: folderId, folderName: folder.folderName, added: added, restored: restored, skipped: skipped, customers: addedRows.slice(0, 20) }
       });
@@ -368,8 +371,8 @@ function removeCustomerFromMyFolderP497(payload) {
     invalidateMyCustomerFolderCacheP497_(user.key);
     try {
       appendPortalActivityLog_({
-        actionType: '나의고객폴더',
-        screen: '나의고객폴더',
+        actionType: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        screen: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
         rowNo: removedItem && removedItem.rowNo,
         customerNo: removedItem && removedItem.customerNo,
         company: removedItem && removedItem.companyNameSnapshot,
@@ -414,6 +417,59 @@ function setupMyCustomerFolderDbP497() {
   };
 }
 
+function getExistingMyCustomerFolderSheetP497_() {
+  const ss = getWebAppDbSpreadsheet_();
+  return ss.getSheetByName(PORTAL_MY_CUSTOMER_FOLDER_SHEET_P497) || null;
+}
+
+function getExistingMyCustomerFolderItemSheetP497_() {
+  const ss = getWebAppDbSpreadsheet_();
+  return ss.getSheetByName(PORTAL_MY_CUSTOMER_FOLDER_ITEM_SHEET_P497) || null;
+}
+
+function buildMyCustomerFolderBundleP497_(user, folders, items, extra) {
+  extra = extra || {};
+  return {
+    ok: true,
+    user: {
+      ownerEmail: user.key,
+      label: user.label,
+      level: user.permission && user.permission.level || '',
+      canClassifyAllCustomers: isMyCustomerFolderAdminUserP497_(user.permission)
+    },
+    folders: Array.isArray(folders) ? folders : [],
+    items: Array.isArray(items) ? items : [],
+    source: extra.source || (PORTAL_MY_CUSTOMER_FOLDER_SHEET_P497 + ' + ' + PORTAL_MY_CUSTOMER_FOLDER_ITEM_SHEET_P497),
+    loadedAt: getMyCustomerFolderNowTextP497_(),
+    dbReady: extra.dbReady !== false,
+    dbWarning: String(extra.dbWarning || ''),
+    dbError: String(extra.dbError || ''),
+    fromCache: !!extra.fromCache
+  };
+}
+
+function getMyCustomerFolderCachedBundleP497_(cacheKey) {
+  try {
+    const cached = CacheService.getUserCache().get(cacheKey);
+    if (!cached) return null;
+    const parsed = JSON.parse(cached);
+    return parsed && parsed.ok ? parsed : null;
+  } catch (err) {}
+  return null;
+}
+
+function putMyCustomerFolderCachedBundleP497_(cacheKey, result) {
+  try {
+    const payload = JSON.stringify(result);
+    if (payload.length < 90000) CacheService.getUserCache().put(cacheKey, payload, PORTAL_MY_CUSTOMER_FOLDER_CACHE_TTL_SEC_P497);
+  } catch (err) {}
+}
+
+function getMyCustomerFolderErrorMessageP497_(err) {
+  const msg = err && err.message ? err.message : String(err || '');
+  return msg || '알 수 없는 오류';
+}
+
 function ensureMyCustomerFolderSheetP497_() {
   const ss = getWebAppDbSpreadsheet_();
   let sheet = ss.getSheetByName(PORTAL_MY_CUSTOMER_FOLDER_SHEET_P497);
@@ -455,7 +511,8 @@ function ensureMyCustomerFolderHeadersP497_(sheet, headers) {
 function readMyCustomerFolderRowsP497_(ownerEmail, options) {
   options = options || {};
   ownerEmail = String(ownerEmail || '').trim();
-  const sheet = ensureMyCustomerFolderSheetP497_();
+  const sheet = options.noEnsure ? getExistingMyCustomerFolderSheetP497_() : ensureMyCustomerFolderSheetP497_();
+  if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   const values = sheet.getRange(2, 1, lastRow - 1, PORTAL_MY_CUSTOMER_FOLDER_HEADERS_P497.length).getDisplayValues();
@@ -475,7 +532,8 @@ function readMyCustomerFolderRowsP497_(ownerEmail, options) {
 function readMyCustomerFolderItemRowsP497_(ownerEmail, options) {
   options = options || {};
   ownerEmail = String(ownerEmail || '').trim();
-  const sheet = ensureMyCustomerFolderItemSheetP497_();
+  const sheet = options.noEnsure ? getExistingMyCustomerFolderItemSheetP497_() : ensureMyCustomerFolderItemSheetP497_();
+  if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   const values = sheet.getRange(2, 1, lastRow - 1, PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497.length).getDisplayValues();
@@ -527,7 +585,7 @@ function mapMyCustomerFolderItemRowP497_(row, rowNoInSheet) {
 function getMyCustomerFolderUserP497_() {
   const perm = getPortalCurrentPermission_();
   if (!perm || perm.active === false || String(perm.level || '').toUpperCase() === 'GUEST') {
-    throw new Error('나의고객폴더를 사용할 권한이 없습니다. 권한_DB 등록 상태를 확인해 주세요.');
+    throw new Error('나의 고객 폴더를 사용할 권한이 없습니다. 권한_DB 등록 상태를 확인해 주세요.');
   }
   const email = String(perm.email || '').trim();
   const key = email || String(perm.name || '').trim();
@@ -548,7 +606,7 @@ function assertMyCustomerFolderCanClassifyTargetP497_(target, perm) {
   const obj = target && target.obj ? target.obj : null;
   if (!obj) throw new Error('고객 권한 확인에 필요한 마스터 데이터를 읽지 못했습니다.');
   if (canMyCustomerFolderClassifyIndexRowP497_(obj, perm)) return true;
-  throw new Error('본인 담당 고객만 나의고객폴더에 분류할 수 있습니다.');
+  throw new Error('본인 담당 고객만 나의 고객 폴더에 분류할 수 있습니다.');
 }
 
 function canMyCustomerFolderClassifyIndexRowP497_(row, perm) {
