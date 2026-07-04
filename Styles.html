@@ -121,6 +121,20 @@
     .send-chip { display:inline-flex; align-items:center; min-height:26px; max-width:100%; padding:4px 10px; border:1px solid #d8dee8; border-radius:999px; background:#ffffff; color:#202124; font-size:12px; font-weight:700; line-height:1.25; white-space:normal; word-break:normal; overflow-wrap:anywhere; }
     .send-chip-muted { color:#667085; font-weight:700; }
     .send-preview-warn { margin-top:12px; border:1px solid #fed7aa; background:#fffaf5; color:#9a3412; border-radius:10px; padding:9px 11px; font-size:12px; line-height:1.55; }
+    .send-mail-editor-p493 { margin-top:14px; border:1px solid #dbe3ef; border-radius:14px; background:#fff; padding:14px; box-shadow:0 6px 18px rgba(16,24,40,.04); }
+    .send-mail-editor-head-p493 { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+    .send-mail-editor-title-p493 { font-size:15px; font-weight:900; color:#101828; letter-spacing:-0.03em; }
+    .send-mail-editor-sub-p493 { margin-top:3px; font-size:12px; line-height:1.45; color:#667085; font-weight:700; }
+    .send-mail-editor-actions-p493 { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .send-mail-edit-badge-p493 { display:inline-flex; align-items:center; min-height:24px; padding:3px 9px; border-radius:999px; border:1px solid #e4e7ec; background:#f8fafc; color:#667085; font-size:12px; font-weight:900; white-space:nowrap; }
+    .send-mail-edit-badge-p493.active { border-color:#bfdbfe; background:#eff6ff; color:#1d4ed8; }
+    .mini-btn-p493 { min-height:30px; padding:5px 10px; font-size:12px; border-radius:8px; white-space:nowrap; }
+    .send-mail-field-p493 { display:block; margin-top:10px; }
+    .send-mail-field-p493 span { display:block; margin-bottom:6px; color:#344054; font-size:12px; font-weight:900; }
+    .send-mail-field-p493 input, .send-mail-field-p493 textarea { width:100%; border:1px solid #d0d5dd; border-radius:10px; background:#fff; color:#101828; font-size:13px; line-height:1.55; padding:10px 12px; box-sizing:border-box; }
+    .send-mail-field-p493 textarea { min-height:170px; resize:vertical; font-family:inherit; white-space:pre-wrap; }
+    .send-mail-field-p493 input:focus, .send-mail-field-p493 textarea:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+    .send-mail-editor-note-p493 { margin-top:8px; color:#667085; font-size:12px; line-height:1.45; font-weight:700; }
     .send-warning { border:1px solid #fed7aa; background:#fffaf5; color:#9a3412; padding:10px 12px; border-radius:12px; font-size:13px; line-height:1.6; margin-top:10px; }
     .send-workspace { display:flex; flex-direction:column; gap:14px; padding-bottom:24px; }
     .send-top-search { display:grid; grid-template-columns: 220px minmax(260px,1fr) 108px 108px; gap:18px; align-items:center; }
@@ -155,6 +169,8 @@
       .recipient-line-label { grid-column:1 / -1; padding-top:0; }
       .recipient-line .send-chip-row { width:100%; }
       .recipient-line .mini-add-btn { align-self:start; }
+      .send-mail-editor-head-p493 { flex-direction:column; align-items:stretch; }
+      .send-mail-editor-actions-p493 { justify-content:flex-start; }
       .send-chip.editable { max-width:100%; min-width:0; }
       .send-chip.editable .chip-x { margin-left:6px; }
     }

@@ -10,6 +10,14 @@ var sendReviewSessionIdV75 = '';
 var sendReviewFolderUrlV75 = '';
 var sendReviewRequestNoV75 = '';
 
+// P493: 견적/자료발송 메일 제목/본문 확인·수정 draft.
+// - 고객/작업창별로만 보존하고, 발송 payload 생성 시 edited=true인 경우에만 Worker로 넘깁니다.
+// - 입력 중에는 renderSendPreview가 다시 돌아도 사용자가 수정한 제목/본문을 덮지 않습니다.
+var sendMailSubjectDraftP493 = '';
+var sendMailBodyDraftP493 = '';
+var sendMailContentTouchedP493 = { subject: false, body: false };
+var sendMailContentOwnerKeyP493 = '';
+
 
 // P477/P481: 발송/파일확인 작업은 전역 큐로 '요청 시작'만 순차 디스패치합니다.
 // 목적: 5개 작업창 상태가 섞이지 않게 payload는 고정하되, 앞 메일 발송 완료까지 기다리지 않고 다음 작업도 빠르게 서버로 넘깁니다.
@@ -416,6 +424,160 @@ function clearSendReviewSessionV75_(reason) {
   if (reason && typeof console !== 'undefined') console.log('[sendReviewSession cleared]', reason);
 }
 
+function resetSendMailContentDraftP493_(reason) {
+  sendMailSubjectDraftP493 = '';
+  sendMailBodyDraftP493 = '';
+  sendMailContentTouchedP493 = { subject: false, body: false };
+  sendMailContentOwnerKeyP493 = '';
+  if (reason && typeof console !== 'undefined') console.log('[sendMailContentDraft cleared]', reason);
+}
+
+function getSendMailContentOwnerKeyP493_(detail, selectedKeys) {
+  const base = getSendRecipientOwnerKeyV51_(detail || sendSelectedDetail);
+  const keys = normalizePortalSendSelectedKeysP478_(selectedKeys || sendSelectedFileKeysV50 || [], 'mailContentOwner').join('|');
+  return base + '::FILES:' + keys;
+}
+
+function getSendMailContentTouchedP493_() {
+  return !!(sendMailContentTouchedP493 && (sendMailContentTouchedP493.subject || sendMailContentTouchedP493.body));
+}
+
+function buildDefaultPortalMailSubjectP493_(model) {
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  const company = String(model.company || '').trim() || '고객사';
+  const labels = Array.isArray(model.labels) ? model.labels.slice(0, 3) : [];
+  const suffix = labels.length ? labels.join(', ') : '견적자료';
+  return '[에스원] ' + company + ' ' + suffix + ' 송부드립니다';
+}
+
+function buildDefaultPortalMailBodyP493_(model) {
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  const company = String(model.company || '').trim() || '고객사';
+  const labels = Array.isArray(model.labels) && model.labels.length ? model.labels.join(', ') : '선택 발송자료';
+  const contractText = String(model.contractText || '').trim();
+  const salesRep = String(model.salesRep || '').trim();
+  const lines = [];
+  lines.push(company + ' 담당자님, 안녕하세요.');
+  lines.push('');
+  lines.push('에스원 건축물관리 영업담당자입니다.');
+  lines.push('요청하신 자료를 첨부하여 송부드립니다.');
+  lines.push('');
+  if (contractText && contractText !== '-') {
+    lines.push('[계약조건]');
+    lines.push(contractText);
+    lines.push('');
+  }
+  lines.push('[첨부자료]');
+  lines.push(labels);
+  lines.push('');
+  lines.push('확인 후 궁금하신 사항이 있으시면 편하게 회신 부탁드립니다.');
+  lines.push('감사합니다.');
+  if (salesRep && salesRep !== '-') {
+    lines.push('');
+    lines.push(salesRep + ' 드림');
+  }
+  return lines.join('\n');
+}
+
+function syncSendMailContentDraftP493_(model, options) {
+  options = options || {};
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  const ownerKey = getSendMailContentOwnerKeyP493_(sendSelectedDetail, model.keys || sendSelectedFileKeysV50);
+  const ownerChanged = sendMailContentOwnerKeyP493 !== ownerKey;
+  const edited = getSendMailContentTouchedP493_();
+  if (options.forceReset || (ownerChanged && !edited)) {
+    sendMailContentOwnerKeyP493 = ownerKey;
+    sendMailContentTouchedP493 = { subject: false, body: false };
+    sendMailSubjectDraftP493 = '';
+    sendMailBodyDraftP493 = '';
+  } else if (ownerChanged) {
+    sendMailContentOwnerKeyP493 = ownerKey;
+  }
+  const defaultSubject = buildDefaultPortalMailSubjectP493_(model);
+  const defaultBody = buildDefaultPortalMailBodyP493_(model);
+  if (!sendMailContentTouchedP493.subject) sendMailSubjectDraftP493 = defaultSubject;
+  if (!sendMailContentTouchedP493.body) sendMailBodyDraftP493 = defaultBody;
+}
+
+function renderSendMailContentEditorP493_(model) {
+  syncSendMailContentDraftP493_(model);
+  const edited = getSendMailContentTouchedP493_();
+  const status = edited
+    ? '<span class="send-mail-edit-badge-p493 active">수정본 적용</span>'
+    : '<span class="send-mail-edit-badge-p493">자동 문구</span>';
+  return '' +
+    '<div class="send-mail-editor-p493">' +
+      '<div class="send-mail-editor-head-p493">' +
+        '<div>' +
+          '<div class="send-mail-editor-title-p493">메일 내용 확인/수정</div>' +
+          '<div class="send-mail-editor-sub-p493">제목이나 본문을 수정한 경우에만 실제 발송 payload에 수정본을 넘깁니다.</div>' +
+        '</div>' +
+        '<div class="send-mail-editor-actions-p493">' + status +
+          '<button type="button" class="secondary mini-btn-p493" onclick="resetSendMailContentToDefaultP493_()">기본 문구로 초기화</button>' +
+        '</div>' +
+      '</div>' +
+      '<label class="send-mail-field-p493">' +
+        '<span>메일 제목</span>' +
+        '<input id="sendMailSubjectInputP493" value="' + escAttr(sendMailSubjectDraftP493 || '') + '" oninput="handleSendMailContentInputP493_(\'subject\', this.value)" placeholder="메일 제목을 입력하세요.">' +
+      '</label>' +
+      '<label class="send-mail-field-p493">' +
+        '<span>메일 본문</span>' +
+        '<textarea id="sendMailBodyInputP493" rows="9" oninput="handleSendMailContentInputP493_(\'body\', this.value)" placeholder="메일 본문을 입력하세요.">' + esc(sendMailBodyDraftP493 || '') + '</textarea>' +
+      '</label>' +
+      '<div class="send-mail-editor-note-p493">테스트 발송과 고객 발송 모두 이 수정본을 사용합니다. 파일 확인/수정은 첨부 파일 세션만 만들고, 메일 본문은 여기서 최종 확인합니다.</div>' +
+    '</div>';
+}
+
+function handleSendMailContentInputP493_(type, value) {
+  if (type === 'subject') {
+    sendMailSubjectDraftP493 = String(value == null ? '' : value);
+    sendMailContentTouchedP493.subject = true;
+  } else if (type === 'body') {
+    sendMailBodyDraftP493 = String(value == null ? '' : value);
+    sendMailContentTouchedP493.body = true;
+  }
+  const ws = getActiveSendWorkspaceP211_ && getActiveSendWorkspaceP211_();
+  if (ws) captureSendGlobalsToWorkspaceP211_(ws);
+}
+
+function resetSendMailContentToDefaultP493_() {
+  const ws = getActiveSendWorkspaceP211_ && getActiveSendWorkspaceP211_();
+  if (!guardSendWorkspaceMutationP479_(ws, '메일 내용 초기화')) return;
+  const model = buildCurrentSendPreviewModel_('PREVIEW');
+  sendMailContentTouchedP493 = { subject: false, body: false };
+  sendMailContentOwnerKeyP493 = '';
+  syncSendMailContentDraftP493_(model, { forceReset: true });
+  captureSendGlobalsToWorkspaceP211_(ws);
+  renderSendPreview();
+}
+
+function collectPortalMailContentOverrideP493_(model) {
+  const subjectEl = document.getElementById('sendMailSubjectInputP493');
+  const bodyEl = document.getElementById('sendMailBodyInputP493');
+  const subject = String(subjectEl ? subjectEl.value : sendMailSubjectDraftP493 || '').trim();
+  const bodyText = String(bodyEl ? bodyEl.value : sendMailBodyDraftP493 || '').replace(/\r\n/g, '\n').trim();
+  if (subjectEl) sendMailSubjectDraftP493 = subjectEl.value || '';
+  if (bodyEl) sendMailBodyDraftP493 = bodyEl.value || '';
+
+  const edited = getSendMailContentTouchedP493_();
+  if (!edited) return null;
+  if (!subject) throw new Error('메일 제목이 비어 있습니다. 메일 내용 확인/수정 영역에서 제목을 입력하세요.');
+  if (!bodyText) throw new Error('메일 본문이 비어 있습니다. 메일 내용 확인/수정 영역에서 본문을 입력하세요.');
+  const bodyHtml = esc(bodyText).replace(/\n/g, '<br>');
+  return {
+    edited: true,
+    source: 'portalSendMailEditorP493',
+    subject: subject,
+    bodyText: bodyText,
+    bodyHtml: bodyHtml,
+    generatedFrom: {
+      customerNo: model && model.customerNo || '',
+      rowNo: model && model.rowNo || '',
+      selectedKeys: model && model.keys || []
+    }
+  };
+}
+
 function markSendRecipientTouchedV51_(type) {
   if (type === 'to') sendRecipientTouchedV51.to = true;
   if (type === 'cc') sendRecipientTouchedV51.cc = true;
@@ -439,6 +601,7 @@ function restoreSendFileChecksV50_() {
 function resetSendFilesAndProgressForCustomerChangeV50_() {
   resetSendRecipientManualStateV51_();
   clearSendReviewSessionV75_('customer changed');
+  resetSendMailContentDraftP493_('customer changed');
   sendSelectedFileKeysV50 = [];
   document.querySelectorAll('.send-file-check').forEach(function(el){ el.checked = false; });
   setSendMessage('', false);
@@ -765,6 +928,7 @@ function renderSendPreview() {
   html += '<div class="send-preview-label">첨부</div><div class="send-preview-value"><div class="send-chip-row">' + (model.labels.length ? model.labels.map(chipHtml_).join('') : '<span class="send-chip-muted">발송자료를 선택하세요.</span>') + '</div></div>';
   html += '<div class="send-preview-label">테스트 수신</div><div class="send-preview-value"><input id="sendTestInput" placeholder="예: bang 또는 bang@s1samsung.com" style="width:100%;"></div>';
   html += '</div>';
+  html += renderSendMailContentEditorP493_(model);
   if (sendReviewSessionIdV75) {
     const folderLink = sendReviewFolderUrlV75 ? (' · <a href="' + escAttr(sendReviewFolderUrlV75) + '" target="_blank" rel="noopener">Drive 폴더 열기</a>') : '';
     html += '<div class="send-preview-warn" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;">파일 확인/수정 세션 적용 중' + (sendReviewRequestNoV75 ? ' · 접수번호 ' + esc(sendReviewRequestNoV75) : '') + folderLink + '<br>수정 후 발송하면 Drive 폴더의 최종 수정본 기준으로 첨부됩니다.</div>';
@@ -1163,6 +1327,10 @@ function buildSendWorkspaceP211_(order) {
     reviewSessionId: '',
     reviewFolderUrl: '',
     reviewRequestNo: '',
+    mailSubjectDraft: '',
+    mailBodyDraft: '',
+    mailContentTouched: { subject: false, body: false },
+    mailContentOwnerKey: '',
     mailRunId: '',
     mailProgressPollTimer: null,
     mailSendInFlight: false,
@@ -1233,6 +1401,10 @@ function captureSendGlobalsToWorkspaceP211_(ws) {
   ws.reviewSessionId = sendReviewSessionIdV75 || '';
   ws.reviewFolderUrl = sendReviewFolderUrlV75 || '';
   ws.reviewRequestNo = sendReviewRequestNoV75 || '';
+  ws.mailSubjectDraft = sendMailSubjectDraftP493 || '';
+  ws.mailBodyDraft = sendMailBodyDraftP493 || '';
+  ws.mailContentTouched = Object.assign({ subject: false, body: false }, sendMailContentTouchedP493 || {});
+  ws.mailContentOwnerKey = sendMailContentOwnerKeyP493 || '';
   ws.mailRunId = currentMailRunId || '';
   ws.mailProgressPollTimer = mailProgressPollTimer || null;
   ws.mailSendInFlight = !!mailSendInFlight;
@@ -1261,6 +1433,10 @@ function applySendWorkspaceToGlobalsP211_(ws) {
   sendReviewSessionIdV75 = ws.reviewSessionId || '';
   sendReviewFolderUrlV75 = ws.reviewFolderUrl || '';
   sendReviewRequestNoV75 = ws.reviewRequestNo || '';
+  sendMailSubjectDraftP493 = ws.mailSubjectDraft || '';
+  sendMailBodyDraftP493 = ws.mailBodyDraft || '';
+  sendMailContentTouchedP493 = Object.assign({ subject: false, body: false }, ws.mailContentTouched || {});
+  sendMailContentOwnerKeyP493 = ws.mailContentOwnerKey || '';
   currentMailRunId = ws.mailRunId || '';
   mailProgressPollTimer = ws.mailProgressPollTimer || null;
   ws.sendActionLockP480 = !!ws.sendActionLockP480;
@@ -1577,6 +1753,7 @@ function resetSendPageAllV50() {
   if (!guardSendWorkspaceMutationP479_(ws, '작업창 초기화')) return;
   withSendWorkspaceGlobalsP211_(ws, function(){
     clearSendReviewSessionV75_('send page reset');
+    resetSendMailContentDraftP493_('send page reset');
     sendSelectedDetail = null;
     sendSelectedRowNoV50 = 0;
     sendSelectedCustomerNoV50 = '';
@@ -2155,6 +2332,14 @@ function sendPortalMailFromUi(mode) {
   }
   if (mode === 'CUSTOMER' && !sendToList.length) { setSendMessage('고객에게 발송하려면 수신자를 하나 이상 입력하세요.', true); return; }
 
+  let mailContentOverride = null;
+  try {
+    mailContentOverride = collectPortalMailContentOverrideP493_(model);
+  } catch (mailContentErr) {
+    setSendMessage(mailContentErr && mailContentErr.message ? mailContentErr.message : String(mailContentErr || '메일 내용 확인/수정 값이 올바르지 않습니다.'), true);
+    return;
+  }
+
   const runId = 'portal_' + Date.now() + '_' + Math.random().toString(16).slice(2);
   const payload = {
     rowNo: sendSelectedDetail.rowNo,
@@ -2166,6 +2351,11 @@ function sendPortalMailFromUi(mode) {
     manualTo: sendToList.slice(),
     manualCc: sendCcList.slice(),
     removedCc: buildRemovedDefaultCc_(),
+    mailContentOverride: mailContentOverride,
+    mailContentEdited: !!mailContentOverride,
+    customMailSubject: mailContentOverride ? mailContentOverride.subject : '',
+    customMailBodyText: mailContentOverride ? mailContentOverride.bodyText : '',
+    customMailBodyHtml: mailContentOverride ? mailContentOverride.bodyHtml : '',
     reviewSessionId: sendReviewSessionIdV75 || '',
     runId: runId,
     clientRequestId: runId,

@@ -148,6 +148,7 @@ function sendPortalSingleMail(payload) {
   }
 
   const testInput = mode === 'TEST' ? normalizePortalInternalTestEmail_(payload.testInput) : String(payload.testInput || '').trim();
+  const mailContentOverride = normalizePortalMailContentOverrideP493_(payload);
 
   const sendPayload = {
     rowNo: rowNo,
@@ -162,6 +163,10 @@ function sendPortalSingleMail(payload) {
     runId: String(payload.runId || Utilities.getUuid()),
     customerNo: targetCustomerNo
   };
+
+  if (mailContentOverride) {
+    attachPortalMailContentOverrideP493_(sendPayload, mailContentOverride);
+  }
 
   const guard = beginPortalIdempotentRequestP26_('MAIL_SEND', sendPayload.runId, { runningTtlMs: 20 * 60 * 1000, doneTtlMs: 2 * 60 * 60 * 1000 });
   if (guard && guard.duplicate) {
@@ -219,7 +224,13 @@ function sendPortalSingleMail(payload) {
       customerNo: targetCustomerNo || getMasterFieldValue_(rowObj, 'customerNo') || rowObj['고객번호'] || '',
       company: company,
       summary: (mode === 'TEST' ? '테스트 발송: ' : '고객 발송: ') + selectedKeys.map(function(k) { return getPortalSendFileLabel_(k); }).join(', '),
-      detail: { mode: mode, selectedKeys: selectedKeys, runId: sendPayload.runId }
+      detail: {
+        mode: mode,
+        selectedKeys: selectedKeys,
+        runId: sendPayload.runId,
+        mailContentEdited: !!mailContentOverride,
+        mailSubject: mailContentOverride ? mailContentOverride.subject : ''
+      }
     });
   } catch (err) {}
 
@@ -256,6 +267,98 @@ function normalizePortalInternalTestEmail_(value) {
     throw new Error('테스트 발송 주소는 @s1samsung.com 형식이어야 합니다. 외부 메일 테스트는 고객발송 모드에서 수신자를 직접 추가해 주세요.');
   }
   return email;
+}
+
+function normalizePortalMailContentOverrideP493_(payload) {
+  payload = payload || {};
+  const raw = payload.mailContentOverride || payload.mailEdit || payload.mailContent || {};
+  const edited = !!(payload.mailContentEdited || raw.edited || raw.isEdited);
+  const subject = String(
+    raw.subject || raw.mailSubject || raw.subjectOverride ||
+    payload.customMailSubject || payload.mailSubjectOverride || payload.subjectOverride || payload.portalMailSubject || ''
+  ).trim();
+  const bodyText = String(
+    raw.bodyText || raw.body || raw.text || raw.mailBody ||
+    payload.customMailBodyText || payload.customMailBody || payload.mailBodyTextOverride || payload.bodyTextOverride || payload.bodyOverride || payload.portalMailBodyText || ''
+  ).replace(/\r\n/g, '\n').trim();
+  const bodyHtmlRaw = String(
+    raw.bodyHtml || raw.html ||
+    payload.customMailBodyHtml || payload.mailBodyHtmlOverride || payload.bodyHtmlOverride || payload.portalMailBodyHtml || ''
+  ).trim();
+
+  if (!edited && !subject && !bodyText && !bodyHtmlRaw) return null;
+  if (!subject) throw new Error('메일 제목이 비어 있습니다. 메일 내용 확인/수정 영역에서 제목을 입력하세요.');
+  if (!bodyText && !bodyHtmlRaw) throw new Error('메일 본문이 비어 있습니다. 메일 내용 확인/수정 영역에서 본문을 입력하세요.');
+  if (subject.length > 250) throw new Error('메일 제목이 너무 깁니다. 250자 이하로 줄여 주세요.');
+  if (bodyText.length > 30000) throw new Error('메일 본문이 너무 깁니다. 30,000자 이하로 줄여 주세요.');
+
+  const safeBodyText = bodyText || stripPortalMailHtmlP493_(bodyHtmlRaw);
+  const safeBodyHtml = bodyHtmlRaw || escapePortalMailHtmlP493_(safeBodyText).replace(/\n/g, '<br>');
+  return {
+    edited: true,
+    source: 'portalSendMailEditorP493',
+    subject: subject,
+    bodyText: safeBodyText,
+    bodyHtml: safeBodyHtml
+  };
+}
+
+function attachPortalMailContentOverrideP493_(sendPayload, override) {
+  if (!sendPayload || !override) return sendPayload;
+  const subject = String(override.subject || '').trim();
+  const bodyText = String(override.bodyText || '').replace(/\r\n/g, '\n');
+  const bodyHtml = String(override.bodyHtml || '').trim() || escapePortalMailHtmlP493_(bodyText).replace(/\n/g, '<br>');
+
+  // Worker 배포본마다 override 필드명이 달랐던 경우를 흡수하기 위해 호환 alias를 모두 동봉합니다.
+  sendPayload.mailContentOverride = { edited: true, subject: subject, bodyText: bodyText, bodyHtml: bodyHtml, source: override.source || 'portalSendMailEditorP493' };
+  sendPayload.mailEdit = sendPayload.mailContentOverride;
+  sendPayload.mailContent = sendPayload.mailContentOverride;
+  sendPayload.mailContentEdited = true;
+  sendPayload.portalMailContentEdited = true;
+  sendPayload.requireMailContentOverride = true;
+
+  sendPayload.mailSubject = subject;
+  sendPayload.customMailSubject = subject;
+  sendPayload.mailSubjectOverride = subject;
+  sendPayload.subjectOverride = subject;
+  sendPayload.portalMailSubject = subject;
+
+  sendPayload.mailBody = bodyText;
+  sendPayload.customMailBody = bodyText;
+  sendPayload.customMailBodyText = bodyText;
+  sendPayload.mailBodyTextOverride = bodyText;
+  sendPayload.bodyTextOverride = bodyText;
+  sendPayload.bodyOverride = bodyText;
+  sendPayload.portalMailBodyText = bodyText;
+
+  sendPayload.customMailBodyHtml = bodyHtml;
+  sendPayload.mailBodyHtmlOverride = bodyHtml;
+  sendPayload.bodyHtmlOverride = bodyHtml;
+  sendPayload.htmlBodyOverride = bodyHtml;
+  sendPayload.portalMailBodyHtml = bodyHtml;
+  return sendPayload;
+}
+
+function escapePortalMailHtmlP493_(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function stripPortalMailHtmlP493_(value) {
+  return String(value == null ? '' : value)
+    .replace(/<br\s*\/?>(\s*)/gi, '\n')
+    .replace(/<\/p\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
 function applyTemporaryPortalRecipientEmail_(sheet, rowNo, manualTo) {
