@@ -48,16 +48,6 @@ function normalizePortalMailSelectedKeysP478_(selectedKeys, payload, actionLabel
   return out;
 }
 
-
-function normalizePortalMailBodyOverrideForServerP490_(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  if (text.length > 60000) {
-    throw new Error('메일 본문 수정 내용이 너무 깁니다. 60,000자 이하로 줄여 주세요.');
-  }
-  return text;
-}
-
 function preparePortalMailFilesForReview(payload) {
   payload = payload || {};
   const target = assertCustomerTarget_(payload, '파일 확인/수정', { readObject: true });
@@ -158,9 +148,6 @@ function sendPortalSingleMail(payload) {
   }
 
   const testInput = mode === 'TEST' ? normalizePortalInternalTestEmail_(payload.testInput) : String(payload.testInput || '').trim();
-  const mailBodyHtmlOverride = normalizePortalMailBodyOverrideForServerP490_(
-    payload.mailBodyHtmlOverride || payload.mailBodyOverrideHtml || payload.customBodyHtml || payload.bodyHtmlOverride
-  );
 
   const sendPayload = {
     rowNo: rowNo,
@@ -173,11 +160,7 @@ function sendPortalSingleMail(payload) {
     removedCc: payload.removedCc || [],
     reviewSessionId: String(payload.reviewSessionId || '').trim(),
     runId: String(payload.runId || Utilities.getUuid()),
-    customerNo: targetCustomerNo,
-    mailBodyHtmlOverride: mailBodyHtmlOverride,
-    mailBodyOverrideHtml: mailBodyHtmlOverride,
-    customBodyHtml: mailBodyHtmlOverride,
-    portalMailBodyEdited: !!mailBodyHtmlOverride
+    customerNo: targetCustomerNo
   };
 
   const guard = beginPortalIdempotentRequestP26_('MAIL_SEND', sendPayload.runId, { runningTtlMs: 20 * 60 * 1000, doneTtlMs: 2 * 60 * 60 * 1000 });
@@ -236,7 +219,7 @@ function sendPortalSingleMail(payload) {
       customerNo: targetCustomerNo || getMasterFieldValue_(rowObj, 'customerNo') || rowObj['고객번호'] || '',
       company: company,
       summary: (mode === 'TEST' ? '테스트 발송: ' : '고객 발송: ') + selectedKeys.map(function(k) { return getPortalSendFileLabel_(k); }).join(', '),
-      detail: { mode: mode, selectedKeys: selectedKeys, runId: sendPayload.runId, mailBodyEdited: !!mailBodyHtmlOverride }
+      detail: { mode: mode, selectedKeys: selectedKeys, runId: sendPayload.runId }
     });
   } catch (err) {}
 

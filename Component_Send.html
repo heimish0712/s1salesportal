@@ -10,10 +10,6 @@ var sendReviewSessionIdV75 = '';
 var sendReviewFolderUrlV75 = '';
 var sendReviewRequestNoV75 = '';
 
-// P490: 자료발송 메일 본문 사용자 수정값.
-var sendMailBodyOverrideHtmlP490 = '';
-var sendMailBodyOverrideTouchedP490 = false;
-
 
 // P477/P481: 발송/파일확인 작업은 전역 큐로 '요청 시작'만 순차 디스패치합니다.
 // 목적: 5개 작업창 상태가 섞이지 않게 payload는 고정하되, 앞 메일 발송 완료까지 기다리지 않고 다음 작업도 빠르게 서버로 넘깁니다.
@@ -420,12 +416,6 @@ function clearSendReviewSessionV75_(reason) {
   if (reason && typeof console !== 'undefined') console.log('[sendReviewSession cleared]', reason);
 }
 
-function clearSendMailBodyOverrideP490_(reason) {
-  sendMailBodyOverrideHtmlP490 = '';
-  sendMailBodyOverrideTouchedP490 = false;
-  if (reason && typeof console !== 'undefined') console.log('[sendMailBodyOverride cleared]', reason);
-}
-
 function markSendRecipientTouchedV51_(type) {
   if (type === 'to') sendRecipientTouchedV51.to = true;
   if (type === 'cc') sendRecipientTouchedV51.cc = true;
@@ -449,7 +439,6 @@ function restoreSendFileChecksV50_() {
 function resetSendFilesAndProgressForCustomerChangeV50_() {
   resetSendRecipientManualStateV51_();
   clearSendReviewSessionV75_('customer changed');
-  clearSendMailBodyOverrideP490_('customer changed');
   sendSelectedFileKeysV50 = [];
   document.querySelectorAll('.send-file-check').forEach(function(el){ el.checked = false; });
   setSendMessage('', false);
@@ -568,7 +557,6 @@ function applySendFileQuickPreset_(preset) {
   });
   sendSelectedFileKeysV50 = selected.slice();
   clearSendReviewSessionV75_('file quick preset changed: ' + preset);
-  clearSendMailBodyOverrideP490_('file quick preset changed: ' + preset);
   captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
   renderSendPreview();
   renderSendWorkspaceTabsP211_();
@@ -582,7 +570,6 @@ function clearAllSendFileChecksP250_() {
   });
   sendSelectedFileKeysV50 = [];
   clearSendReviewSessionV75_('all file checks cleared');
-  clearSendMailBodyOverrideP490_('all file checks cleared');
   captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
   renderSendPreview();
   renderSendWorkspaceTabsP211_();
@@ -776,7 +763,6 @@ function renderSendPreview() {
   html += '<div class="send-preview-label">영업담당자</div><div class="send-preview-value">' + esc(disp(model.salesRep)) + '</div>';
   html += '<div class="send-preview-label">예상시간</div><div class="send-preview-value">' + (model.estimatedSeconds ? ('예상 ' + esc(model.estimatedSeconds) + '초') : '-') + '</div>';
   html += '<div class="send-preview-label">첨부</div><div class="send-preview-value"><div class="send-chip-row">' + (model.labels.length ? model.labels.map(chipHtml_).join('') : '<span class="send-chip-muted">발송자료를 선택하세요.</span>') + '</div></div>';
-  html += '<div class="send-preview-label">메일본문</div><div class="send-preview-value">' + (sendMailBodyOverrideTouchedP490 ? '<span class="send-chip" style="background:#ecfdf3;color:#027a48;border-color:#abefc6;">수정본문 적용 중</span>' : '<span class="send-chip-muted">기본 자동본문</span>') + '</div>';
   html += '<div class="send-preview-label">테스트 수신</div><div class="send-preview-value"><input id="sendTestInput" placeholder="예: bang 또는 bang@s1samsung.com" style="width:100%;"></div>';
   html += '</div>';
   if (sendReviewSessionIdV75) {
@@ -918,151 +904,6 @@ function buildCurrentSendPreviewModel_(mode) {
 }
 
 
-
-
-function getSendMailBodyFileLabelP490_(file) {
-  const key = String(file && file.key || '').trim();
-  const vendor = fieldVal(sendSelectedDetail || {}, 'basic', 'vendor') || '';
-  const vendorText = vendor ? (vendor + ' ') : '';
-  const map = {
-    quote: '견적서',
-    serviceApplication: '용역신청서',
-    appointmentDoc: '선임신고서 및 위임장',
-    termsGuide: '약관, 안내문, 법령요약 자료',
-    contractorInfo: vendorText + '수행사 정보',
-    serviceStandardContract: vendorText + '용역표준계약서',
-    compareQuote: '비교견적서',
-    sampleReport: '샘플보고서'
-  };
-  return map[key] || getSendAttachmentDisplayLabel(file) || (file && file.label) || key;
-}
-
-function joinKoreanListForSendMailP490_(items) {
-  items = (items || []).map(function(v){ return String(v || '').trim(); }).filter(Boolean);
-  if (!items.length) return '요청자료';
-  if (items.length === 1) return items[0];
-  if (items.length === 2) return items[0] + ' 및 ' + items[1];
-  return items.slice(0, -1).join(', ') + ' 및 ' + items[items.length - 1];
-}
-
-function buildDefaultSendMailBodyHtmlP490_() {
-  const detail = sendSelectedDetail || {};
-  const files = getSelectedSendFiles();
-  const company = fieldVal(detail, 'basic', 'company') || detail.company || '';
-  const contact = cleanSendMailContactNameP490_(fieldVal(detail, 'basic', 'contact') || fieldVal(detail, 'basic', 'customerContact') || detail.contact || '');
-  const salesRep = fieldVal(detail, 'basic', 'salesRep') || detail.salesRep || '';
-  const selectedText = joinKoreanListForSendMailP490_(files.map(getSendMailBodyFileLabelP490_));
-  const contactNim = contact ? (contact + '님') : '담당자님';
-  const salesRepDisplay = salesRep ? salesRep : '담당자';
-  return '' +
-    '<p style="font-family:Malgun Gothic, 맑은 고딕, Arial, sans-serif; font-size:16px; line-height:2.0; margin:0 0 14px 0;">' +
-      '<strong><u>수신: ' + esc(company) + ' ' + esc(contact) + ' 님</u></strong>' +
-    '</p>' +
-    '<p style="font-family:Malgun Gothic, 맑은 고딕, Arial, sans-serif; font-size:16px; line-height:2.0; margin:0 0 20px 0;">' +
-      '안녕하세요? ' + esc(contactNim) + ',<br>' +
-      '에스원 정보통신 특약점 담당자 ' + esc(salesRepDisplay) + '입니다.' +
-    '</p>' +
-    '<p style="font-family:Malgun Gothic, 맑은 고딕, Arial, sans-serif; font-size:16px; line-height:2.0; margin:0 0 14px 0;">' +
-      '요청하신 <strong>' + esc(selectedText) + '</strong>를 함께 보내드리오니<br>' +
-      '첨부파일 확인 부탁드리겠습니다.' +
-    '</p>' +
-    '<p style="font-family:Malgun Gothic, 맑은 고딕, Arial, sans-serif; font-size:16px; line-height:2.0; margin:0 0 14px 0;">' +
-      '관련하여 추가 문의사항이나 요청사항이 있으시면 언제든지 편하게 연락 주시기 바랍니다.<br>' +
-      '감사합니다.' +
-    '</p>' +
-    '<p style="font-family:Malgun Gothic, 맑은 고딕, Arial, sans-serif; font-size:16px; line-height:2.0; margin:0 0 10px 0;">' +
-      '<strong>※ 문의사항: 에스원 특약점 담당자 ' + esc(salesRepDisplay) + '</strong>' +
-    '</p>';
-}
-
-function cleanSendMailContactNameP490_(value) {
-  return String(value || '').trim().replace(/님$/g, '').trim();
-}
-
-function normalizeSendMailEditableHtmlP490_(html) {
-  const box = document.createElement('div');
-  box.innerHTML = String(html || '');
-  box.querySelectorAll('script,style,iframe,object,embed,link,meta,base,form,input,button,textarea,select,img').forEach(function(el){ el.remove(); });
-  box.querySelectorAll('*').forEach(function(el){
-    Array.from(el.attributes || []).forEach(function(attr){
-      const name = String(attr.name || '').toLowerCase();
-      const value = String(attr.value || '');
-      if (name.indexOf('on') === 0) el.removeAttribute(attr.name);
-      if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(value)) el.removeAttribute(attr.name);
-    });
-  });
-  return box.innerHTML.trim();
-}
-
-function normalizeSendMailBodyOverrideForPayloadP490_() {
-  if (!sendMailBodyOverrideTouchedP490) return '';
-  return normalizeSendMailEditableHtmlP490_(sendMailBodyOverrideHtmlP490 || '');
-}
-
-function getSendMailBodyEditorOverlayP490_() {
-  let overlay = document.getElementById('sendMailBodyEditorOverlayP490');
-  if (overlay) return overlay;
-  overlay = document.createElement('div');
-  overlay.id = 'sendMailBodyEditorOverlayP490';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.48);display:none;align-items:center;justify-content:center;padding:24px;';
-  overlay.innerHTML = '' +
-    '<div style="width:min(860px, calc(100vw - 40px));max-height:calc(100vh - 56px);background:#fff;border-radius:18px;box-shadow:0 24px 80px rgba(15,23,42,.28);display:flex;flex-direction:column;overflow:hidden;">' +
-      '<div style="padding:18px 22px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;gap:12px;">' +
-        '<div><div style="font-weight:800;font-size:18px;color:#101828;">메일 내용 수정하기</div><div style="font-size:12px;color:#667085;margin-top:4px;">명함/안내문 이미지는 편집창에 표시하지 않습니다. 저장 후 발송하면 수정한 본문이 우선 적용됩니다.</div></div>' +
-        '<button type="button" class="secondary" onclick="closeSendMailBodyEditorP490_()">닫기</button>' +
-      '</div>' +
-      '<div style="padding:16px 22px;overflow:auto;background:#f8fafc;">' +
-        '<div id="sendMailBodyEditorP490" contenteditable="true" style="min-height:360px;background:#fff;border:1px solid #d0d5dd;border-radius:14px;padding:18px;outline:none;color:#101828;line-height:1.7;"></div>' +
-      '</div>' +
-      '<div style="padding:14px 22px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;gap:10px;background:#fff;">' +
-        '<button type="button" class="secondary" onclick="resetSendMailBodyEditorP490_()">기본본문 다시 불러오기</button>' +
-        '<div style="display:flex;gap:8px;">' +
-          '<button type="button" class="secondary" onclick="closeSendMailBodyEditorP490_()">취소</button>' +
-          '<button type="button" onclick="saveSendMailBodyEditorP490_()">본문 저장</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener('click', function(e){ if (e.target === overlay) closeSendMailBodyEditorP490_(); });
-  return overlay;
-}
-
-function openSendMailBodyEditorP490_() {
-  const ws = getActiveSendWorkspaceP211_();
-  if (!ws) return;
-  if (!guardSendWorkspaceMutationP479_(ws, '메일 내용 수정')) return;
-  applySendWorkspaceToGlobalsP211_(ws);
-  if (!sendSelectedDetail) { setSendMessage('메일 본문을 수정할 고객을 먼저 선택하세요.', true); return; }
-  if (!getSelectedSendFiles().length) { setSendMessage('메일 본문을 수정하려면 발송자료를 하나 이상 선택하세요.', true); return; }
-  const overlay = getSendMailBodyEditorOverlayP490_();
-  const editor = document.getElementById('sendMailBodyEditorP490');
-  if (editor) editor.innerHTML = sendMailBodyOverrideTouchedP490 ? (sendMailBodyOverrideHtmlP490 || '') : buildDefaultSendMailBodyHtmlP490_();
-  overlay.style.display = 'flex';
-  setTimeout(function(){ if (editor) editor.focus(); }, 50);
-}
-
-function closeSendMailBodyEditorP490_() {
-  const overlay = document.getElementById('sendMailBodyEditorOverlayP490');
-  if (overlay) overlay.style.display = 'none';
-}
-
-function resetSendMailBodyEditorP490_() {
-  const editor = document.getElementById('sendMailBodyEditorP490');
-  if (editor) editor.innerHTML = buildDefaultSendMailBodyHtmlP490_();
-}
-
-function saveSendMailBodyEditorP490_() {
-  const editor = document.getElementById('sendMailBodyEditorP490');
-  const html = normalizeSendMailEditableHtmlP490_(editor ? editor.innerHTML : '');
-  if (!html) { toast('메일 본문이 비어 있습니다.'); return; }
-  sendMailBodyOverrideHtmlP490 = html;
-  sendMailBodyOverrideTouchedP490 = true;
-  captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
-  closeSendMailBodyEditorP490_();
-  renderSendPreview();
-  renderSendWorkspaceTabsP211_();
-  toast('수정한 메일 본문을 적용했습니다.');
-}
 
 function getPortalClientIdV48_() {
   try {
@@ -1280,8 +1121,6 @@ function restoreSendWorkspacesFromStorageP213_() {
       merged.toList = Array.isArray(merged.toList) ? merged.toList : [];
       merged.ccList = Array.isArray(merged.ccList) ? merged.ccList : [];
       merged.defaultCcList = Array.isArray(merged.defaultCcList) ? merged.defaultCcList : [];
-      merged.mailBodyOverrideHtml = String(merged.mailBodyOverrideHtml || '');
-      merged.mailBodyOverrideTouched = !!merged.mailBodyOverrideTouched;
       merged.title = merged.customerName || merged.title || ('발송고객 ' + (idx + 1));
       return merged;
     }).filter(function(ws){ return !!ws && !!ws.id; });
@@ -1324,8 +1163,6 @@ function buildSendWorkspaceP211_(order) {
     reviewSessionId: '',
     reviewFolderUrl: '',
     reviewRequestNo: '',
-    mailBodyOverrideHtml: '',
-    mailBodyOverrideTouched: false,
     mailRunId: '',
     mailProgressPollTimer: null,
     mailSendInFlight: false,
@@ -1396,8 +1233,6 @@ function captureSendGlobalsToWorkspaceP211_(ws) {
   ws.reviewSessionId = sendReviewSessionIdV75 || '';
   ws.reviewFolderUrl = sendReviewFolderUrlV75 || '';
   ws.reviewRequestNo = sendReviewRequestNoV75 || '';
-  ws.mailBodyOverrideHtml = sendMailBodyOverrideHtmlP490 || '';
-  ws.mailBodyOverrideTouched = !!sendMailBodyOverrideTouchedP490;
   ws.mailRunId = currentMailRunId || '';
   ws.mailProgressPollTimer = mailProgressPollTimer || null;
   ws.mailSendInFlight = !!mailSendInFlight;
@@ -1426,8 +1261,6 @@ function applySendWorkspaceToGlobalsP211_(ws) {
   sendReviewSessionIdV75 = ws.reviewSessionId || '';
   sendReviewFolderUrlV75 = ws.reviewFolderUrl || '';
   sendReviewRequestNoV75 = ws.reviewRequestNo || '';
-  sendMailBodyOverrideHtmlP490 = ws.mailBodyOverrideHtml || '';
-  sendMailBodyOverrideTouchedP490 = !!ws.mailBodyOverrideTouched;
   currentMailRunId = ws.mailRunId || '';
   mailProgressPollTimer = ws.mailProgressPollTimer || null;
   ws.sendActionLockP480 = !!ws.sendActionLockP480;
@@ -1660,7 +1493,6 @@ function renderSendWorkspaceBodyP211_() {
       '</div>' +
       '<div class="send-fixed-footer">' +
         '<button class="secondary" onclick="preparePortalMailFilesForReviewFromUi()">파일 확인/수정</button>' +
-        '<button class="secondary" onclick="openSendMailBodyEditorP490_()">메일 내용 수정하기</button>' +
         '<button onclick="sendPortalMailFromUi(\'TEST\')">나에게 테스트 발송</button>' +
         '<button onclick="sendPortalMailFromUi(\'CUSTOMER\')">고객에게 발송</button>' +
       '</div>' +
@@ -1682,7 +1514,6 @@ function renderSendWorkspaceBodyP211_() {
       restoreSendFileChecksV50_();
       captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
       clearSendReviewSessionV75_('file selection changed');
-      clearSendMailBodyOverrideP490_('file selection changed');
       captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
       renderSendPreview();
       renderSendWorkspaceTabsP211_();
@@ -1746,7 +1577,6 @@ function resetSendPageAllV50() {
   if (!guardSendWorkspaceMutationP479_(ws, '작업창 초기화')) return;
   withSendWorkspaceGlobalsP211_(ws, function(){
     clearSendReviewSessionV75_('send page reset');
-    clearSendMailBodyOverrideP490_('send page reset');
     sendSelectedDetail = null;
     sendSelectedRowNoV50 = 0;
     sendSelectedCustomerNoV50 = '';
@@ -2337,9 +2167,6 @@ function sendPortalMailFromUi(mode) {
     manualCc: sendCcList.slice(),
     removedCc: buildRemovedDefaultCc_(),
     reviewSessionId: sendReviewSessionIdV75 || '',
-    mailBodyHtmlOverride: normalizeSendMailBodyOverrideForPayloadP490_(),
-    mailBodyOverrideHtml: normalizeSendMailBodyOverrideForPayloadP490_(),
-    portalMailBodyEdited: !!sendMailBodyOverrideTouchedP490,
     runId: runId,
     clientRequestId: runId,
     workspaceId: ws.id
