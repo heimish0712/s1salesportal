@@ -415,6 +415,46 @@ let detailDurableFlushRunningP458 = false;
 // 고객번호(rowNo fallback) 단위 저장 큐를 둡니다. 서버 버전 체크와 함께 쓰여 저장 충돌 체감을 줄입니다.
 let customerSaveQueueMapP220 = {};
 let customerSaveQueueSeqP220 = 0;
+
+// P494A: Input Continuity Guard 기본 상태.
+// 서버 동기화는 유지하되, 사용자가 건드린 입력값은 DraftGuard가 우선 보호합니다.
+const PORTAL_DRAFT_GUARD_VERSION_P494 = 'P494A';
+const PORTAL_DRAFT_GUARD_CONTEXT_TTL_MS_P494 = 30 * 60 * 1000;
+const PORTAL_DRAFT_GUARD_PRUNE_INTERVAL_MS_P494 = 60 * 1000;
+let portalDraftGuardFlagsP494 = (typeof window !== 'undefined' && window.__portalDraftGuardFlagsP494) ? window.__portalDraftGuardFlagsP494 : {
+  enabled: true,
+  detailModal: true,
+  expandedRow: true,
+  tmSync: true,
+  sendMail: true,
+  notice: true,
+  support: true,
+  businessReg: true,
+  contactProfile: true,
+  debug: false
+};
+let portalDraftGuardStateP494 = (typeof window !== 'undefined' && window.__portalDraftGuardStateP494) ? window.__portalDraftGuardStateP494 : {
+  version: PORTAL_DRAFT_GUARD_VERSION_P494,
+  contexts: {},
+  activeRequests: {},
+  seq: 0,
+  initializedAt: Date.now(),
+  lastPrunedAt: 0,
+  delegatesAttached: false,
+  metrics: {
+    registered: 0,
+    input: 0,
+    protectedServerApply: 0,
+    appliedServerValue: 0,
+    restoredAfterRender: 0,
+    dirtyPatchCollected: 0
+  }
+};
+if (typeof window !== 'undefined') {
+  window.__portalDraftGuardFlagsP494 = portalDraftGuardFlagsP494;
+  window.__portalDraftGuardStateP494 = portalDraftGuardStateP494;
+}
+
 // PATCH K-1: 검색인덱스_DB/rowSummary는 빠른 표시용 snapshot입니다.
 // 마스터 full detail 또는 사용자 optimistic patch가 이미 있는 고객은,
 // stale 검색인덱스가 다시 화면/캐시를 덮어쓰지 못하게 권위 패치를 보관합니다.

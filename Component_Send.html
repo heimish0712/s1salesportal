@@ -425,6 +425,7 @@ function clearSendReviewSessionV75_(reason) {
 }
 
 function resetSendMailContentDraftP493_(reason) {
+  try { releaseSendMailDraftContextP494D_(); } catch (err) {}
   sendMailSubjectDraftP493 = '';
   sendMailBodyDraftP493 = '';
   sendMailContentTouchedP493 = { subject: false, body: false };
@@ -441,6 +442,115 @@ function getSendMailContentOwnerKeyP493_(detail, selectedKeys) {
 function getSendMailContentTouchedP493_() {
   return !!(sendMailContentTouchedP493 && (sendMailContentTouchedP493.subject || sendMailContentTouchedP493.body));
 }
+
+
+// P494D: 자료발송 메일 제목/본문 입력 연속성 보호.
+// 고객/자료 선택, 미리보기 재렌더, 작업창 전환이 와도 사용자가 수정한 메일 제목/본문을 덮지 않습니다.
+function getSendMailDraftContextKeyP494D_() {
+  const ws = (typeof getActiveSendWorkspaceP211_ === 'function') ? getActiveSendWorkspaceP211_() : null;
+  const wsId = (ws && ws.id) || (typeof sendActiveWorkspaceIdP211_ !== 'undefined' ? sendActiveWorkspaceIdP211_ : '') || 'default';
+  if (typeof makePortalDraftContextKeyP494_ === 'function') return makePortalDraftContextKeyP494_('sendMail', wsId, 'mailContent');
+  return 'sendMail:' + String(wsId || 'default') + ':mailContent';
+}
+
+function isSendMailDraftGuardEnabledP494D_() {
+  try { return typeof isPortalDraftGuardEnabledP494_ !== 'function' || isPortalDraftGuardEnabledP494_('sendMail'); } catch (err) { return true; }
+}
+
+function getSendMailDefaultValueP494D_(type, model) {
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  return type === 'subject' ? buildDefaultPortalMailSubjectP493_(model) : buildDefaultPortalMailBodyP493_(model);
+}
+
+function getSendMailDraftFieldP494D_(type, create, options) {
+  if (!isSendMailDraftGuardEnabledP494D_() || typeof getPortalDraftFieldP494_ !== 'function') return null;
+  options = options || {};
+  const contextKey = getSendMailDraftContextKeyP494D_();
+  const key = type === 'subject' ? 'subject' : 'body';
+  return getPortalDraftFieldP494_(contextKey, key, create !== false, {
+    initialValue: options.initialValue !== undefined ? options.initialValue : (type === 'subject' ? sendMailSubjectDraftP493 : sendMailBodyDraftP493),
+    baseValue: options.baseValue !== undefined ? options.baseValue : (options.defaultValue !== undefined ? options.defaultValue : ''),
+    serverValue: options.serverValue !== undefined ? options.serverValue : (options.defaultValue !== undefined ? options.defaultValue : ''),
+    baseLoaded: true,
+    contextMeta: { scope: 'sendMail' }
+  });
+}
+
+function getSendMailDraftHasUserEditP494D_() {
+  if (!isSendMailDraftGuardEnabledP494D_()) return false;
+  const subject = getSendMailDraftFieldP494D_('subject', false);
+  const body = getSendMailDraftFieldP494D_('body', false);
+  return !!((subject && (subject.dirty || subject.userTouched || subject.pending || subject.conflict || subject.focused)) ||
+    (body && (body.dirty || body.userTouched || body.pending || body.conflict || body.focused)));
+}
+
+function getSendMailDraftValueP494D_(type, fallback) {
+  const field = getSendMailDraftFieldP494D_(type, false);
+  if (field && (field.dirty || field.userTouched || field.pending || field.conflict || field.focused || field.composing)) {
+    return String(field.draftValue == null ? '' : field.draftValue);
+  }
+  return String(fallback == null ? '' : fallback);
+}
+
+function registerSendMailDraftFieldsP494D_(model) {
+  if (!isSendMailDraftGuardEnabledP494D_() || typeof registerPortalDraftFieldP494_ !== 'function') return;
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  const contextKey = getSendMailDraftContextKeyP494D_();
+  const defaults = {
+    subject: getSendMailDefaultValueP494D_('subject', model),
+    body: getSendMailDefaultValueP494D_('body', model)
+  };
+  const subjectEl = document.getElementById('sendMailSubjectInputP493');
+  const bodyEl = document.getElementById('sendMailBodyInputP493');
+  if (subjectEl) {
+    const field = registerPortalDraftFieldP494_(subjectEl, { contextKey: contextKey, fieldKey: 'subject', baseValue: defaults.subject, serverValue: defaults.subject, scope: 'sendMail' });
+    if (field && (field.dirty || field.userTouched || field.pending || field.conflict || field.focused) && typeof writePortalDraftElementValueP494_ === 'function') {
+      writePortalDraftElementValueP494_(subjectEl, field.draftValue, { restoreSelection: true, selectionStart: field.selectionStart, selectionEnd: field.selectionEnd });
+      sendMailSubjectDraftP493 = String(field.draftValue == null ? '' : field.draftValue);
+    }
+  }
+  if (bodyEl) {
+    const field = registerPortalDraftFieldP494_(bodyEl, { contextKey: contextKey, fieldKey: 'body', baseValue: defaults.body, serverValue: defaults.body, scope: 'sendMail' });
+    if (field && (field.dirty || field.userTouched || field.pending || field.conflict || field.focused) && typeof writePortalDraftElementValueP494_ === 'function') {
+      writePortalDraftElementValueP494_(bodyEl, field.draftValue, { restoreSelection: true, selectionStart: field.selectionStart, selectionEnd: field.selectionEnd });
+      sendMailBodyDraftP493 = String(field.draftValue == null ? '' : field.draftValue);
+    }
+  }
+}
+
+function captureSendMailDraftSnapshotP494D_(root) {
+  if (!isSendMailDraftGuardEnabledP494D_() || typeof capturePortalDraftSnapshotBeforeRenderP494_ !== 'function') return null;
+  try { registerSendMailDraftFieldsP494D_(); } catch (err) {}
+  return capturePortalDraftSnapshotBeforeRenderP494_(getSendMailDraftContextKeyP494D_(), root || document);
+}
+
+function restoreSendMailDraftSnapshotP494D_(snapshot, root, model) {
+  if (!isSendMailDraftGuardEnabledP494D_()) return;
+  try { registerSendMailDraftFieldsP494D_(model); } catch (err) {}
+  if (snapshot && typeof restorePortalDraftSnapshotAfterRenderP494_ === 'function') {
+    try { restorePortalDraftSnapshotAfterRenderP494_(snapshot, root || document); } catch (err) {}
+  }
+  const subjectEl = document.getElementById('sendMailSubjectInputP493');
+  const bodyEl = document.getElementById('sendMailBodyInputP493');
+  if (subjectEl) sendMailSubjectDraftP493 = subjectEl.value || '';
+  if (bodyEl) sendMailBodyDraftP493 = bodyEl.value || '';
+}
+
+function markSendMailDraftPendingP494D_(operationId) {
+  try {
+    if (!isSendMailDraftGuardEnabledP494D_() || typeof markPortalDraftPendingP494_ !== 'function') return;
+    if (!getSendMailContentTouchedP493_() && !getSendMailDraftHasUserEditP494D_()) return;
+    markPortalDraftPendingP494_(getSendMailDraftContextKeyP494D_(), {
+      subject: sendMailSubjectDraftP493 || '',
+      body: sendMailBodyDraftP493 || ''
+    }, operationId || ('SEND_MAIL_' + Date.now()));
+  } catch (err) {}
+}
+
+function releaseSendMailDraftContextP494D_() {
+  try { if (typeof releasePortalDraftContextP494_ === 'function') releasePortalDraftContextP494_(getSendMailDraftContextKeyP494D_(), { force: true }); } catch (err) {}
+}
+
 
 function buildDefaultPortalMailSubjectP493_(model) {
   model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
@@ -484,7 +594,7 @@ function syncSendMailContentDraftP493_(model, options) {
   model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
   const ownerKey = getSendMailContentOwnerKeyP493_(sendSelectedDetail, model.keys || sendSelectedFileKeysV50);
   const ownerChanged = sendMailContentOwnerKeyP493 !== ownerKey;
-  const edited = getSendMailContentTouchedP493_();
+  const edited = getSendMailContentTouchedP493_() || getSendMailDraftHasUserEditP494D_();
   if (options.forceReset || (ownerChanged && !edited)) {
     sendMailContentOwnerKeyP493 = ownerKey;
     sendMailContentTouchedP493 = { subject: false, body: false };
@@ -495,13 +605,24 @@ function syncSendMailContentDraftP493_(model, options) {
   }
   const defaultSubject = buildDefaultPortalMailSubjectP493_(model);
   const defaultBody = buildDefaultPortalMailBodyP493_(model);
-  if (!sendMailContentTouchedP493.subject) sendMailSubjectDraftP493 = defaultSubject;
-  if (!sendMailContentTouchedP493.body) sendMailBodyDraftP493 = defaultBody;
+  const subjectFieldP494D = getSendMailDraftFieldP494D_('subject', false);
+  const bodyFieldP494D = getSendMailDraftFieldP494D_('body', false);
+  const subjectEditedP494D = !!(sendMailContentTouchedP493.subject || (subjectFieldP494D && (subjectFieldP494D.dirty || subjectFieldP494D.userTouched || subjectFieldP494D.pending || subjectFieldP494D.conflict || subjectFieldP494D.focused)));
+  const bodyEditedP494D = !!(sendMailContentTouchedP493.body || (bodyFieldP494D && (bodyFieldP494D.dirty || bodyFieldP494D.userTouched || bodyFieldP494D.pending || bodyFieldP494D.conflict || bodyFieldP494D.focused)));
+  if (!subjectEditedP494D) sendMailSubjectDraftP493 = defaultSubject;
+  else if (subjectFieldP494D) sendMailSubjectDraftP493 = String(subjectFieldP494D.draftValue == null ? sendMailSubjectDraftP493 || '' : subjectFieldP494D.draftValue);
+  if (!bodyEditedP494D) sendMailBodyDraftP493 = defaultBody;
+  else if (bodyFieldP494D) sendMailBodyDraftP493 = String(bodyFieldP494D.draftValue == null ? sendMailBodyDraftP493 || '' : bodyFieldP494D.draftValue);
 }
 
 function renderSendMailContentEditorP493_(model) {
   syncSendMailContentDraftP493_(model);
-  const edited = getSendMailContentTouchedP493_();
+  const draftContextP494D = getSendMailDraftContextKeyP494D_();
+  const subjectValueP494D = getSendMailDraftValueP494D_('subject', sendMailSubjectDraftP493 || '');
+  const bodyValueP494D = getSendMailDraftValueP494D_('body', sendMailBodyDraftP493 || '');
+  sendMailSubjectDraftP493 = subjectValueP494D;
+  sendMailBodyDraftP493 = bodyValueP494D;
+  const edited = getSendMailContentTouchedP493_() || getSendMailDraftHasUserEditP494D_();
   const status = edited
     ? '<span class="send-mail-edit-badge-p493 active">수정본 적용</span>'
     : '<span class="send-mail-edit-badge-p493">자동 문구</span>';
@@ -518,11 +639,11 @@ function renderSendMailContentEditorP493_(model) {
       '</div>' +
       '<label class="send-mail-field-p493">' +
         '<span>메일 제목</span>' +
-        '<input id="sendMailSubjectInputP493" value="' + escAttr(sendMailSubjectDraftP493 || '') + '" oninput="handleSendMailContentInputP493_(\'subject\', this.value)" placeholder="메일 제목을 입력하세요.">' +
+        '<input id="sendMailSubjectInputP493" data-p494-draft-context="' + escAttr(draftContextP494D) + '" data-p494-draft-key="subject" value="' + escAttr(subjectValueP494D || '') + '" oninput="handleSendMailContentInputP493_(\'subject\', this.value)" placeholder="메일 제목을 입력하세요.">' +
       '</label>' +
       '<label class="send-mail-field-p493">' +
         '<span>메일 본문</span>' +
-        '<textarea id="sendMailBodyInputP493" rows="9" oninput="handleSendMailContentInputP493_(\'body\', this.value)" placeholder="메일 본문을 입력하세요.">' + esc(sendMailBodyDraftP493 || '') + '</textarea>' +
+        '<textarea id="sendMailBodyInputP493" data-p494-draft-context="' + escAttr(draftContextP494D) + '" data-p494-draft-key="body" rows="9" oninput="handleSendMailContentInputP493_(\'body\', this.value)" placeholder="메일 본문을 입력하세요.">' + esc(bodyValueP494D || '') + '</textarea>' +
       '</label>' +
       '<div class="send-mail-editor-note-p493">테스트 발송과 고객 발송 모두 이 수정본을 사용합니다. 파일 확인/수정은 첨부 파일 세션만 만들고, 메일 본문은 여기서 최종 확인합니다.</div>' +
     '</div>';
@@ -536,6 +657,7 @@ function handleSendMailContentInputP493_(type, value) {
     sendMailBodyDraftP493 = String(value == null ? '' : value);
     sendMailContentTouchedP493.body = true;
   }
+  try { registerSendMailDraftFieldsP494D_(); } catch (err) {}
   const ws = getActiveSendWorkspaceP211_ && getActiveSendWorkspaceP211_();
   if (ws) captureSendGlobalsToWorkspaceP211_(ws);
 }
@@ -544,6 +666,7 @@ function resetSendMailContentToDefaultP493_() {
   const ws = getActiveSendWorkspaceP211_ && getActiveSendWorkspaceP211_();
   if (!guardSendWorkspaceMutationP479_(ws, '메일 내용 초기화')) return;
   const model = buildCurrentSendPreviewModel_('PREVIEW');
+  try { releaseSendMailDraftContextP494D_(); } catch (err) {}
   sendMailContentTouchedP493 = { subject: false, body: false };
   sendMailContentOwnerKeyP493 = '';
   syncSendMailContentDraftP493_(model, { forceReset: true });
@@ -554,12 +677,14 @@ function resetSendMailContentToDefaultP493_() {
 function collectPortalMailContentOverrideP493_(model) {
   const subjectEl = document.getElementById('sendMailSubjectInputP493');
   const bodyEl = document.getElementById('sendMailBodyInputP493');
-  const subject = String(subjectEl ? subjectEl.value : sendMailSubjectDraftP493 || '').trim();
-  const bodyText = String(bodyEl ? bodyEl.value : sendMailBodyDraftP493 || '').replace(/\r\n/g, '\n').trim();
+  const subjectRawP494D = subjectEl ? subjectEl.value : getSendMailDraftValueP494D_('subject', sendMailSubjectDraftP493 || '');
+  const bodyRawP494D = bodyEl ? bodyEl.value : getSendMailDraftValueP494D_('body', sendMailBodyDraftP493 || '');
+  const subject = String(subjectRawP494D || '').trim();
+  const bodyText = String(bodyRawP494D || '').replace(/\r\n/g, '\n').trim();
   if (subjectEl) sendMailSubjectDraftP493 = subjectEl.value || '';
   if (bodyEl) sendMailBodyDraftP493 = bodyEl.value || '';
 
-  const edited = getSendMailContentTouchedP493_();
+  const edited = getSendMailContentTouchedP493_() || getSendMailDraftHasUserEditP494D_();
   if (!edited) return null;
   if (!subject) throw new Error('메일 제목이 비어 있습니다. 메일 내용 확인/수정 영역에서 제목을 입력하세요.');
   if (!bodyText) throw new Error('메일 본문이 비어 있습니다. 메일 내용 확인/수정 영역에서 본문을 입력하세요.');
@@ -911,6 +1036,7 @@ function renderSendPreview() {
   const area = document.getElementById('sendPreviewArea');
   if (!area) return;
   const oldTestInput = document.getElementById('sendTestInput') ? document.getElementById('sendTestInput').value : '';
+  const p494dSnapshot = captureSendMailDraftSnapshotP494D_(area);
   if (!sendSelectedDetail) {
     area.innerHTML = '<div class="send-empty-box">고객/자료 선택 시 발송내용이 자동 표시됩니다.</div>';
     return;
@@ -936,6 +1062,7 @@ function renderSendPreview() {
   if (model.warnings.length) html += '<div class="send-preview-warn">' + model.warnings.map(esc).join('<br>') + '</div>';
   html += '</div>';
   area.innerHTML = html;
+  restoreSendMailDraftSnapshotP494D_(p494dSnapshot, area, model);
   const newTestInput = document.getElementById('sendTestInput');
   if (newTestInput && oldTestInput) newTestInput.value = oldTestInput;
 }
@@ -2341,6 +2468,7 @@ function sendPortalMailFromUi(mode) {
   }
 
   const runId = 'portal_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+  markSendMailDraftPendingP494D_(runId);
   const payload = {
     rowNo: sendSelectedDetail.rowNo,
     customerNo: normalizeCustomerNoForKey_(sendSelectedDetail.customerNo || sendSelectedCustomerNoV50),

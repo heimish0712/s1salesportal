@@ -605,4 +605,560 @@ function makePortalSortableThP15_(label, key, activeKey, activeDir, handlerName,
     esc(label || key) + '<span class="portal-sort-arrow">' + esc(arrow) + '</span></th>';
 }
 
+
+// P494A: Input Continuity Guard core.
+// 서버 로딩/실시간 동기화 응답이 사용자가 입력 중인 값을 직접 덮지 못하게 하는 최소 공통 레이어입니다.
+function getPortalDraftGuardStateP494_() {
+  if (typeof portalDraftGuardStateP494 !== 'undefined' && portalDraftGuardStateP494) return portalDraftGuardStateP494;
+  if (typeof window === 'undefined') return { contexts: {}, activeRequests: {}, seq: 0, metrics: {} };
+  if (!window.__portalDraftGuardStateP494) {
+    window.__portalDraftGuardStateP494 = {
+      version: 'P494A',
+      contexts: {},
+      activeRequests: {},
+      seq: 0,
+      initializedAt: Date.now(),
+      lastPrunedAt: 0,
+      metrics: { registered: 0, input: 0, protectedServerApply: 0, appliedServerValue: 0, restoredAfterRender: 0, dirtyPatchCollected: 0 }
+    };
+  }
+  return window.__portalDraftGuardStateP494;
+}
+
+function getPortalDraftGuardFlagsP494_() {
+  if (typeof portalDraftGuardFlagsP494 !== 'undefined' && portalDraftGuardFlagsP494) return portalDraftGuardFlagsP494;
+  if (typeof window === 'undefined') return { enabled: true, debug: false };
+  if (!window.__portalDraftGuardFlagsP494) window.__portalDraftGuardFlagsP494 = { enabled: true, debug: false };
+  return window.__portalDraftGuardFlagsP494;
+}
+
+function isPortalDraftGuardEnabledP494_(scope) {
+  const flags = getPortalDraftGuardFlagsP494_();
+  if (!flags || flags.enabled === false) return false;
+  if (scope && Object.prototype.hasOwnProperty.call(flags, scope) && flags[scope] === false) return false;
+  return true;
+}
+
+function getPortalDraftNowP494_() {
+  return Date.now ? Date.now() : new Date().getTime();
+}
+
+function normalizePortalDraftTextP494_(value) {
+  return String(value == null ? '' : value);
+}
+
+function normalizePortalDraftContextKeyP494_(value) {
+  return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+}
+
+function makePortalDraftContextKeyP494_(contextType, rowNo, customerNo, extra) {
+  const parts = [contextType || 'context', rowNo || '0', customerNo || ''].map(function(v) {
+    return String(v == null ? '' : v).replace(/[\s:|]+/g, '_').trim();
+  });
+  if (extra != null && extra !== '') parts.push(String(extra).replace(/[\s:|]+/g, '_').trim());
+  return parts.join(':');
+}
+
+function getPortalDraftContextP494_(contextKey, create, contextMeta) {
+  const state = getPortalDraftGuardStateP494_();
+  state.contexts = state.contexts || {};
+  const key = normalizePortalDraftContextKeyP494_(contextKey);
+  if (!key) return null;
+  if (!state.contexts[key] && create !== false) {
+    const now = getPortalDraftNowP494_();
+    state.contexts[key] = {
+      key: key,
+      meta: contextMeta || {},
+      fields: {},
+      activeRequestToken: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+  }
+  if (state.contexts[key]) state.contexts[key].updatedAt = getPortalDraftNowP494_();
+  return state.contexts[key] || null;
+}
+
+function getPortalDraftFieldP494_(contextKey, fieldKey, create, options) {
+  options = options || {};
+  const ctx = getPortalDraftContextP494_(contextKey, create !== false, options.contextMeta || null);
+  if (!ctx) return null;
+  const key = String(fieldKey == null ? '' : fieldKey).trim();
+  if (!key) return null;
+  if (!ctx.fields[key] && create !== false) {
+    const now = getPortalDraftNowP494_();
+    const initial = options.initialValue !== undefined ? options.initialValue : options.baseValue;
+    ctx.fields[key] = {
+      contextKey: ctx.key,
+      fieldKey: key,
+      elementId: String(options.elementId || ''),
+      selector: String(options.selector || ''),
+      baseValue: normalizePortalDraftTextP494_(initial),
+      draftValue: normalizePortalDraftTextP494_(options.draftValue !== undefined ? options.draftValue : initial),
+      serverValue: normalizePortalDraftTextP494_(options.serverValue !== undefined ? options.serverValue : initial),
+      deferredServerValue: null,
+      hasDeferredServerValue: false,
+      dirty: false,
+      focused: false,
+      pending: false,
+      conflict: false,
+      composing: false,
+      userTouched: false,
+      baseLoaded: options.baseLoaded !== false,
+      pendingOperationId: '',
+      pendingValue: null,
+      pendingStartedAt: 0,
+      selectionStart: null,
+      selectionEnd: null,
+      scrollTop: 0,
+      createdAt: now,
+      updatedAt: now,
+      lastEditAt: 0,
+      lastServerAt: 0,
+      lastSavedAt: 0
+    };
+    try { getPortalDraftGuardStateP494_().metrics.registered++; } catch (err) {}
+  }
+  if (ctx.fields[key]) ctx.fields[key].updatedAt = getPortalDraftNowP494_();
+  return ctx.fields[key] || null;
+}
+
+function readPortalDraftElementValueP494_(el) {
+  if (!el) return '';
+  const tag = String(el.tagName || '').toUpperCase();
+  const type = String(el.type || '').toLowerCase();
+  if (tag === 'INPUT' && type === 'checkbox') return el.checked ? 'TRUE' : 'FALSE';
+  if (tag === 'INPUT' && type === 'radio') return el.checked ? String(el.value || '') : '';
+  if (tag === 'SELECT' && el.multiple) {
+    return Array.prototype.slice.call(el.options || []).filter(function(opt) { return opt.selected; }).map(function(opt) { return opt.value; }).join(',');
+  }
+  if (el.isContentEditable) return normalizePortalDraftTextP494_(el.innerText || el.textContent || '');
+  return normalizePortalDraftTextP494_(el.value);
+}
+
+function writePortalDraftElementValueP494_(el, value, options) {
+  options = options || {};
+  if (!el) return false;
+  const text = normalizePortalDraftTextP494_(value);
+  const tag = String(el.tagName || '').toUpperCase();
+  const type = String(el.type || '').toLowerCase();
+  if (tag === 'INPUT' && type === 'checkbox') {
+    const s = text.trim().toLowerCase();
+    el.checked = value === true || s === 'true' || s === 'y' || s === 'yes' || s === '1' || s === 'checked' || s === 'o';
+    return true;
+  }
+  if (tag === 'INPUT' && type === 'radio') {
+    el.checked = String(el.value || '') === text;
+    return true;
+  }
+  if (el.isContentEditable) {
+    if (String(el.innerText || el.textContent || '') !== text) el.innerText = text;
+    return true;
+  }
+  if (String(el.value == null ? '' : el.value) !== text) el.value = text;
+  if (options.restoreSelection && typeof el.setSelectionRange === 'function') {
+    try {
+      const start = Math.min(text.length, Number(options.selectionStart == null ? text.length : options.selectionStart));
+      const end = Math.min(text.length, Number(options.selectionEnd == null ? start : options.selectionEnd));
+      el.setSelectionRange(start, end);
+    } catch (err) {}
+  }
+  return true;
+}
+
+function ensurePortalDraftElementIdP494_(el) {
+  if (!el) return '';
+  if (!el.id) {
+    const state = getPortalDraftGuardStateP494_();
+    state.seq = Number(state.seq || 0) + 1;
+    el.id = 'p494DraftField_' + state.seq + '_' + Math.floor(Math.random() * 1000000);
+  }
+  return el.id;
+}
+
+function capturePortalDraftSelectionP494_(el, field) {
+  if (!el || !field) return;
+  try {
+    if (typeof el.selectionStart === 'number') field.selectionStart = el.selectionStart;
+    if (typeof el.selectionEnd === 'number') field.selectionEnd = el.selectionEnd;
+    if (typeof el.scrollTop === 'number') field.scrollTop = el.scrollTop;
+  } catch (err) {}
+}
+
+function restorePortalDraftSelectionP494_(el, field) {
+  if (!el || !field) return;
+  try {
+    if (typeof el.setSelectionRange === 'function' && field.selectionStart != null && field.selectionEnd != null) {
+      el.setSelectionRange(Number(field.selectionStart) || 0, Number(field.selectionEnd) || 0);
+    }
+    if (typeof el.scrollTop === 'number') el.scrollTop = Number(field.scrollTop || 0) || 0;
+  } catch (err) {}
+}
+
+function registerPortalDraftFieldP494_(el, options) {
+  options = options || {};
+  if (!isPortalDraftGuardEnabledP494_(options.scope)) return null;
+  if (typeof el === 'string') el = document.querySelector(el);
+  if (!el || !el.setAttribute) return null;
+  const contextKey = normalizePortalDraftContextKeyP494_(options.contextKey || el.getAttribute('data-p494-draft-context') || el.getAttribute('data-draft-context') || '');
+  const fieldKey = String(options.fieldKey || el.getAttribute('data-p494-draft-key') || el.getAttribute('data-draft-key') || el.getAttribute('data-key') || el.name || el.id || '').trim();
+  if (!contextKey || !fieldKey) return null;
+  const currentValue = options.initialValue !== undefined ? options.initialValue : readPortalDraftElementValueP494_(el);
+  const field = getPortalDraftFieldP494_(contextKey, fieldKey, true, {
+    initialValue: currentValue,
+    baseValue: options.baseValue !== undefined ? options.baseValue : currentValue,
+    serverValue: options.serverValue !== undefined ? options.serverValue : currentValue,
+    baseLoaded: options.baseLoaded !== false,
+    elementId: ensurePortalDraftElementIdP494_(el),
+    selector: options.selector || ''
+  });
+  if (!field) return null;
+  field.elementId = ensurePortalDraftElementIdP494_(el);
+  field.selector = options.selector || field.selector || '';
+  field.baseLoaded = options.baseLoaded !== false;
+  el.setAttribute('data-p494-draft-context', contextKey);
+  el.setAttribute('data-p494-draft-key', fieldKey);
+  try { ensurePortalDraftGuardEventDelegatesP494_(); } catch (err) {}
+  return field;
+}
+
+function getPortalDraftFieldFromElementP494_(el, create) {
+  if (!el || !el.getAttribute) return null;
+  const contextKey = el.getAttribute('data-p494-draft-context') || '';
+  const fieldKey = el.getAttribute('data-p494-draft-key') || '';
+  if (!contextKey || !fieldKey) return null;
+  return getPortalDraftFieldP494_(contextKey, fieldKey, create !== false, {
+    initialValue: readPortalDraftElementValueP494_(el),
+    elementId: ensurePortalDraftElementIdP494_(el)
+  });
+}
+
+function isPortalDraftFieldProtectedP494_(contextKey, fieldKey) {
+  if (!isPortalDraftGuardEnabledP494_()) return false;
+  const field = getPortalDraftFieldP494_(contextKey, fieldKey, false);
+  if (!field) return false;
+  return !!(field.focused || field.dirty || field.pending || field.conflict || field.composing || field.userTouched);
+}
+
+function handlePortalDraftFocusP494_(event) {
+  const el = event && event.target && event.target.closest ? event.target.closest('[data-p494-draft-context][data-p494-draft-key]') : null;
+  if (!el) return;
+  const field = getPortalDraftFieldFromElementP494_(el, true);
+  if (!field) return;
+  field.focused = true;
+  field.draftValue = readPortalDraftElementValueP494_(el);
+  field.updatedAt = getPortalDraftNowP494_();
+  capturePortalDraftSelectionP494_(el, field);
+  try { if (document.body && document.body.classList) document.body.classList.add('portal-user-editing'); } catch (err) {}
+}
+
+function handlePortalDraftBlurP494_(event) {
+  const el = event && event.target && event.target.closest ? event.target.closest('[data-p494-draft-context][data-p494-draft-key]') : null;
+  if (!el) return;
+  const field = getPortalDraftFieldFromElementP494_(el, true);
+  if (!field) return;
+  field.focused = false;
+  field.draftValue = readPortalDraftElementValueP494_(el);
+  field.updatedAt = getPortalDraftNowP494_();
+  capturePortalDraftSelectionP494_(el, field);
+}
+
+function handlePortalDraftInputP494_(event) {
+  const el = event && event.target && event.target.closest ? event.target.closest('[data-p494-draft-context][data-p494-draft-key]') : null;
+  if (!el) return;
+  const field = getPortalDraftFieldFromElementP494_(el, true);
+  if (!field) return;
+  const value = readPortalDraftElementValueP494_(el);
+  const now = getPortalDraftNowP494_();
+  if (!field.baseLoaded) {
+    field.baseValue = value;
+    field.serverValue = value;
+    field.baseLoaded = true;
+  }
+  field.draftValue = value;
+  field.userTouched = true;
+  field.dirty = normalizePortalDraftTextP494_(value) !== normalizePortalDraftTextP494_(field.baseValue);
+  field.lastEditAt = now;
+  field.updatedAt = now;
+  capturePortalDraftSelectionP494_(el, field);
+  try { getPortalDraftGuardStateP494_().metrics.input++; } catch (err) {}
+}
+
+function handlePortalDraftCompositionStartP494_(event) {
+  const field = getPortalDraftFieldFromElementP494_(event && event.target, true);
+  if (field) field.composing = true;
+}
+
+function handlePortalDraftCompositionEndP494_(event) {
+  const field = getPortalDraftFieldFromElementP494_(event && event.target, true);
+  if (field) field.composing = false;
+  handlePortalDraftInputP494_(event);
+}
+
+function ensurePortalDraftGuardEventDelegatesP494_() {
+  const state = getPortalDraftGuardStateP494_();
+  if (state.delegatesAttached || typeof document === 'undefined' || !document.addEventListener) return;
+  state.delegatesAttached = true;
+  document.addEventListener('focusin', handlePortalDraftFocusP494_, true);
+  document.addEventListener('focusout', handlePortalDraftBlurP494_, true);
+  document.addEventListener('input', handlePortalDraftInputP494_, true);
+  document.addEventListener('change', handlePortalDraftInputP494_, true);
+  document.addEventListener('compositionstart', handlePortalDraftCompositionStartP494_, true);
+  document.addEventListener('compositionend', handlePortalDraftCompositionEndP494_, true);
+}
+
+function findPortalDraftElementP494_(field) {
+  if (!field) return null;
+  if (field.elementId) {
+    const byId = document.getElementById(field.elementId);
+    if (byId) return byId;
+  }
+  if (field.selector) {
+    try { return document.querySelector(field.selector); } catch (err) {}
+  }
+  try {
+    return document.querySelector('[data-p494-draft-context="' + String(field.contextKey).replace(/"/g, '\\"') + '"][data-p494-draft-key="' + String(field.fieldKey).replace(/"/g, '\\"') + '"]');
+  } catch (err) {
+    return null;
+  }
+}
+
+function safeApplyPortalServerValueP494_(contextKey, fieldKey, serverValue, options) {
+  options = options || {};
+  if (!isPortalDraftGuardEnabledP494_(options.scope)) return { applied: false, protected: false, disabled: true };
+  const field = getPortalDraftFieldP494_(contextKey, fieldKey, true, {
+    initialValue: serverValue,
+    baseValue: serverValue,
+    serverValue: serverValue,
+    baseLoaded: options.baseLoaded !== false,
+    selector: options.selector || '',
+    elementId: options.element && options.element.id || options.elementId || ''
+  });
+  if (!field) return { applied: false, protected: false, reason: 'no-field' };
+  const text = normalizePortalDraftTextP494_(serverValue);
+  field.serverValue = text;
+  field.lastServerAt = getPortalDraftNowP494_();
+  const protectedNow = !options.force && isPortalDraftFieldProtectedP494_(contextKey, fieldKey);
+  if (protectedNow) {
+    field.deferredServerValue = text;
+    field.hasDeferredServerValue = true;
+    const protectedEl = options.element || findPortalDraftElementP494_(field);
+    if (protectedEl && protectedEl.classList) protectedEl.classList.add('portal-draft-protected-p494', 'portal-draft-server-deferred-p494');
+    try { getPortalDraftGuardStateP494_().metrics.protectedServerApply++; } catch (err) {}
+    return { applied: false, protected: true, deferred: true, value: text };
+  }
+  field.baseValue = text;
+  field.draftValue = text;
+  field.dirty = false;
+  field.pending = false;
+  field.conflict = false;
+  field.userTouched = false;
+  field.hasDeferredServerValue = false;
+  field.deferredServerValue = null;
+  const el = options.element || findPortalDraftElementP494_(field);
+  if (el && options.skipDom !== true) writePortalDraftElementValueP494_(el, text, options);
+  if (el && el.classList) el.classList.remove('portal-draft-protected-p494', 'portal-draft-server-deferred-p494', 'portal-draft-conflict-p494', 'portal-draft-pending-p494');
+  try { getPortalDraftGuardStateP494_().metrics.appliedServerValue++; } catch (err) {}
+  return { applied: true, protected: false, value: text };
+}
+
+function collectPortalDraftDirtyPatchP494_(contextKey, options) {
+  options = options || {};
+  const ctx = getPortalDraftContextP494_(contextKey, false);
+  const result = { patch: {}, expectedValues: {}, fieldKeys: [], blockedFieldKeys: [] };
+  if (!ctx || !ctx.fields) return result;
+  Object.keys(ctx.fields).forEach(function(fieldKey) {
+    const field = ctx.fields[fieldKey];
+    if (!field || field.dirty !== true) return;
+    if (field.baseLoaded === false && options.allowUnloaded !== true) {
+      result.blockedFieldKeys.push(fieldKey);
+      return;
+    }
+    if (options.onlyUserTouched && field.userTouched !== true) return;
+    result.patch[fieldKey] = normalizePortalDraftTextP494_(field.draftValue);
+    result.expectedValues[fieldKey] = normalizePortalDraftTextP494_(field.baseValue);
+    result.fieldKeys.push(fieldKey);
+  });
+  try { getPortalDraftGuardStateP494_().metrics.dirtyPatchCollected++; } catch (err) {}
+  return result;
+}
+
+function markPortalDraftPendingP494_(contextKey, patch, operationId) {
+  patch = patch || {};
+  Object.keys(patch).forEach(function(fieldKey) {
+    const field = getPortalDraftFieldP494_(contextKey, fieldKey, true, { initialValue: patch[fieldKey] });
+    if (!field) return;
+    field.pending = true;
+    field.conflict = false;
+    field.pendingOperationId = String(operationId || field.pendingOperationId || '');
+    field.pendingValue = normalizePortalDraftTextP494_(patch[fieldKey]);
+    field.pendingStartedAt = getPortalDraftNowP494_();
+    const el = findPortalDraftElementP494_(field);
+    if (el && el.classList) el.classList.add('portal-draft-pending-p494');
+  });
+}
+
+function markPortalDraftSavedP494_(contextKey, savedPatch, operationId) {
+  savedPatch = savedPatch || {};
+  Object.keys(savedPatch).forEach(function(fieldKey) {
+    const field = getPortalDraftFieldP494_(contextKey, fieldKey, false);
+    if (!field) return;
+    const savedValue = normalizePortalDraftTextP494_(savedPatch[fieldKey]);
+    const opMatches = !operationId || !field.pendingOperationId || String(field.pendingOperationId) === String(operationId);
+    field.serverValue = savedValue;
+    field.lastSavedAt = getPortalDraftNowP494_();
+    field.pending = false;
+    field.pendingOperationId = '';
+    if (opMatches && normalizePortalDraftTextP494_(field.draftValue) === normalizePortalDraftTextP494_(field.pendingValue != null ? field.pendingValue : savedValue)) {
+      field.baseValue = savedValue;
+      field.draftValue = savedValue;
+      field.dirty = false;
+      field.userTouched = false;
+      field.conflict = false;
+      field.pendingValue = null;
+      field.hasDeferredServerValue = false;
+      field.deferredServerValue = null;
+    } else {
+      field.baseValue = savedValue;
+      field.dirty = normalizePortalDraftTextP494_(field.draftValue) !== savedValue;
+    }
+    const el = findPortalDraftElementP494_(field);
+    if (el && el.classList) el.classList.remove('portal-draft-pending-p494');
+  });
+}
+
+function markPortalDraftConflictP494_(contextKey, conflictFields, serverValues) {
+  const fields = Array.isArray(conflictFields) ? conflictFields : Object.keys(serverValues || {});
+  fields.forEach(function(fieldKey) {
+    const field = getPortalDraftFieldP494_(contextKey, fieldKey, true, { initialValue: '' });
+    if (!field) return;
+    field.conflict = true;
+    field.pending = false;
+    if (serverValues && Object.prototype.hasOwnProperty.call(serverValues, fieldKey)) {
+      field.deferredServerValue = normalizePortalDraftTextP494_(serverValues[fieldKey]);
+      field.serverValue = field.deferredServerValue;
+      field.hasDeferredServerValue = true;
+    }
+    const el = findPortalDraftElementP494_(field);
+    if (el && el.classList) el.classList.add('portal-draft-conflict-p494');
+  });
+}
+
+function capturePortalDraftSnapshotBeforeRenderP494_(contextKey, rootEl) {
+  const root = rootEl || document;
+  const selector = '[data-p494-draft-context="' + String(contextKey || '').replace(/"/g, '\\"') + '"]';
+  const snapshot = { contextKey: contextKey, fields: [], capturedAt: getPortalDraftNowP494_() };
+  try {
+    Array.prototype.slice.call(root.querySelectorAll(selector)).forEach(function(el) {
+      const fieldKey = el.getAttribute('data-p494-draft-key') || '';
+      const field = getPortalDraftFieldFromElementP494_(el, true);
+      if (!field || !fieldKey) return;
+      field.draftValue = readPortalDraftElementValueP494_(el);
+      capturePortalDraftSelectionP494_(el, field);
+      snapshot.fields.push({ fieldKey: fieldKey, value: field.draftValue, protected: isPortalDraftFieldProtectedP494_(contextKey, fieldKey), selectionStart: field.selectionStart, selectionEnd: field.selectionEnd, scrollTop: field.scrollTop });
+    });
+  } catch (err) {}
+  return snapshot;
+}
+
+function restorePortalDraftSnapshotAfterRenderP494_(snapshot, rootEl) {
+  if (!snapshot || !snapshot.contextKey || !Array.isArray(snapshot.fields)) return;
+  const root = rootEl || document;
+  snapshot.fields.forEach(function(item) {
+    const field = getPortalDraftFieldP494_(snapshot.contextKey, item.fieldKey, false);
+    if (!field) return;
+    const shouldRestore = item.protected || field.dirty || field.pending || field.conflict || field.focused || field.userTouched;
+    if (!shouldRestore) return;
+    let el = null;
+    try { el = root.querySelector('[data-p494-draft-context="' + String(snapshot.contextKey).replace(/"/g, '\\"') + '"][data-p494-draft-key="' + String(item.fieldKey).replace(/"/g, '\\"') + '"]'); } catch (err) {}
+    if (!el) return;
+    writePortalDraftElementValueP494_(el, field.draftValue != null ? field.draftValue : item.value, { restoreSelection: true, selectionStart: item.selectionStart, selectionEnd: item.selectionEnd });
+    try { if (typeof item.scrollTop === 'number') el.scrollTop = item.scrollTop; } catch (err) {}
+    if (el.classList) el.classList.add('portal-draft-protected-p494');
+    try { getPortalDraftGuardStateP494_().metrics.restoredAfterRender++; } catch (err) {}
+  });
+}
+
+function nextPortalDraftRequestTokenP494_(contextKey) {
+  const ctx = getPortalDraftContextP494_(contextKey, true);
+  if (!ctx) return 0;
+  ctx.activeRequestToken = Number(ctx.activeRequestToken || 0) + 1;
+  ctx.updatedAt = getPortalDraftNowP494_();
+  return ctx.activeRequestToken;
+}
+
+function isPortalDraftRequestCurrentP494_(contextKey, token) {
+  const ctx = getPortalDraftContextP494_(contextKey, false);
+  if (!ctx) return false;
+  return Number(token || 0) === Number(ctx.activeRequestToken || 0);
+}
+
+function hasAnyProtectedPortalDraftP494_(contextKey) {
+  const state = getPortalDraftGuardStateP494_();
+  const contexts = state.contexts || {};
+  const keys = contextKey ? [normalizePortalDraftContextKeyP494_(contextKey)] : Object.keys(contexts);
+  for (let i = 0; i < keys.length; i++) {
+    const ctx = contexts[keys[i]];
+    if (!ctx || !ctx.fields) continue;
+    const fieldKeys = Object.keys(ctx.fields);
+    for (let j = 0; j < fieldKeys.length; j++) {
+      const f = ctx.fields[fieldKeys[j]];
+      if (f && (f.focused || f.dirty || f.pending || f.conflict || f.composing || f.userTouched)) return true;
+    }
+  }
+  return false;
+}
+
+function releasePortalDraftContextP494_(contextKey, options) {
+  options = options || {};
+  const key = normalizePortalDraftContextKeyP494_(contextKey);
+  const state = getPortalDraftGuardStateP494_();
+  const ctx = state.contexts && state.contexts[key];
+  if (!ctx) return true;
+  if (options.force !== true && hasAnyProtectedPortalDraftP494_(key)) {
+    ctx.closed = true;
+    return false;
+  }
+  delete state.contexts[key];
+  delete state.activeRequests[key];
+  return true;
+}
+
+function prunePortalDraftGuardP494_(options) {
+  options = options || {};
+  const state = getPortalDraftGuardStateP494_();
+  const now = getPortalDraftNowP494_();
+  const ttl = Number(options.ttlMs || (typeof PORTAL_DRAFT_GUARD_CONTEXT_TTL_MS_P494 !== 'undefined' ? PORTAL_DRAFT_GUARD_CONTEXT_TTL_MS_P494 : 30 * 60 * 1000));
+  const interval = Number(typeof PORTAL_DRAFT_GUARD_PRUNE_INTERVAL_MS_P494 !== 'undefined' ? PORTAL_DRAFT_GUARD_PRUNE_INTERVAL_MS_P494 : 60 * 1000);
+  if (!options.force && state.lastPrunedAt && now - Number(state.lastPrunedAt || 0) < interval) return;
+  Object.keys(state.contexts || {}).forEach(function(contextKey) {
+    const ctx = state.contexts[contextKey];
+    if (!ctx) return;
+    if (hasAnyProtectedPortalDraftP494_(contextKey)) return;
+    if (now - Number(ctx.updatedAt || ctx.createdAt || now) > ttl) delete state.contexts[contextKey];
+  });
+  state.lastPrunedAt = now;
+}
+
+function getPortalDraftGuardDebugSnapshotP494_() {
+  const state = getPortalDraftGuardStateP494_();
+  const out = { version: state.version || 'P494A', contexts: {}, metrics: Object.assign({}, state.metrics || {}) };
+  Object.keys(state.contexts || {}).forEach(function(contextKey) {
+    const ctx = state.contexts[contextKey];
+    out.contexts[contextKey] = { fields: {} };
+    Object.keys((ctx && ctx.fields) || {}).forEach(function(fieldKey) {
+      const f = ctx.fields[fieldKey];
+      out.contexts[contextKey].fields[fieldKey] = {
+        dirty: !!(f && f.dirty),
+        focused: !!(f && f.focused),
+        pending: !!(f && f.pending),
+        conflict: !!(f && f.conflict),
+        composing: !!(f && f.composing),
+        hasDeferredServerValue: !!(f && f.hasDeferredServerValue),
+        userTouched: !!(f && f.userTouched)
+      };
+    });
+  });
+  return out;
+}
 </script>

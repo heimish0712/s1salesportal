@@ -2,6 +2,8 @@
 let noticeSortKeyP15 = "";
 let noticeSortDirP15 = "asc";
 let currentNoticeEditIdP449 = "";
+let noticeWriteContextKeyP494D = "";
+let noticeWriteOpenSeqP494D = 0;
 function loadHomeNoticeList() {
   google.script.run
     .withSuccessHandler(renderHomeNoticeList)
@@ -203,13 +205,90 @@ function toNoticeDateInputP449_(noticeDate) {
   return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
 }
 
+
+// P494D: 공지사항 작성/수정 모달 입력 연속성 보호.
+function makeNoticeWriteContextKeyP494D_(mode, noticeId) {
+  const id = noticeId || (mode === 'create' ? ('new_' + (++noticeWriteOpenSeqP494D)) : 'unknown');
+  if (typeof makePortalDraftContextKeyP494_ === 'function') return makePortalDraftContextKeyP494_('noticeModal', id, mode || 'write');
+  return 'noticeModal:' + String(id) + ':' + String(mode || 'write');
+}
+
+function setNoticeWriteContextP494D_(mode, noticeId) {
+  try { if (noticeWriteContextKeyP494D && typeof releasePortalDraftContextP494_ === 'function') releasePortalDraftContextP494_(noticeWriteContextKeyP494D, { force: true }); } catch (err) {}
+  noticeWriteContextKeyP494D = makeNoticeWriteContextKeyP494D_(mode, noticeId || '');
+  return noticeWriteContextKeyP494D;
+}
+
+function registerNoticeWriteDraftFieldsP494D_(baseValues) {
+  try {
+    if (typeof isPortalDraftGuardEnabledP494_ === 'function' && !isPortalDraftGuardEnabledP494_('notice')) return;
+    if (!noticeWriteContextKeyP494D || typeof registerPortalDraftFieldP494_ !== 'function') return;
+    baseValues = baseValues || {};
+    [
+      ['noticeWriteTitle', 'title'],
+      ['noticeWriteAuthor', 'author'],
+      ['noticeWriteDate', 'noticeDate'],
+      ['noticeWriteContent', 'content']
+    ].forEach(function(pair) {
+      const el = document.getElementById(pair[0]);
+      if (!el) return;
+      const base = Object.prototype.hasOwnProperty.call(baseValues, pair[1]) ? baseValues[pair[1]] : (el.value || '');
+      registerPortalDraftFieldP494_(el, {
+        contextKey: noticeWriteContextKeyP494D,
+        fieldKey: pair[1],
+        baseValue: base || '',
+        serverValue: base || '',
+        baseLoaded: true,
+        scope: 'notice'
+      });
+    });
+  } catch (err) {}
+}
+
+function collectNoticeWriteValuesP494D_() {
+  registerNoticeWriteDraftFieldsP494D_();
+  return {
+    title: (document.getElementById('noticeWriteTitle') || {}).value || '',
+    author: (document.getElementById('noticeWriteAuthor') || {}).value || '',
+    noticeDate: (document.getElementById('noticeWriteDate') || {}).value || '',
+    content: (document.getElementById('noticeWriteContent') || {}).value || ''
+  };
+}
+
+function markNoticeWritePendingP494D_(patch, operationId) {
+  try { if (noticeWriteContextKeyP494D && typeof markPortalDraftPendingP494_ === 'function') markPortalDraftPendingP494_(noticeWriteContextKeyP494D, patch || {}, operationId || 'NOTICE_SAVE'); } catch (err) {}
+}
+
+function markNoticeWriteSavedP494D_(patch, operationId) {
+  try { if (noticeWriteContextKeyP494D && typeof markPortalDraftSavedP494_ === 'function') markPortalDraftSavedP494_(noticeWriteContextKeyP494D, patch || {}, operationId || 'NOTICE_SAVE'); } catch (err) {}
+}
+
+function markNoticeWriteConflictP494D_(serverValues) {
+  try {
+    if (noticeWriteContextKeyP494D && typeof markPortalDraftConflictP494_ === 'function') markPortalDraftConflictP494_(noticeWriteContextKeyP494D, ['title','author','noticeDate','content'], serverValues || {});
+  } catch (err) {}
+}
+
+function releaseNoticeWriteContextP494D_(force) {
+  try { if (noticeWriteContextKeyP494D && typeof releasePortalDraftContextP494_ === 'function') releasePortalDraftContextP494_(noticeWriteContextKeyP494D, { force: force !== false }); } catch (err) {}
+  noticeWriteContextKeyP494D = '';
+}
+
 function openNoticeWriteModal() {
   if (!canPortal_('canWriteNotice')) return alert('공지사항 작성 권한이 없습니다.');
   setNoticeWriteModalModeP449_('create');
-  document.getElementById('noticeWriteTitle').value = '';
-  document.getElementById('noticeWriteAuthor').value = (getPortalPermission_().name || getPortalPermission_().displayName || '');
-  document.getElementById('noticeWriteContent').value = '';
-  document.getElementById('noticeWriteDate').value = new Date().toISOString().slice(0, 10);
+  setNoticeWriteContextP494D_('create');
+  const baseP494D = {
+    title: '',
+    author: (getPortalPermission_().name || getPortalPermission_().displayName || ''),
+    content: '',
+    noticeDate: new Date().toISOString().slice(0, 10)
+  };
+  document.getElementById('noticeWriteTitle').value = baseP494D.title;
+  document.getElementById('noticeWriteAuthor').value = baseP494D.author;
+  document.getElementById('noticeWriteContent').value = baseP494D.content;
+  document.getElementById('noticeWriteDate').value = baseP494D.noticeDate;
+  registerNoticeWriteDraftFieldsP494D_(baseP494D);
   document.getElementById('noticeWriteBackdrop').style.display = 'flex';
   setTimeout(() => document.getElementById('noticeWriteTitle').focus(), 60);
 }
@@ -219,10 +298,18 @@ function openNoticeEditModalFromCurrent() {
   const notice = noticeCacheById[String(currentNoticeId || '')];
   if (!notice || !notice.id) return alert('수정할 공지사항을 먼저 열어주세요.');
   setNoticeWriteModalModeP449_('edit', notice);
-  document.getElementById('noticeWriteTitle').value = notice.title || '';
-  document.getElementById('noticeWriteAuthor').value = notice.author || (getPortalPermission_().name || getPortalPermission_().displayName || '');
-  document.getElementById('noticeWriteDate').value = toNoticeDateInputP449_(notice.noticeDate || notice.createdDate || notice.createdAt);
-  document.getElementById('noticeWriteContent').value = notice.content || '';
+  setNoticeWriteContextP494D_('edit', notice.id);
+  const baseP494D = {
+    title: notice.title || '',
+    author: notice.author || (getPortalPermission_().name || getPortalPermission_().displayName || ''),
+    noticeDate: toNoticeDateInputP449_(notice.noticeDate || notice.createdDate || notice.createdAt),
+    content: notice.content || ''
+  };
+  document.getElementById('noticeWriteTitle').value = baseP494D.title;
+  document.getElementById('noticeWriteAuthor').value = baseP494D.author;
+  document.getElementById('noticeWriteDate').value = baseP494D.noticeDate;
+  document.getElementById('noticeWriteContent').value = baseP494D.content;
+  registerNoticeWriteDraftFieldsP494D_(baseP494D);
   document.getElementById('noticeWriteBackdrop').style.display = 'flex';
   setTimeout(() => document.getElementById('noticeWriteTitle').focus(), 60);
 }
@@ -230,20 +317,23 @@ function openNoticeEditModalFromCurrent() {
 function closeNoticeWriteModal() {
   document.getElementById('noticeWriteBackdrop').style.display = 'none';
   currentNoticeEditIdP449 = '';
+  releaseNoticeWriteContextP494D_(true);
 }
 
 function saveNoticeFromModal() {
   if (!canPortal_('canWriteNotice')) return alert('공지사항 작성 권한이 없습니다.');
   const originalNoticeP489 = currentNoticeEditIdP449 ? (noticeCacheById[String(currentNoticeEditIdP449)] || null) : null;
+  const valuesP494D = collectNoticeWriteValuesP494D_();
   const payload = {
     id: currentNoticeEditIdP449,
-    title: document.getElementById('noticeWriteTitle').value,
-    author: document.getElementById('noticeWriteAuthor').value,
-    noticeDate: document.getElementById('noticeWriteDate').value,
-    content: document.getElementById('noticeWriteContent').value,
+    title: valuesP494D.title,
+    author: valuesP494D.author,
+    noticeDate: valuesP494D.noticeDate,
+    content: valuesP494D.content,
     clientSaveSource: currentNoticeEditIdP449 ? 'notice.updateModal' : 'notice.createModal',
     clientOperationId: 'NOTICE_SAVE_' + Date.now() + '_' + Math.floor(Math.random() * 1000000)
   };
+  markNoticeWritePendingP494D_({ title: payload.title, author: payload.author, noticeDate: payload.noticeDate, content: payload.content }, payload.clientOperationId);
   if (originalNoticeP489) {
     payload.expectedValues = {
       title: originalNoticeP489.title || '',
@@ -255,6 +345,7 @@ function saveNoticeFromModal() {
   const runner = google.script.run
     .withSuccessHandler((res) => {
       if (res && res.conflictP473) {
+        markNoticeWriteConflictP494D_(res && (res.currentValues || res.serverValues || {}));
         toast('공지사항 저장 충돌 확인 필요: 입력값은 유지됩니다.');
         return;
       }
@@ -265,6 +356,7 @@ function saveNoticeFromModal() {
         loadHomeNoticeList();
         return;
       }
+      markNoticeWriteSavedP494D_({ title: payload.title, author: payload.author, noticeDate: payload.noticeDate, content: payload.content }, payload.clientOperationId);
       closeNoticeWriteModal();
       toast(payload.id ? '공지사항을 수정했습니다.' : '공지사항을 저장했습니다.');
       if (res && res.notice) noticeCacheById[String(res.notice.id)] = res.notice;

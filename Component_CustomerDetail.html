@@ -137,6 +137,7 @@ function openDetailSafe_(rowNo, customerNo, options) {
 
 function renderDetail(d, options) {
   options = options || {};
+  const draftSnapshotP494B = (typeof captureCustomerDetailDraftSnapshotP494B_ === 'function') ? captureCustomerDetailDraftSnapshotP494B_(currentDetail || d || {}) : null;
   if (typeof prepareDetailForRenderP457_ === 'function') {
     d = prepareDetailForRenderP457_(d, options);
   }
@@ -216,6 +217,10 @@ function renderDetail(d, options) {
   }
   try { refreshQuoteInfoPanelP484_({ displayOnly: true, reason: 'render' }); } catch (err) {}
   try { if (typeof bindDetailDraftProtectionP457_ === 'function') bindDetailDraftProtectionP457_(); } catch (err) {}
+  try { if (typeof registerCustomerDetailDraftFieldsP494B_ === 'function') registerCustomerDetailDraftFieldsP494B_({ detail: d, reason: options.reason || 'renderDetail' }); } catch (err) {}
+  try { if (typeof restoreCustomerDetailDraftSnapshotP494B_ === 'function') restoreCustomerDetailDraftSnapshotP494B_(draftSnapshotP494B); } catch (err) {}
+  try { if (typeof registerCustomerDetailDraftFieldsP494B_ === 'function') registerCustomerDetailDraftFieldsP494B_({ detail: d, reason: 'afterRestore' }); } catch (err) {}
+  try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
   try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch (err) {}
 }
 
@@ -353,6 +358,8 @@ function buildDetailBaselineFallbackP461_() {
 }
 
 function getDirtyDetailInputValues_() {
+  const guardedDirtyP494B = (typeof collectCustomerDetailDraftDirtyValuesP494B_ === 'function') ? collectCustomerDetailDraftDirtyValuesP494B_() : null;
+  if (guardedDirtyP494B) return guardedDirtyP494B;
   const currentValues = collectCurrentDetailInputValues_();
   // P461: baseline이 비어 있으면 모든 input을 dirty로 보는 사고가 납니다.
   // 로그상 detailModal 저장이 전체 필드 20개 이상을 보내 stale 충돌을 만들었으므로, baseline fallback을 반드시 둡니다.
@@ -368,6 +375,7 @@ function getDirtyDetailInputValues_() {
 
 function setDetailEditBaselineFromCurrentInputs_() {
   detailEditBaselineValues = collectCurrentDetailInputValues_();
+  try { if (typeof registerCustomerDetailDraftFieldsP494B_ === 'function') registerCustomerDetailDraftFieldsP494B_({ detail: currentDetail || {}, forceBase: true, reason: 'setBaseline' }); } catch (err) {}
 }
 
 function clearDetailEditBaseline_() {
@@ -406,6 +414,252 @@ function mergeDetailDraftValues_(detail, values) {
     });
     return next;
   }
+}
+
+
+// P494B: 고객상세 모달 Input Continuity Guard 연결부.
+// P494A DraftGuard 코어를 고객상세 입력 필드에 연결합니다.
+// 목적: full detail 보강/저장 응답/TM 동기화성 refresh가 사용자의 입력값과 커서를 덮지 못하게 하는 것입니다.
+function getCustomerDetailDraftContextKeyP494B_(detail) {
+  detail = detail || currentDetail || {};
+  const isNew = !!(detail && detail.isNew);
+  const rowNo = Number(detail.rowNo || (currentDetail && currentDetail.rowNo) || 0) || 0;
+  const customerNo = normalizeCustomerNoForKey_((detail.customerNo || currentDetailCustomerNo || (isNew ? 'new' : '')));
+  if (!rowNo && !isNew) return '';
+  if (typeof makePortalDraftContextKeyP494_ === 'function') {
+    return makePortalDraftContextKeyP494_('detailModal', isNew ? 'new' : rowNo, customerNo || (isNew ? 'new' : ''));
+  }
+  return 'detailModal:' + (isNew ? 'new' : rowNo) + ':' + (customerNo || '');
+}
+
+function getCurrentCustomerDetailDraftContextKeyP494B_() {
+  return getCustomerDetailDraftContextKeyP494B_(currentDetail || { rowNo: 0, customerNo: currentDetailCustomerNo || '' });
+}
+
+function isCustomerDetailDraftGuardEnabledP494B_() {
+  try { return typeof isPortalDraftGuardEnabledP494_ === 'function' && isPortalDraftGuardEnabledP494_('detailModal'); } catch (err) { return false; }
+}
+
+function normalizeCustomerDetailDraftCompareP494B_(value, key) {
+  try { return normalizeDetailSaveCompareValue_(value, key); } catch (err) {}
+  return String(value == null ? '' : value).replace(/\r?\n/g, '\n');
+}
+
+function readCustomerDetailDraftElementValueP494B_(el) {
+  if (!el) return '';
+  try { return readDetailInputValueForSaveP483_(el); } catch (err) {}
+  try { return readPortalDraftElementValueP494_(el); } catch (err2) {}
+  if (el.type === 'checkbox') return el.checked ? 'TRUE' : 'FALSE';
+  return String(el.value == null ? '' : el.value);
+}
+
+function getCustomerDetailDraftBaseValueP494B_(key, detail, el) {
+  key = String(key || '').trim();
+  if (detailEditBaselineValues && Object.prototype.hasOwnProperty.call(detailEditBaselineValues, key)) {
+    return detailEditBaselineValues[key] == null ? '' : String(detailEditBaselineValues[key]);
+  }
+  let source = null;
+  try {
+    if (detailSessionP457 && isSameDetailSessionP457_(detail && detail.rowNo || currentDetail && currentDetail.rowNo, detail && detail.customerNo || currentDetailCustomerNo)) {
+      source = detailSessionP457.serverSnapshot || null;
+    }
+  } catch (err) {}
+  source = source || detail || currentDetail || {};
+  let value = '';
+  try { value = getDetailValueByKeyP457_(source, key); } catch (err) { value = source && source[key]; }
+  if ((value == null || String(value) === '') && el) return readCustomerDetailDraftElementValueP494B_(el);
+  if (key === 'areaCheckNeeded' || key === 'addressCheckNeeded') return isTruthyDetailCheckboxP484_(value) ? 'TRUE' : 'FALSE';
+  if (key === 'finalQuote') {
+    const n = parsePortalClientMoneyP462_(value);
+    return isFinite(n) && n > 0 ? formatPortalClientMoneyPlainP484_(n) : String(value == null ? '' : value);
+  }
+  if (key === 'discountRate') return formatDetailDiscountRateDisplayP483_(value);
+  if (key === 'buildingType') return normalizeDetailBuildingTypeP488_(value);
+  if (key === 'contractUnit' || key === 'maintenance' || key === 'performance') return normalizeDetailContractFieldForDbP280_(key, value);
+  return String(value == null ? '' : value);
+}
+
+function syncCustomerDetailDraftFieldStateP494B_(field, key, currentValue, baseValue, options) {
+  options = options || {};
+  if (!field) return null;
+  const currentText = String(currentValue == null ? '' : currentValue);
+  const baseText = String(baseValue == null ? '' : baseValue);
+  const protectedNow = !!(field.focused || field.dirty || field.pending || field.conflict || field.composing || field.userTouched);
+  if (options.forceBase === true || !protectedNow || field.baseValue === undefined || field.baseValue === null) {
+    field.baseValue = baseText;
+  }
+  field.serverValue = baseText;
+  field.draftValue = currentText;
+  field.updatedAt = Date.now();
+  if (options.userTouched !== false) {
+    field.userTouched = true;
+    field.lastEditAt = Date.now();
+  }
+  if (options.baseLoaded !== undefined) field.baseLoaded = options.baseLoaded !== false;
+  field.dirty = normalizeCustomerDetailDraftCompareP494B_(currentText, key) !== normalizeCustomerDetailDraftCompareP494B_(field.baseValue, key);
+  if (!field.dirty && !field.pending && !field.conflict && !field.focused) field.userTouched = false;
+  return field;
+}
+
+function registerCustomerDetailDraftFieldsP494B_(options) {
+  options = options || {};
+  if (!isCustomerDetailDraftGuardEnabledP494B_() || typeof registerPortalDraftFieldP494_ !== 'function') return '';
+  const detail = options.detail || currentDetail || {};
+  const contextKey = getCustomerDetailDraftContextKeyP494B_(detail);
+  if (!contextKey) return '';
+  const root = options.root || modalBody || document;
+  const fullReady = !!(detail && detail.isNew) || isCustomerDetailFullReadyForEditP492_();
+  try { if (typeof ensurePortalDraftGuardEventDelegatesP494_ === 'function') ensurePortalDraftGuardEventDelegatesP494_(); } catch (err) {}
+  try {
+    Array.prototype.slice.call(root.querySelectorAll('.detail-edit-input')).forEach(function(el) {
+      if (!el || !el.getAttribute) return;
+      const key = String(el.getAttribute('data-key') || '').trim();
+      if (!key) return;
+      const currentValue = readCustomerDetailDraftElementValueP494B_(el);
+      const baseValue = getCustomerDetailDraftBaseValueP494B_(key, detail, el);
+      let field = null;
+      try {
+        field = registerPortalDraftFieldP494_(el, {
+          scope: 'detailModal',
+          contextKey: contextKey,
+          fieldKey: key,
+          initialValue: currentValue,
+          baseValue: baseValue,
+          serverValue: baseValue,
+          baseLoaded: fullReady,
+          selector: '.detail-edit-input[data-key="' + String(key).replace(/"/g, '\\"') + '"]'
+        });
+      } catch (err) { field = null; }
+      if (field && (!field.dirty && !field.pending && !field.conflict && !field.userTouched || options.forceBase === true)) {
+        syncCustomerDetailDraftFieldStateP494B_(field, key, currentValue, baseValue, { userTouched: false, baseLoaded: fullReady, forceBase: options.forceBase === true });
+      }
+      if (!el.__customerDetailDraftGuardBoundP494B) {
+        el.__customerDetailDraftGuardBoundP494B = true;
+        const handler = function() {
+          try {
+            const ctxKey = getCurrentCustomerDetailDraftContextKeyP494B_() || contextKey;
+            const f = getPortalDraftFieldP494_(ctxKey, key, true, { initialValue: baseValue, baseValue: baseValue, serverValue: baseValue, baseLoaded: fullReady });
+            syncCustomerDetailDraftFieldStateP494B_(f, key, readCustomerDetailDraftElementValueP494B_(el), f && f.baseValue !== undefined ? f.baseValue : baseValue, { userTouched: true, baseLoaded: true });
+          } catch (err) {}
+        };
+        el.addEventListener('input', handler);
+        el.addEventListener('change', handler);
+        el.addEventListener('blur', handler);
+      }
+    });
+  } catch (err) {
+    try { console.warn('P494B 고객상세 DraftGuard 등록 실패', err); } catch (ignore) {}
+  }
+  return contextKey;
+}
+
+function markCustomerDetailDraftFieldP494B_(key, value, options) {
+  options = options || {};
+  if (!isCustomerDetailDraftGuardEnabledP494B_() || typeof getPortalDraftFieldP494_ !== 'function') return null;
+  key = String(key || '').trim();
+  if (!key) return null;
+  const contextKey = getCurrentCustomerDetailDraftContextKeyP494B_();
+  if (!contextKey) return null;
+  const el = getDetailInputByKey_ ? getDetailInputByKey_(key) : null;
+  const baseValue = options.baseValue !== undefined ? options.baseValue : getCustomerDetailDraftBaseValueP494B_(key, currentDetail || {}, el);
+  const field = getPortalDraftFieldP494_(contextKey, key, true, { initialValue: baseValue, baseValue: baseValue, serverValue: baseValue, baseLoaded: options.baseLoaded !== false });
+  return syncCustomerDetailDraftFieldStateP494B_(field, key, value, field && field.baseValue !== undefined ? field.baseValue : baseValue, { userTouched: options.userTouched !== false, baseLoaded: options.baseLoaded !== false });
+}
+
+function collectCustomerDetailDraftDirtyValuesP494B_() {
+  if (!isCustomerDetailDraftGuardEnabledP494B_() || typeof getPortalDraftContextP494_ !== 'function') return null;
+  const contextKey = getCurrentCustomerDetailDraftContextKeyP494B_();
+  if (!contextKey) return null;
+  const ctx = getPortalDraftContextP494_(contextKey, false);
+  if (!ctx || !ctx.fields) return null;
+  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
+    const key = el && el.getAttribute ? String(el.getAttribute('data-key') || '').trim() : '';
+    if (!key) return;
+    const field = ctx.fields[key];
+    if (!field) return;
+    syncCustomerDetailDraftFieldStateP494B_(field, key, readCustomerDetailDraftElementValueP494B_(el), field.baseValue, { userTouched: field.userTouched === true, baseLoaded: field.baseLoaded !== false });
+  });
+  const dirty = {};
+  Object.keys(ctx.fields || {}).forEach(function(key) {
+    const field = ctx.fields[key];
+    if (!field || field.baseLoaded === false) return;
+    const curNorm = normalizeCustomerDetailDraftCompareP494B_(field.draftValue, key);
+    const baseNorm = normalizeCustomerDetailDraftCompareP494B_(field.baseValue, key);
+    if (curNorm === baseNorm) {
+      if (!field.pending && !field.conflict && !field.focused) {
+        field.dirty = false;
+        field.userTouched = false;
+      }
+      return;
+    }
+    const p457Dirty = !!(detailSessionP457 && detailSessionP457.dirtyFields && detailSessionP457.dirtyFields[key]);
+    if (field.userTouched !== true && !field.pending && !field.conflict && !p457Dirty) return;
+    dirty[key] = field.draftValue == null ? '' : String(field.draftValue);
+  });
+  return dirty;
+}
+
+function getCustomerDetailDraftExpectedValuesP494B_(patch) {
+  const contextKey = getCurrentCustomerDetailDraftContextKeyP494B_();
+  const ctx = (typeof getPortalDraftContextP494_ === 'function' && contextKey) ? getPortalDraftContextP494_(contextKey, false) : null;
+  const out = {};
+  Object.keys(patch || {}).forEach(function(key) {
+    const field = ctx && ctx.fields ? ctx.fields[key] : null;
+    if (field && field.baseValue !== undefined) out[key] = field.baseValue == null ? '' : String(field.baseValue);
+    else {
+      try { out[key] = getDetailBaseValuesForPatchP457_({ [key]: patch[key] })[key] || ''; } catch (err) { out[key] = ''; }
+    }
+  });
+  return out;
+}
+
+function markCustomerDetailDraftPendingP494B_(patch, operationId) {
+  if (!isCustomerDetailDraftGuardEnabledP494B_() || typeof markPortalDraftPendingP494_ !== 'function') return;
+  const contextKey = getCurrentCustomerDetailDraftContextKeyP494B_();
+  if (contextKey) markPortalDraftPendingP494_(contextKey, patch || {}, operationId || '');
+}
+
+function markCustomerDetailDraftSavedP494B_(patch, operationId) {
+  if (!isCustomerDetailDraftGuardEnabledP494B_() || typeof markPortalDraftSavedP494_ !== 'function') return;
+  const contextKey = getCurrentCustomerDetailDraftContextKeyP494B_();
+  if (contextKey) markPortalDraftSavedP494_(contextKey, patch || {}, operationId || '');
+}
+
+function markCustomerDetailDraftConflictP494B_(fields, serverValues) {
+  if (!isCustomerDetailDraftGuardEnabledP494B_() || typeof markPortalDraftConflictP494_ !== 'function') return;
+  const contextKey = getCurrentCustomerDetailDraftContextKeyP494B_();
+  if (contextKey) markPortalDraftConflictP494_(contextKey, fields || [], serverValues || {});
+}
+
+function applyCustomerDetailServerValuesToDraftGuardP494B_(serverDetail, options) {
+  options = options || {};
+  if (!serverDetail || !isCustomerDetailDraftGuardEnabledP494B_() || typeof safeApplyPortalServerValueP494_ !== 'function') return;
+  const contextKey = getCustomerDetailDraftContextKeyP494B_(serverDetail);
+  if (!contextKey) return;
+  document.querySelectorAll('.detail-edit-input').forEach(function(el) {
+    const key = el && el.getAttribute ? String(el.getAttribute('data-key') || '').trim() : '';
+    if (!key) return;
+    const serverValue = getCustomerDetailDraftBaseValueP494B_(key, serverDetail, null);
+    try {
+      safeApplyPortalServerValueP494_(contextKey, key, serverValue == null ? '' : String(serverValue), {
+        scope: 'detailModal',
+        element: el,
+        skipDom: !!options.skipDom,
+        reason: options.reason || 'serverDetail'
+      });
+    } catch (err) {}
+  });
+}
+
+function captureCustomerDetailDraftSnapshotP494B_(detail) {
+  const contextKey = getCustomerDetailDraftContextKeyP494B_(detail || currentDetail || {});
+  if (!contextKey || typeof capturePortalDraftSnapshotBeforeRenderP494_ !== 'function') return null;
+  try { return capturePortalDraftSnapshotBeforeRenderP494_(contextKey, modalBody || document); } catch (err) { return null; }
+}
+
+function restoreCustomerDetailDraftSnapshotP494B_(snapshot) {
+  if (!snapshot || typeof restorePortalDraftSnapshotAfterRenderP494_ !== 'function') return;
+  try { restorePortalDraftSnapshotAfterRenderP494_(snapshot, modalBody || document); } catch (err) {}
 }
 
 // P457: 상세 모달 No-Interrupt 상태 계층
@@ -549,22 +803,28 @@ function getDetailProtectedFieldsP457_() {
 }
 
 function hasActiveDetailDraftP457_() {
+  const p494Active = (typeof hasAnyProtectedPortalDraftP494_ === 'function' && typeof getCurrentCustomerDetailDraftContextKeyP494B_ === 'function')
+    ? hasAnyProtectedPortalDraftP494_(getCurrentCustomerDetailDraftContextKeyP494B_())
+    : false;
   const session = detailSessionP457;
-  if (!session) return false;
-  return !!(session.focusedField || Object.keys(session.draft || {}).length || Object.keys(session.dirtyFields || {}).length || (session.pendingOps || []).length);
+  if (!session) return !!p494Active;
+  return !!(p494Active || session.focusedField || Object.keys(session.draft || {}).length || Object.keys(session.dirtyFields || {}).length || (session.pendingOps || []).length);
 }
 
 function markDetailDraftFieldP457_(key, value, options) {
   options = options || {};
   key = String(key || '');
-  if (!key || !detailSessionP457) return;
+  if (!key) return;
   if (!isDetailEditMode && !options.force) return;
+  try { if (typeof markCustomerDetailDraftFieldP494B_ === 'function') markCustomerDetailDraftFieldP494B_(key, value, { userTouched: options.userTouched !== false, baseLoaded: isCustomerDetailFullReadyForEditP492_() || !!(currentDetail && currentDetail.isNew) }); } catch (err) {}
+  if (!detailSessionP457) return;
   detailSessionP457.draft[key] = value == null ? '' : String(value);
   detailSessionP457.dirtyFields[key] = true;
   detailSessionP457.syncStatus = 'dirty';
 }
 
 function bindDetailDraftProtectionP457_() {
+  try { if (typeof registerCustomerDetailDraftFieldsP494B_ === 'function') registerCustomerDetailDraftFieldsP494B_({ detail: currentDetail || {}, reason: 'bindDetailDraftProtection' }); } catch (err) {}
   const session = detailSessionP457;
   if (!session) return;
   document.querySelectorAll('.detail-edit-input').forEach(function(el) {
@@ -632,6 +892,7 @@ function applyServerDetailSafelyP457_(serverDetail, options) {
   session.pendingOps = prunePendingOpsP457_(session.pendingOps || []);
 
   const shouldNotRender = !!(options.neverRender || isDetailEditMode || hasActiveDetailDraftP457_());
+  try { if (typeof applyCustomerDetailServerValuesToDraftGuardP494B_ === 'function') applyCustomerDetailServerValuesToDraftGuardP494B_(serverDetail, { reason: options.reason || 'safeServerDetail', skipDom: shouldNotRender }); } catch (err) {}
   const view = computeDetailViewModelP457_(session.serverSnapshot);
   currentDetail = view;
   currentDetailCustomerNo = normalizeCustomerNoForKey_(view.customerNo || customerNo);
@@ -692,6 +953,7 @@ function addDetailPendingOperationP457_(op) {
     Object.keys(op.patch || {}).forEach(function(k) { session.dirtyFields[k] = true; });
     session.syncStatus = 'local';
   }
+  try { if (typeof markCustomerDetailDraftPendingP494B_ === 'function') markCustomerDetailDraftPendingP494B_(op.patch || {}, op.opId || ''); } catch (err) {}
   try { if (typeof persistDetailDurableOperationP458_ === 'function') persistDetailDurableOperationP458_(op); } catch (err) {}
 }
 
@@ -746,9 +1008,9 @@ function markDetailOperationAppliedP457_(op, confirmedValues, result) {
     // 저장 응답은 해당 operation의 필드만 확정합니다. 사용자가 그 후 같은 필드를 다시 바꿨으면 draft를 보존합니다.
     Object.keys(confirmedValues || {}).forEach(function(k) {
       const currentInput = document.querySelector('.detail-edit-input[data-key="' + String(k).replace(/"/g, '\\"') + '"]');
-      const currentVal = currentInput ? String(currentInput.value || '') : String((detailSessionP457.draft || {})[k] || '');
+      const currentVal = currentInput ? readDetailInputValueForSaveP483_(currentInput) : String((detailSessionP457.draft || {})[k] || '');
       const savedVal = String(confirmedValues[k] == null ? '' : confirmedValues[k]);
-      if (!currentInput || currentVal === savedVal) {
+      if (!currentInput || normalizeDetailSaveCompareValue_(currentVal, k) === normalizeDetailSaveCompareValue_(savedVal, k)) {
         delete detailSessionP457.draft[k];
         delete detailSessionP457.dirtyFields[k];
       }
@@ -756,6 +1018,7 @@ function markDetailOperationAppliedP457_(op, confirmedValues, result) {
     detailSessionP457.syncStatus = detailSessionP457.pendingOps.length ? 'queued' : (Object.keys(detailSessionP457.draft || {}).length ? 'dirty' : 'synced');
     currentDetail = computeDetailViewModelP457_(detailSessionP457.serverSnapshot);
   }
+  try { if (typeof markCustomerDetailDraftSavedP494B_ === 'function') markCustomerDetailDraftSavedP494B_(confirmedValues || {}, op.opId || ''); } catch (err) {}
 }
 
 function markDetailOperationFailedP457_(op, err, conflict) {
@@ -776,6 +1039,7 @@ function markDetailOperationFailedP457_(op, err, conflict) {
     Object.keys(op.patch || {}).forEach(function(k) { detailSessionP457.dirtyFields[k] = true; });
     currentDetail = computeDetailViewModelP457_(detailSessionP457.serverSnapshot);
   }
+  try { if (conflict && typeof markCustomerDetailDraftConflictP494B_ === 'function') markCustomerDetailDraftConflictP494B_(Object.keys(op.patch || {}), {}); } catch (err) {}
 }
 
 function clearDraftForSavedPatchP457_(patch) {
@@ -1800,6 +2064,7 @@ function prepareDetailValuesForSaveP484_(values) {
     values.contact = normalizeContactProfileNameClientP484_(values.contact);
     const contactEl = getDetailInputByKey_('contact');
     if (contactEl) contactEl.value = values.contact;
+    try { if (typeof markCustomerDetailDraftFieldP494B_ === 'function') markCustomerDetailDraftFieldP494B_('contact', values.contact, { userTouched: true }); } catch (err) {}
   }
   ['areaCheckNeeded','addressCheckNeeded'].forEach(function(key) {
     if (Object.prototype.hasOwnProperty.call(values, key)) values[key] = isTruthyDetailCheckboxP484_(values[key]) ? 'TRUE' : 'FALSE';
@@ -1811,6 +2076,7 @@ function prepareDetailValuesForSaveP484_(values) {
       values.memo = nextMemo;
       const memoEl = getMasterMemoTextareaP484_();
       if (memoEl) memoEl.value = nextMemo;
+      try { if (typeof markCustomerDetailDraftFieldP494B_ === 'function') markCustomerDetailDraftFieldP494B_('memo', nextMemo, { userTouched: true }); } catch (err) {}
     }
   }
   return values;
@@ -2130,7 +2396,9 @@ function saveDetailFields() {
 
   const saveSeq = ++customerDetailSaveSeq;
   const clientSavedAtP430 = new Date().toISOString();
-  const baseValuesP457 = (typeof getDetailBaseValuesForPatchP457_ === 'function') ? getDetailBaseValuesForPatchP457_(values) : {};
+  const baseValuesP457 = (typeof getCustomerDetailDraftExpectedValuesP494B_ === 'function')
+    ? getCustomerDetailDraftExpectedValuesP494B_(values)
+    : ((typeof getDetailBaseValuesForPatchP457_ === 'function') ? getDetailBaseValuesForPatchP457_(values) : {});
   const opP457 = (typeof createDetailSaveOperationP457_ === 'function')
     ? createDetailSaveOperationP457_(rowNo, targetCustomerNo, values, baseValuesP457)
     : null;

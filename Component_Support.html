@@ -18,6 +18,145 @@ function isSupportSectionActiveV57_() {
   return !!(section && section.classList && section.classList.contains('active'));
 }
 const SUPPORT_PREFILL_STORAGE_KEY_P462 = 'salesPortal.support.pendingCustomerPrefill.p462';
+
+
+// P494D: 영업지원 요청 작성/처리 입력값 보호.
+// 목록 reload, 상세 background 보정, inline 패널 재렌더가 작성 중인 값을 덮지 못하게 합니다.
+function isSupportDraftGuardEnabledP494D_() {
+  try { return typeof isPortalDraftGuardEnabledP494_ !== 'function' || isPortalDraftGuardEnabledP494_('support'); } catch (err) { return true; }
+}
+
+function getSupportInlineDraftContextKeyP494D_() {
+  if (typeof makePortalDraftContextKeyP494_ === 'function') return makePortalDraftContextKeyP494_('supportInline', 'new', 'entry');
+  return 'supportInline:new:entry';
+}
+
+function getSupportModalDraftContextKeyP494D_(rowNo) {
+  const rn = rowNo != null ? rowNo : supportCurrentRowNo;
+  if (typeof makePortalDraftContextKeyP494_ === 'function') return makePortalDraftContextKeyP494_('supportModal', rn || 'new', 'request');
+  return 'supportModal:' + (rn || 'new') + ':request';
+}
+
+function registerSupportDraftElementP494D_(contextKey, id, fieldKey, baseValue, scope, options) {
+  options = options || {};
+  const el = document.getElementById(id);
+  if (!el || !isSupportDraftGuardEnabledP494D_() || typeof registerPortalDraftFieldP494_ !== 'function') return null;
+  const base = String(baseValue == null ? '' : baseValue);
+  try {
+    el.setAttribute('data-p494-draft-context', contextKey);
+    el.setAttribute('data-p494-draft-key', fieldKey);
+    const field = registerPortalDraftFieldP494_(el, { contextKey: contextKey, fieldKey: fieldKey, baseValue: base, serverValue: base, baseLoaded: true, scope: scope || 'support' });
+    if (field && options.forceBase) {
+      field.baseValue = base;
+      field.serverValue = base;
+      field.draftValue = typeof readPortalDraftElementValueP494_ === 'function' ? readPortalDraftElementValueP494_(el) : (el.value || '');
+      field.dirty = false;
+      field.userTouched = false;
+      field.pending = false;
+      field.conflict = false;
+      field.baseLoaded = true;
+    }
+    return field;
+  } catch (err) {
+    return null;
+  }
+}
+
+function captureSupportInlineDraftSnapshotP494D_() {
+  if (!isSupportDraftGuardEnabledP494D_() || typeof capturePortalDraftSnapshotBeforeRenderP494_ !== 'function') return null;
+  const area = document.getElementById('supportInlineArea') || document;
+  try { return capturePortalDraftSnapshotBeforeRenderP494_(getSupportInlineDraftContextKeyP494D_(), area); } catch (err) { return null; }
+}
+
+function restoreSupportInlineDraftSnapshotP494D_(snapshot) {
+  if (!snapshot || typeof restorePortalDraftSnapshotAfterRenderP494_ !== 'function') return;
+  const area = document.getElementById('supportInlineArea') || document;
+  try { restorePortalDraftSnapshotAfterRenderP494_(snapshot, area); } catch (err) {}
+}
+
+function registerSupportInlineDraftFieldsP494D_(options) {
+  options = options || {};
+  const contextKey = getSupportInlineDraftContextKeyP494D_();
+  registerSupportDraftElementP494D_(contextKey, 'supportInlineRequestType', 'requestType', (document.getElementById('supportInlineRequestType') || {}).value || '', 'support', options);
+  registerSupportDraftElementP494D_(contextKey, 'supportInlineRequester', 'requester', (document.getElementById('supportInlineRequester') || {}).value || '', 'support', options);
+  registerSupportDraftElementP494D_(contextKey, 'supportInlineCustomerNo', 'customerNo', (document.getElementById('supportInlineCustomerNo') || {}).value || '', 'support', options);
+  registerSupportDraftElementP494D_(contextKey, 'supportInlineCustomerName', 'customerName', (document.getElementById('supportInlineCustomerName') || {}).value || '', 'support', options);
+  registerSupportDraftElementP494D_(contextKey, 'supportInlineRequestText', 'requestText', (document.getElementById('supportInlineRequestText') || {}).value || '', 'support', options);
+}
+
+function releaseSupportInlineDraftContextP494D_() {
+  if (typeof releasePortalDraftContextP494_ === 'function') {
+    try { releasePortalDraftContextP494_(getSupportInlineDraftContextKeyP494D_(), { force: true }); } catch (err) {}
+  }
+}
+
+function getSupportModalFieldMapP494D_() {
+  return [
+    ['supportReceiptNo', 'receiptNo'], ['supportRequestType', 'requestType'], ['supportRequester', 'requester'], ['supportHandler', 'handler'],
+    ['supportCustomerNo', 'customerNo'], ['supportCustomerName', 'customerName'], ['supportRequestText', 'requestText'],
+    ['supportDiscountRate', 'discountRate'], ['supportQuoteAmount', 'quoteAmount'], ['supportArea', 'area'], ['supportRegion', 'region'],
+    ['supportContactName', 'contactName'], ['supportContactEmail', 'contactEmail'], ['supportProcessContent', 'processContent'],
+    ['supportCompletedAt', 'completedAt'], ['supportStatus', 'status'], ['supportMasterMemo', 'masterMemo'], ['supportAutoSendCheck', 'autoSendCheck']
+  ];
+}
+
+function registerSupportModalDraftFieldsP494D_(item, options) {
+  options = options || {};
+  item = item || {};
+  const contextKey = getSupportModalDraftContextKeyP494D_(supportCurrentRowNo || (item && item.rowNo) || 0);
+  getSupportModalFieldMapP494D_().forEach(function(pair) {
+    const key = pair[1];
+    const base = Object.prototype.hasOwnProperty.call(item, key) ? item[key] : ((document.getElementById(pair[0]) || {}).value || '');
+    registerSupportDraftElementP494D_(contextKey, pair[0], key, base || '', 'support', options);
+  });
+}
+
+function setSupportModalFieldValueP494D_(id, key, value, options) {
+  options = options || {};
+  const el = document.getElementById(id);
+  if (!el) return false;
+  const contextKey = getSupportModalDraftContextKeyP494D_(supportCurrentRowNo || 0);
+  if (isSupportDraftGuardEnabledP494D_() && typeof safeApplyPortalServerValueP494_ === 'function') {
+    const res = safeApplyPortalServerValueP494_(contextKey, key, value || '', { element: el, force: options.force === true, scope: 'support' });
+    return !(res && res.protected);
+  }
+  el.value = value || '';
+  return true;
+}
+
+function isSupportModalDraftProtectedP494D_(rowNo) {
+  if (!isSupportDraftGuardEnabledP494D_() || typeof hasAnyProtectedPortalDraftP494_ !== 'function') return false;
+  try { return hasAnyProtectedPortalDraftP494_(getSupportModalDraftContextKeyP494D_(rowNo || supportCurrentRowNo || 0)); } catch (err) { return false; }
+}
+
+function releaseSupportModalDraftContextP494D_(rowNo) {
+  if (typeof releasePortalDraftContextP494_ === 'function') {
+    try { releasePortalDraftContextP494_(getSupportModalDraftContextKeyP494D_(rowNo || supportCurrentRowNo || 0), { force: true }); } catch (err) {}
+  }
+}
+
+function markSupportInlinePendingP494D_(payload) {
+  if (typeof markPortalDraftPendingP494_ !== 'function') return;
+  markPortalDraftPendingP494_(getSupportInlineDraftContextKeyP494D_(), { requestType: payload.requestType || '', requester: payload.requester || '', customerNo: payload.customerNo || '', customerName: payload.customerName || '', requestText: payload.requestText || '' }, payload.clientRequestId || 'SUPNEW');
+}
+
+function markSupportInlineConflictP494D_() {
+  if (typeof markPortalDraftConflictP494_ !== 'function') return;
+  markPortalDraftConflictP494_(getSupportInlineDraftContextKeyP494D_(), ['requestType','requester','customerNo','customerName','requestText'], {});
+}
+
+function markSupportModalPendingP494D_(payload) {
+  if (typeof markPortalDraftPendingP494_ !== 'function') return;
+  const patch = {};
+  getSupportModalFieldMapP494D_().forEach(function(pair) { patch[pair[1]] = payload[pair[1]] || ''; });
+  markPortalDraftPendingP494_(getSupportModalDraftContextKeyP494D_(payload.rowNo || supportCurrentRowNo || 0), patch, payload.clientRequestId || 'SUPSAVE');
+}
+
+function markSupportModalConflictP494D_(payload) {
+  if (typeof markPortalDraftConflictP494_ !== 'function') return;
+  const keys = getSupportModalFieldMapP494D_().map(function(pair) { return pair[1]; });
+  markPortalDraftConflictP494_(getSupportModalDraftContextKeyP494D_((payload && payload.rowNo) || supportCurrentRowNo || 0), keys, {});
+}
 function setPendingSupportCustomerPrefillP462_(info) {
   info = Object.assign({}, info || {}, { createdAt: Date.now(), stickyP462: true });
   window.__supportPendingCustomerPrefillP461 = info;
@@ -386,6 +525,7 @@ function renderSupportBoard(rows) {
 function renderSupportInlineEntryPanel_() {
   const area = document.getElementById('supportInlineArea');
   if (!area) return;
+  const draftSnapshotP494D = (typeof captureSupportInlineDraftSnapshotP494D_ === 'function') ? captureSupportInlineDraftSnapshotP494D_() : null;
   if (!canWritePortalSupportP310_()) {
     area.innerHTML = '<div class="support-inline-denied">영업지원 요청 작성 권한이 없습니다.</div>';
     updateSupportRoleUiV65_();
@@ -401,6 +541,9 @@ function renderSupportInlineEntryPanel_() {
     '</tr></thead><tbody>' + renderSupportInlineEntryRow_() + '</tbody></table>';
   area.innerHTML = html;
   initSupportInlineEntryDefaults_();
+  try { registerSupportInlineDraftFieldsP494D_(); } catch (err) {}
+  try { restoreSupportInlineDraftSnapshotP494D_(draftSnapshotP494D); } catch (err) {}
+  try { registerSupportInlineDraftFieldsP494D_(); } catch (err) {}
   // P461: 고객상세검색 → 영업지원요청 이동 직후 support 데이터 보강이 inline 폼을 다시 그려도 고객번호를 즉시 재적용합니다.
   try { scheduleSupportPrefillReapplyP462_('renderInlinePanel'); } catch (err) {}
 }
@@ -468,6 +611,7 @@ function initSupportInlineEntryDefaults_() {
 
 function resetSupportInlineEntry(options) {
   options = options || {};
+  try { releaseSupportInlineDraftContextP494D_(); } catch (err) {}
   ['supportInlineCustomerNo','supportInlineCustomerName','supportInlineRequestText'].forEach(function(id){ const el=document.getElementById(id); if(el) el.value=''; });
   const type = document.getElementById('supportInlineRequestType'); if (type) type.value = '';
   fillSupportRequesterSelect_('supportInlineRequester', (supportCurrentData && supportCurrentData.currentUser) || '');
@@ -512,6 +656,7 @@ function fillSupportInlineCustomerInfo_(info, options) {
   if (reqText && !String(reqText.value || '').trim() && options && options.suggestRequestText) {
     reqText.value = options.suggestRequestText;
   }
+  try { registerSupportInlineDraftFieldsP494D_(); } catch (err) {}
 }
 
 function renderSupportInlineCustomerHistoryP19_(info) {
@@ -608,12 +753,14 @@ function saveSupportInlineRequest() {
   payload.clientRequestId = payload.clientRequestId || makePortalSupportClientRequestIdP26_('SUPNEW');
   const btn = document.getElementById('supportInlineSaveBtn');
   if (btn) { btn.disabled = true; btn.textContent = '저장 중'; btn.dataset.requestId = payload.clientRequestId; }
+  try { markSupportInlinePendingP494D_(payload); } catch (err) {}
   google.script.run
     .withSuccessHandler(function(res) {
       if (btn && btn.dataset.requestId && btn.dataset.requestId !== payload.clientRequestId) return;
       if (btn) delete btn.dataset.requestId;
       if (res && res.conflictP473) {
         if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+        try { markSupportInlineConflictP494D_(); } catch (err) {}
         toast('영업지원 요청 저장 충돌 확인 필요: 입력값은 유지됩니다.');
         return;
       }
@@ -840,9 +987,10 @@ function refreshSupportDetailInBackgroundV78_(rowNo, options) {
       if (!item) return;
       saveSupportDetailCacheV78_(rowNo, item);
       if (Number(supportCurrentRowNo) !== Number(rowNo)) return;
-      if (supportModalDirtyV78) return;
+      if (supportModalDirtyV78 || (typeof isSupportModalDraftProtectedP494D_ === 'function' && isSupportModalDraftProtectedP494D_(rowNo))) return;
       fillSupportSelects_(data.requestTypes || [], data.statusOptions || []);
-      fillSupportModal_(item);
+      fillSupportModal_(item, { force: false, source: 'backgroundDetail' });
+      try { registerSupportModalDraftFieldsP494D_(item); } catch (err) {}
       if (options.focusProcess) fillSupportHandlerWithCurrentAccountP260_();
       if (options.focusProcess) focusSupportProcessAreaV64_();
     })
@@ -858,6 +1006,7 @@ function openSupportRequestModal(rowNo, options) {
   supportCurrentRowNo = Number(rowNo) || 0;
   supportCurrentCustomer = null;
   supportModalDirtyV78 = false;
+  try { releaseSupportModalDraftContextP494D_(supportCurrentRowNo || 'new'); } catch (err) {}
   bindSupportModalDirtyWatcherV78_();
 
   const backdrop = document.getElementById('supportRequestBackdrop');
@@ -871,6 +1020,7 @@ function openSupportRequestModal(rowNo, options) {
     setSupportModalCustomerInfoReadonlyP448_(true);
     fillSupportRequesterSelect_('supportRequester', (supportCurrentData && supportCurrentData.currentUser) || '');
     document.getElementById('supportStatus').value = '접수';
+    try { registerSupportModalDraftFieldsP494D_({ status: '접수', requester: (supportCurrentData && supportCurrentData.currentUser) || '' }, { forceBase: true }); } catch (err) {}
     setTimeout(function(){ const el=document.getElementById('supportCustomerNo'); if(el) el.focus(); }, 80);
     return;
   }
@@ -881,7 +1031,8 @@ function openSupportRequestModal(rowNo, options) {
   const listItem = mergeSupportRowForInstantDetailV78_(findSupportRowByRowNoV64_(supportCurrentRowNo));
   const cachedItem = readSupportDetailCacheV78_(supportCurrentRowNo);
   const immediateItem = cachedItem || listItem;
-  fillSupportModal_(immediateItem);
+  fillSupportModal_(immediateItem, { force: true, source: 'openImmediate' });
+  try { registerSupportModalDraftFieldsP494D_(immediateItem, { forceBase: true }); } catch (err) {}
   if (options.focusProcess) fillSupportHandlerWithCurrentAccountP260_();
   if (options.focusProcess) focusSupportProcessAreaV64_();
 
@@ -891,6 +1042,7 @@ function openSupportRequestModal(rowNo, options) {
 }
 
 function closeSupportRequestModal() {
+  try { releaseSupportModalDraftContextP494D_(supportCurrentRowNo || 'new'); } catch (err) {}
   const backdrop = document.getElementById('supportRequestBackdrop');
   if (backdrop) backdrop.style.display = 'none';
   supportCurrentRowNo = 0;
@@ -898,6 +1050,7 @@ function closeSupportRequestModal() {
 }
 
 function resetSupportModal_() {
+  try { releaseSupportModalDraftContextP494D_(supportCurrentRowNo || 'new'); } catch (err) {}
   ['supportReceiptNo','supportCustomerNo','supportRequester','supportCustomerName','supportDiscountRate','supportQuoteAmount','supportArea','supportRegion','supportContactName','supportContactEmail','supportRequestText','supportHandler','supportCompletedAt','supportAutoSendCheck','supportProcessContent','supportMasterMemo'].forEach(function(id) {
     const el = document.getElementById(id);
     if (el) el.value = '';
@@ -964,26 +1117,32 @@ function fillSupportSelects_(types, statuses) {
   try { applyPortalPermissionToUi_(); } catch (err) {}
 }
 
-function fillSupportModal_(item) {
+function fillSupportModal_(item, options) {
   item = item || {};
-  document.getElementById('supportReceiptNo').value = item.receiptNo || '';
-  document.getElementById('supportRequestType').value = item.requestType || '';
+  options = options || {};
+  const force = options.force === true;
+  setSupportModalFieldValueP494D_('supportReceiptNo', 'receiptNo', item.receiptNo || '', { force: force });
+  setSupportModalFieldValueP494D_('supportRequestType', 'requestType', item.requestType || '', { force: force });
   fillSupportRequesterSelect_('supportRequester', item.requester || '');
-  document.getElementById('supportHandler').value = item.handler || '';
-  document.getElementById('supportCustomerNo').value = item.customerNo || '';
-  document.getElementById('supportCustomerName').value = item.customerName || '';
-  document.getElementById('supportRequestText').value = item.requestText || '';
-  document.getElementById('supportDiscountRate').value = item.discountRate || '';
-  document.getElementById('supportQuoteAmount').value = item.quoteAmount || '';
-  document.getElementById('supportArea').value = item.area || '';
-  document.getElementById('supportRegion').value = item.region || '';
-  document.getElementById('supportContactName').value = item.contactName || '';
-  document.getElementById('supportContactEmail').value = item.contactEmail || '';
-  document.getElementById('supportProcessContent').value = item.processContent || '';
-  document.getElementById('supportCompletedAt').value = item.completedAt || '';
-  document.getElementById('supportStatus').value = item.status || '접수';
-  document.getElementById('supportMasterMemo').value = item.masterMemo || '';
-  document.getElementById('supportAutoSendCheck').value = item.autoSendCheck || '';
+  if (!force && isSupportModalDraftProtectedP494D_(supportCurrentRowNo)) {
+    try { safeApplyPortalServerValueP494_(getSupportModalDraftContextKeyP494D_(supportCurrentRowNo), 'requester', item.requester || '', { element: document.getElementById('supportRequester'), scope: 'support' }); } catch (err) {}
+  }
+  setSupportModalFieldValueP494D_('supportHandler', 'handler', item.handler || '', { force: force });
+  setSupportModalFieldValueP494D_('supportCustomerNo', 'customerNo', item.customerNo || '', { force: force });
+  setSupportModalFieldValueP494D_('supportCustomerName', 'customerName', item.customerName || '', { force: force });
+  setSupportModalFieldValueP494D_('supportRequestText', 'requestText', item.requestText || '', { force: force });
+  setSupportModalFieldValueP494D_('supportDiscountRate', 'discountRate', item.discountRate || '', { force: force });
+  setSupportModalFieldValueP494D_('supportQuoteAmount', 'quoteAmount', item.quoteAmount || '', { force: force });
+  setSupportModalFieldValueP494D_('supportArea', 'area', item.area || '', { force: force });
+  setSupportModalFieldValueP494D_('supportRegion', 'region', item.region || '', { force: force });
+  setSupportModalFieldValueP494D_('supportContactName', 'contactName', item.contactName || '', { force: force });
+  setSupportModalFieldValueP494D_('supportContactEmail', 'contactEmail', item.contactEmail || '', { force: force });
+  setSupportModalFieldValueP494D_('supportProcessContent', 'processContent', item.processContent || '', { force: force });
+  setSupportModalFieldValueP494D_('supportCompletedAt', 'completedAt', item.completedAt || '', { force: force });
+  setSupportModalFieldValueP494D_('supportStatus', 'status', item.status || '접수', { force: force });
+  setSupportModalFieldValueP494D_('supportMasterMemo', 'masterMemo', item.masterMemo || '', { force: force });
+  setSupportModalFieldValueP494D_('supportAutoSendCheck', 'autoSendCheck', item.autoSendCheck || '', { force: force });
+  try { registerSupportModalDraftFieldsP494D_(item, { forceBase: force }); } catch (err) {}
   try { applyPortalPermissionToUi_(); } catch (err) {}
 }
 
@@ -1029,18 +1188,20 @@ function selectSupportCustomerCandidate(idx) {
 function fillSupportCustomerInfo_(info) {
   info = info || {};
   supportCurrentCustomer = info;
-  document.getElementById('supportCustomerNo').value = info.customerNo || '';
-  document.getElementById('supportCustomerName').value = info.customerName || '';
-  document.getElementById('supportDiscountRate').value = info.discountRate || '';
-  document.getElementById('supportQuoteAmount').value = info.quoteAmount || '';
-  document.getElementById('supportArea').value = info.area || '';
-  document.getElementById('supportRegion').value = info.region || '';
-  document.getElementById('supportContactName').value = info.contactName || '';
-  document.getElementById('supportContactEmail').value = info.contactEmail || '';
-  document.getElementById('supportMasterMemo').value = info.masterMemo || '';
-  if (info.contractSummary && document.getElementById('supportRequestText') && !document.getElementById('supportRequestText').value) {
-    document.getElementById('supportRequestText').value = info.contractSummary;
+  setSupportModalFieldValueP494D_('supportCustomerNo', 'customerNo', info.customerNo || '', { force: true });
+  setSupportModalFieldValueP494D_('supportCustomerName', 'customerName', info.customerName || '', { force: true });
+  setSupportModalFieldValueP494D_('supportDiscountRate', 'discountRate', info.discountRate || '', { force: true });
+  setSupportModalFieldValueP494D_('supportQuoteAmount', 'quoteAmount', info.quoteAmount || '', { force: true });
+  setSupportModalFieldValueP494D_('supportArea', 'area', info.area || '', { force: true });
+  setSupportModalFieldValueP494D_('supportRegion', 'region', info.region || '', { force: true });
+  setSupportModalFieldValueP494D_('supportContactName', 'contactName', info.contactName || '', { force: true });
+  setSupportModalFieldValueP494D_('supportContactEmail', 'contactEmail', info.contactEmail || '', { force: true });
+  setSupportModalFieldValueP494D_('supportMasterMemo', 'masterMemo', info.masterMemo || '', { force: true });
+  const reqEl = document.getElementById('supportRequestText');
+  if (info.contractSummary && reqEl && !String(reqEl.value || '').trim()) {
+    setSupportModalFieldValueP494D_('supportRequestText', 'requestText', info.contractSummary, { force: true });
   }
+  try { registerSupportModalDraftFieldsP494D_(Object.assign({}, info, { requestText: reqEl ? reqEl.value : '' }), { forceBase: true }); } catch (err) {}
 }
 
 function collectSupportPayload_() {
@@ -1076,6 +1237,7 @@ function saveSupportRequestFromModal() {
   payload.clientRequestId = payload.clientRequestId || makePortalSupportClientRequestIdP26_(payload.rowNo ? 'SUPSAVE' : 'SUPNEW');
   const btn = document.getElementById('supportSaveBtn');
   if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; btn.dataset.requestId = payload.clientRequestId; }
+  try { markSupportModalPendingP494D_(payload); } catch (err) {}
   const saveMethodP474 = payload.rowNo ? 'savePortalSupportProcessThinP474' : 'savePortalSupportRequest';
   const runnerP474 = google.script.run
     .withSuccessHandler(function(res) {
@@ -1083,6 +1245,7 @@ function saveSupportRequestFromModal() {
       if (btn) delete btn.dataset.requestId;
       if (res && res.conflictP473) {
         if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+        try { markSupportModalConflictP494D_(payload); } catch (err) {}
         toast('영업지원 저장 충돌 확인 필요: 입력값은 유지됩니다.');
         return;
       }

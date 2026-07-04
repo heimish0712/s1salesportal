@@ -267,6 +267,7 @@ function enforceCustomerScopeOnPagedResponseP205_(response) {
 }
 
 function renderResults(response, fromCache) {
+  const p494cSnapshot = (typeof captureCustomerSearchContinuitySnapshotP494C_ === 'function') ? captureCustomerSearchContinuitySnapshotP494C_(resultArea || document) : null;
   const res = enforceCustomerScopeOnPagedResponseP205_(response);
   lastCustomerResultResponse = res;
   lastCustomerResultFromCache = !!fromCache;
@@ -318,6 +319,7 @@ function renderResults(response, fromCache) {
   html += '</tbody></table></div>' + renderPagerHtml_(res, 'searchCustomerPage', fromCache);
   resultArea.innerHTML = html;
   bindCustomerResultInlineEditDelegationP1F_();
+  try { if (typeof restoreCustomerSearchContinuitySnapshotP494C_ === 'function') restoreCustomerSearchContinuitySnapshotP494C_(p494cSnapshot); } catch (err) {}
   applyPendingSupportCustomerOpenV64_(rows);
 }
 
@@ -1014,63 +1016,327 @@ function updateExpandedMemoDraftP473_(rowNo, customerNo, value, flags) {
   const key = getExpandedMemoDraftKeyP473_(rowNo, customerNo);
   if (!key || key === '0:') return null;
   const prev = expandedMemoDraftMapP473[key] || {};
-  expandedMemoDraftMapP473[key] = Object.assign({}, prev, flags || {}, {
+  const next = Object.assign({}, prev, flags || {}, {
     rowNo: Number(rowNo) || 0,
     customerNo: normalizeCustomerNoForKey_(customerNo || prev.customerNo || ''),
     value: String(value == null ? '' : value),
+    baseValue: flags && Object.prototype.hasOwnProperty.call(flags, 'baseValue') ? String(flags.baseValue == null ? '' : flags.baseValue) : String(prev.baseValue == null ? getExpandedMemoBaseValueP494C_(rowNo, customerNo || prev.customerNo || '', value) : prev.baseValue),
     dirty: flags && Object.prototype.hasOwnProperty.call(flags, 'dirty') ? !!flags.dirty : true,
     updatedAt: Date.now()
   });
-  return expandedMemoDraftMapP473[key];
+  expandedMemoDraftMapP473[key] = next;
+  try { if (typeof syncExpandedMemoDraftGuardP494C_ === 'function') syncExpandedMemoDraftGuardP494C_(rowNo, next.customerNo, next.value, Object.assign({}, flags || {}, { baseValue: next.baseValue, userTouched: (flags && flags.userTouched === true) || next.dirty === true })); } catch (err) {}
+  return next;
 }
 
 function onExpandedMemoFocusP473_(rowNo, customerNo) {
   const el = document.getElementById('expandedMemo_' + rowNo);
   if (!el) return;
-  updateExpandedMemoDraftP473_(rowNo, customerNo || el.getAttribute('data-customer-no') || '', el.value || '', { focused: true });
+  const cno = customerNo || el.getAttribute('data-customer-no') || '';
+  const baseValue = el.getAttribute('data-original') || getExpandedMemoBaseValueP494C_(rowNo, cno, el.value || '');
+  updateExpandedMemoDraftP473_(rowNo, cno, el.value || '', { focused: true, dirty: normalizeExpandedMemoCompareP494C_(el.value || '') !== normalizeExpandedMemoCompareP494C_(baseValue), baseValue: baseValue });
 }
 
 function onExpandedMemoInputP473_(rowNo, customerNo) {
   const el = document.getElementById('expandedMemo_' + rowNo);
   if (!el) return;
-  updateExpandedMemoDraftP473_(rowNo, customerNo || el.getAttribute('data-customer-no') || '', el.value || '', { focused: true, dirty: true });
+  const cno = customerNo || el.getAttribute('data-customer-no') || '';
+  const baseValue = el.getAttribute('data-original') || getExpandedMemoBaseValueP494C_(rowNo, cno, el.value || '');
+  updateExpandedMemoDraftP473_(rowNo, cno, el.value || '', { focused: true, dirty: normalizeExpandedMemoCompareP494C_(el.value || '') !== normalizeExpandedMemoCompareP494C_(baseValue), baseValue: baseValue, userTouched: true });
 }
 
 function onExpandedMemoBlurP473_(rowNo, customerNo) {
   const el = document.getElementById('expandedMemo_' + rowNo);
-  const entry = findExpandedMemoDraftEntryP473_(rowNo, customerNo || (el && el.getAttribute('data-customer-no')) || '');
+  const cno = customerNo || (el && el.getAttribute('data-customer-no')) || '';
+  const entry = findExpandedMemoDraftEntryP473_(rowNo, cno);
   if (entry) entry.focused = false;
+  try { if (typeof syncExpandedMemoDraftGuardP494C_ === 'function') syncExpandedMemoDraftGuardP494C_(rowNo, cno, el ? (el.value || '') : (entry && entry.value || ''), { focused: false, baseLoaded: true }); } catch (err) {}
 }
 
 function getProtectedExpandedMemoValueP473_(rowNo, customerNo, fallbackValue) {
+  const p494Value = (typeof getProtectedExpandedMemoValueP494C_ === 'function') ? getProtectedExpandedMemoValueP494C_(rowNo, customerNo, null) : null;
+  if (p494Value != null) return String(p494Value);
   const entry = findExpandedMemoDraftEntryP473_(rowNo, customerNo);
   if (entry && (entry.dirty || entry.focused || entry.pendingOperationId)) return String(entry.value == null ? '' : entry.value);
   return String(fallbackValue == null ? '' : fallbackValue);
 }
 
 function markExpandedMemoSavePendingP473_(rowNo, customerNo, operationId, value) {
-  return updateExpandedMemoDraftP473_(rowNo, customerNo, value, { dirty: true, pendingOperationId: String(operationId || ''), focused: false });
+  const entry = updateExpandedMemoDraftP473_(rowNo, customerNo, value, { dirty: true, pending: true, pendingOperationId: String(operationId || ''), focused: false, userTouched: true });
+  try { if (typeof markPortalDraftPendingP494_ === 'function') markPortalDraftPendingP494_(getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo), { memo: value }, operationId); } catch (err) {}
+  return entry;
 }
 
 function markExpandedMemoSaveDoneP473_(rowNo, customerNo, operationId, value) {
-  const entry = updateExpandedMemoDraftP473_(rowNo, customerNo, value, { dirty: false, focused: false, pendingOperationId: '' });
+  const entry = updateExpandedMemoDraftP473_(rowNo, customerNo, value, { dirty: false, pending: false, focused: false, pendingOperationId: '', baseValue: value, forceBase: true, userTouched: false });
   if (entry) entry.savedOperationId = String(operationId || '');
+  try { if (typeof markPortalDraftSavedP494_ === 'function') markPortalDraftSavedP494_(getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo), { memo: value }, operationId); } catch (err) {}
+  try {
+    const el = document.getElementById('expandedMemo_' + (Number(rowNo) || 0));
+    if (el && el.setAttribute) el.setAttribute('data-original', String(value == null ? '' : value));
+    if (typeof clearExpandedMemoSyncNoticeP494C_ === 'function') clearExpandedMemoSyncNoticeP494C_(rowNo);
+  } catch(e) {}
   return entry;
 }
 
 function protectIncomingDetailMemoWithExpandedDraftP473_(detail) {
   if (!detail || !detail.rowNo) return detail;
+  try { if (typeof stageExpandedMemoServerValueP494C_ === 'function') stageExpandedMemoServerValueP494C_(detail.rowNo, detail.customerNo, getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '', { source: 'incomingDetail' }); } catch (err) {}
+  const p494Value = (typeof getProtectedExpandedMemoValueP494C_ === 'function') ? getProtectedExpandedMemoValueP494C_(detail.rowNo, detail.customerNo, null) : null;
   const entry = findExpandedMemoDraftEntryP473_(detail.rowNo, detail.customerNo);
-  if (!entry || !(entry.dirty || entry.focused || entry.pendingOperationId)) return detail;
-  const protectedMemo = String(entry.value == null ? '' : entry.value);
+  if ((p494Value == null) && (!entry || !(entry.dirty || entry.focused || entry.pendingOperationId))) return detail;
+  const protectedMemo = p494Value != null ? String(p494Value) : String(entry.value == null ? '' : entry.value);
   detail.memo = protectedMemo;
   if (detail.detailFields && detail.detailFields.basic) {
     detail.detailFields.basic.forEach(function(f) { if (f && f.key === 'memo') f.value = protectedMemo; });
   }
   detail.__memoProtectedP473 = true;
+  detail.__memoProtectedP494C = p494Value != null;
   return detail;
 }
 
+// P494C: 고객검색 하단 펼침 / TM 동기화 입력 연속성 보호 --------------------------
+function isCustomerSearchDraftGuardEnabledP494C_() {
+  try { return typeof isPortalDraftGuardEnabledP494_ !== 'function' || isPortalDraftGuardEnabledP494_('expandedRow'); } catch (err) { return true; }
+}
+
+function getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo) {
+  rowNo = Number(rowNo) || 0;
+  customerNo = normalizeCustomerNoForKey_(customerNo || '');
+  if (!rowNo && !customerNo) return '';
+  if (typeof makePortalDraftContextKeyP494_ === 'function') return makePortalDraftContextKeyP494_('expandedRow', rowNo, customerNo);
+  return 'expandedRow:' + rowNo + ':' + customerNo;
+}
+
+function normalizeExpandedMemoCompareP494C_(value) {
+  return String(value == null ? '' : value).replace(/\r\n/g, '\n');
+}
+function getExpandedMemoBaseValueP494C_(rowNo, customerNo, fallbackValue) {
+  rowNo = Number(rowNo) || 0;
+  const el = rowNo ? document.getElementById('expandedMemo_' + rowNo) : null;
+  if (el && el.getAttribute && el.getAttribute('data-original') != null) return String(el.getAttribute('data-original') || '');
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const cno = customerNo || rowSummary.customerNo || (el && el.getAttribute && el.getAttribute('data-customer-no')) || '';
+  const detail = getCustomerDetailCache_(rowNo, cno) || {};
+  if (detail && Object.prototype.hasOwnProperty.call(detail, 'memo')) return String(detail.memo == null ? '' : detail.memo);
+  if (rowSummary && Object.prototype.hasOwnProperty.call(rowSummary, 'memo')) return String(rowSummary.memo == null ? '' : rowSummary.memo);
+  return String(fallbackValue == null ? '' : fallbackValue);
+}
+
+function showExpandedMemoSyncNoticeP494C_(rowNo, type, message) {
+  rowNo = Number(rowNo) || 0;
+  const box = rowNo ? document.getElementById('expandedMemoBox_' + rowNo) : null;
+  if (!box) return;
+  let note = document.getElementById('expandedMemoSyncNoteP494C_' + rowNo);
+  if (!note) {
+    note = document.createElement('div');
+    note.id = 'expandedMemoSyncNoteP494C_' + rowNo;
+    note.className = 'customer-expand-sync-note-p494c';
+    const saveRow = box.querySelector('.customer-expand-save-row');
+    if (saveRow && saveRow.parentNode) saveRow.parentNode.insertBefore(note, saveRow);
+    else box.appendChild(note);
+  }
+  note.className = 'customer-expand-sync-note-p494c ' + (type ? 'is-' + type : '');
+  note.textContent = message || '';
+  note.style.display = message ? '' : 'none';
+}
+
+function clearExpandedMemoSyncNoticeP494C_(rowNo) {
+  const note = document.getElementById('expandedMemoSyncNoteP494C_' + (Number(rowNo) || 0));
+  if (note) note.style.display = 'none';
+}
+
+function getExpandedMemoDraftFieldP494C_(rowNo, customerNo, create, options) {
+  if (!isCustomerSearchDraftGuardEnabledP494C_() || typeof getPortalDraftFieldP494_ !== 'function') return null;
+  options = options || {};
+  const contextKey = getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo);
+  if (!contextKey) return null;
+  const baseValue = options.baseValue !== undefined ? options.baseValue : getExpandedMemoBaseValueP494C_(rowNo, customerNo, options.initialValue || '');
+  return getPortalDraftFieldP494_(contextKey, 'memo', create !== false, {
+    initialValue: options.initialValue !== undefined ? options.initialValue : baseValue,
+    baseValue: baseValue,
+    serverValue: options.serverValue !== undefined ? options.serverValue : baseValue,
+    baseLoaded: options.baseLoaded !== false,
+    contextMeta: { rowNo: Number(rowNo) || 0, customerNo: normalizeCustomerNoForKey_(customerNo || ''), type: 'expandedRow' }
+  });
+}
+
+function getProtectedExpandedMemoValueP494C_(rowNo, customerNo, fallbackValue) {
+  const field = getExpandedMemoDraftFieldP494C_(rowNo, customerNo, false);
+  if (field && (field.dirty || field.focused || field.pending || field.conflict || field.composing || field.userTouched)) {
+    return String(field.draftValue == null ? '' : field.draftValue);
+  }
+  return fallbackValue;
+}
+
+function isExpandedMemoProtectedP494C_(rowNo, customerNo) {
+  if (!isCustomerSearchDraftGuardEnabledP494C_() || typeof isPortalDraftFieldProtectedP494_ !== 'function') return false;
+  const contextKey = getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo);
+  return !!(contextKey && isPortalDraftFieldProtectedP494_(contextKey, 'memo'));
+}
+
+function markExpandedMemoConflictP494C_(rowNo, customerNo, serverValue) {
+  try {
+    const contextKey = getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo);
+    if (contextKey && typeof markPortalDraftConflictP494_ === 'function') {
+      const sv = {};
+      sv.memo = String(serverValue == null ? '' : serverValue);
+      markPortalDraftConflictP494_(contextKey, ['memo'], sv);
+    }
+    showExpandedMemoSyncNoticeP494C_(rowNo, 'conflict', '다른 사용자가 같은 메모를 수정했습니다. 현재 입력값은 보존했습니다.');
+  } catch (err) {}
+}
+
+function syncExpandedMemoDraftGuardP494C_(rowNo, customerNo, value, flags) {
+  if (!isCustomerSearchDraftGuardEnabledP494C_()) return null;
+  flags = flags || {};
+  const el = document.getElementById('expandedMemo_' + (Number(rowNo) || 0));
+  const baseValue = Object.prototype.hasOwnProperty.call(flags, 'baseValue') ? flags.baseValue : getExpandedMemoBaseValueP494C_(rowNo, customerNo, value);
+  const field = getExpandedMemoDraftFieldP494C_(rowNo, customerNo, true, {
+    initialValue: baseValue,
+    baseValue: baseValue,
+    serverValue: baseValue,
+    baseLoaded: flags.baseLoaded !== false
+  });
+  if (!field) return null;
+  if (el && typeof registerPortalDraftFieldP494_ === 'function') {
+    try { registerPortalDraftFieldP494_(el, { contextKey: getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo), fieldKey: 'memo', baseValue: baseValue, serverValue: baseValue, baseLoaded: flags.baseLoaded !== false, scope: 'expandedRow' }); } catch (err) {}
+  }
+  const text = String(value == null ? '' : value);
+  field.draftValue = text;
+  if (flags.forceBase === true || field.baseLoaded === false || flags.dirty === false) {
+    field.baseValue = String(baseValue == null ? '' : baseValue);
+    field.serverValue = field.baseValue;
+    field.baseLoaded = flags.baseLoaded !== false;
+  }
+  if (Object.prototype.hasOwnProperty.call(flags, 'focused')) field.focused = !!flags.focused;
+  if (Object.prototype.hasOwnProperty.call(flags, 'pendingOperationId')) field.pendingOperationId = String(flags.pendingOperationId || '');
+  if (Object.prototype.hasOwnProperty.call(flags, 'pending')) field.pending = !!flags.pending;
+  if (Object.prototype.hasOwnProperty.call(flags, 'conflict')) field.conflict = !!flags.conflict;
+  if (Object.prototype.hasOwnProperty.call(flags, 'userTouched')) field.userTouched = !!flags.userTouched;
+  if (Object.prototype.hasOwnProperty.call(flags, 'dirty')) field.dirty = !!flags.dirty;
+  else field.dirty = normalizeExpandedMemoCompareP494C_(text) !== normalizeExpandedMemoCompareP494C_(field.baseValue);
+  field.updatedAt = Date.now();
+  if (field.pendingOperationId) field.pending = true;
+  if (el) {
+    try {
+      if (typeof capturePortalDraftSelectionP494_ === 'function') capturePortalDraftSelectionP494_(el, field);
+      if (field.dirty || field.focused || field.pending || field.conflict || field.userTouched) el.classList.add('portal-draft-protected-p494');
+      else el.classList.remove('portal-draft-protected-p494', 'portal-draft-pending-p494', 'portal-draft-conflict-p494', 'portal-draft-server-deferred-p494');
+      if (field.pending) el.classList.add('portal-draft-pending-p494');
+      if (field.conflict) el.classList.add('portal-draft-conflict-p494');
+    } catch (err) {}
+  }
+  return field;
+}
+
+function registerVisibleExpandedRowDraftFieldsP494C_() {
+  if (!isCustomerSearchDraftGuardEnabledP494C_()) return;
+  const rowNo = Number(customerExpandedRowNo || 0) || 0;
+  if (!rowNo) return;
+  const el = document.getElementById('expandedMemo_' + rowNo);
+  if (!el) return;
+  const customerNo = el.getAttribute('data-customer-no') || (findCustomerRowSummaryByRowNo_(rowNo) || {}).customerNo || '';
+  const baseValue = getExpandedMemoBaseValueP494C_(rowNo, customerNo, el.value || '');
+  const contextKey = getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo);
+  try {
+    const field = registerPortalDraftFieldP494_(el, { contextKey: contextKey, fieldKey: 'memo', baseValue: baseValue, serverValue: baseValue, baseLoaded: el.getAttribute('data-memo-loading') !== 'Y', scope: 'expandedRow' });
+    if (field) {
+      const protectedNow = field.dirty || field.focused || field.pending || field.conflict || field.composing || field.userTouched;
+      if (protectedNow && typeof writePortalDraftElementValueP494_ === 'function') {
+        writePortalDraftElementValueP494_(el, field.draftValue, { restoreSelection: true, selectionStart: field.selectionStart, selectionEnd: field.selectionEnd });
+        el.classList.add('portal-draft-protected-p494');
+      } else if (!protectedNow) {
+        field.baseValue = String(baseValue == null ? '' : baseValue);
+        field.serverValue = field.baseValue;
+        field.draftValue = String(el.value == null ? '' : el.value);
+        field.dirty = false;
+        field.userTouched = false;
+      }
+    }
+  } catch (err) {}
+}
+
+function stageExpandedMemoServerValueP494C_(rowNo, customerNo, serverMemo, options) {
+  if (!isCustomerSearchDraftGuardEnabledP494C_() || typeof safeApplyPortalServerValueP494_ !== 'function') return null;
+  const contextKey = getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo);
+  if (!contextKey) return null;
+  const el = document.getElementById('expandedMemo_' + (Number(rowNo) || 0));
+  const res = safeApplyPortalServerValueP494_(contextKey, 'memo', String(serverMemo == null ? '' : serverMemo), {
+    element: el || null,
+    skipDom: true,
+    baseLoaded: true,
+    scope: 'expandedRow'
+  });
+  if (res && res.protected) showExpandedMemoSyncNoticeP494C_(rowNo, 'remote', '서버에 새 메모 변경이 있습니다. 현재 입력값은 유지 중입니다.');
+  else if (res && res.applied) clearExpandedMemoSyncNoticeP494C_(rowNo);
+  return res;
+}
+
+function captureCustomerSearchContinuitySnapshotP494C_(root) {
+  const snapshot = { expanded: null, inline: null };
+  try {
+    const rowNo = Number(customerExpandedRowNo || 0) || 0;
+    if (rowNo && typeof capturePortalDraftSnapshotBeforeRenderP494_ === 'function') {
+      const el = document.getElementById('expandedMemo_' + rowNo);
+      const customerNo = (el && el.getAttribute('data-customer-no')) || (findCustomerRowSummaryByRowNo_(rowNo) || {}).customerNo || '';
+      registerVisibleExpandedRowDraftFieldsP494C_();
+      const contextKey = getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, customerNo);
+      if (contextKey) snapshot.expanded = capturePortalDraftSnapshotBeforeRenderP494_(contextKey, root || resultArea || document);
+    }
+  } catch (err) {}
+  try {
+    const active = window.customerInlineEditActive || null;
+    const editor = active && active.inputId ? document.getElementById(active.inputId) : null;
+    const cell = editor && editor.closest ? editor.closest('td[data-row-no][data-key]') : null;
+    if (editor && cell) {
+      snapshot.inline = {
+        inputId: active.inputId,
+        rowNo: Number(cell.getAttribute('data-row-no')) || 0,
+        key: String(cell.getAttribute('data-key') || ''),
+        value: editor.value == null ? '' : String(editor.value),
+        selectionStart: typeof editor.selectionStart === 'number' ? editor.selectionStart : null,
+        selectionEnd: typeof editor.selectionEnd === 'number' ? editor.selectionEnd : null,
+        scrollTop: typeof editor.scrollTop === 'number' ? editor.scrollTop : 0,
+        active: Object.assign({}, active)
+      };
+    }
+  } catch (err) {}
+  return snapshot;
+}
+
+function restoreCustomerSearchContinuitySnapshotP494C_(snapshot) {
+  try { registerVisibleExpandedRowDraftFieldsP494C_(); } catch (err) {}
+  if (snapshot && snapshot.expanded && typeof restorePortalDraftSnapshotAfterRenderP494_ === 'function') {
+    try { restorePortalDraftSnapshotAfterRenderP494_(snapshot.expanded, resultArea || document); } catch (err) {}
+  }
+  if (snapshot && snapshot.inline && snapshot.inline.rowNo && snapshot.inline.key) {
+    try {
+      const cell = document.querySelector('td[data-row-no="' + snapshot.inline.rowNo + '"][data-key="' + String(snapshot.inline.key).replace(/"/g, '\"') + '"]');
+      if (cell) {
+        const previousActive = window.customerInlineEditActive;
+        window.customerInlineEditActive = null;
+        startCustomerInlineEdit_({
+          __customerInlineCell: cell,
+          currentTarget: cell,
+          stopPropagation: function(){},
+          preventDefault: function(){}
+        }, snapshot.inline.rowNo, snapshot.inline.key);
+        const editor = document.getElementById(snapshot.inline.inputId);
+        if (editor) {
+          editor.value = snapshot.inline.value;
+          if (typeof editor.setSelectionRange === 'function' && snapshot.inline.selectionStart != null) editor.setSelectionRange(snapshot.inline.selectionStart, snapshot.inline.selectionEnd == null ? snapshot.inline.selectionStart : snapshot.inline.selectionEnd);
+          if (typeof editor.scrollTop === 'number') editor.scrollTop = Number(snapshot.inline.scrollTop || 0) || 0;
+          try { editor.focus({ preventScroll: true }); } catch (err) { try { editor.focus(); } catch (ignore) {} }
+          window.customerInlineEditActive = snapshot.inline.active || { inputId: snapshot.inline.inputId, rowNo: snapshot.inline.rowNo, key: snapshot.inline.key };
+        } else {
+          window.customerInlineEditActive = previousActive;
+        }
+      }
+    } catch (err) {}
+  }
+  try { registerVisibleExpandedRowDraftFieldsP494C_(); } catch (err) {}
+}
 
 // P474: field-level conflict popup ------------------------------------------------
 function formatPortalConflictDateP474_(isoOrText) {
@@ -1104,7 +1370,8 @@ function applyPortalConflictLatestValueP474_(info, options) {
     if (el) {
       el.value = currentValue;
       el.setAttribute('data-original', currentValue);
-      updateExpandedMemoDraftP473_(rowNo, customerNo || el.getAttribute('data-customer-no') || '', currentValue, { dirty: false, focused: false, pendingOperationId: '' });
+      updateExpandedMemoDraftP473_(rowNo, customerNo || el.getAttribute('data-customer-no') || '', currentValue, { dirty: false, pending: false, focused: false, pendingOperationId: '', baseValue: currentValue, forceBase: true, userTouched: false });
+      try { clearExpandedMemoSyncNoticeP494C_(rowNo); } catch (err) {}
     }
     applyCustomerMemoOptimistic_(rowNo, currentValue);
     refreshCustomerInlineCellDisplay_(rowNo, 'memo');
@@ -1208,6 +1475,7 @@ function isCustomerFieldDirtyOrFocusedP474_(rowNo, customerNo, field) {
   if (field === 'memo') {
     const entry = findExpandedMemoDraftEntryP473_(rowNo, customerNo);
     if (entry && (entry.dirty || entry.focused || entry.pendingOperationId)) return true;
+    try { if (typeof isExpandedMemoProtectedP494C_ === 'function' && isExpandedMemoProtectedP494C_(rowNo, customerNo)) return true; } catch(e) {}
     const el = document.getElementById('expandedMemo_' + rowNo);
     if (el && document.activeElement === el) return true;
   }
@@ -1234,9 +1502,13 @@ function applyCustomerExternalFieldChangeP474_(change) {
     return;
   }
 
+  // 메모는 장문이므로 polling summary로 textarea를 덮지 않습니다.
+  // 단, 서버에 새 값이 있다는 사실은 DraftGuard에 deferred 값으로만 보관합니다.
+  if (field === 'memo') {
+    try { if (typeof stageExpandedMemoServerValueP494C_ === 'function') stageExpandedMemoServerValueP494C_(rowNo, customerNo, change.value == null ? change.valueSummary : change.value, { source: 'fieldChangePollP474' }); } catch(e) {}
+    return;
+  }
   if (isCustomerFieldDirtyOrFocusedP474_(rowNo, customerNo, field)) return;
-  // 메모는 장문이므로 polling summary로 덮지 않습니다. 메모 충돌은 팝업/최신값 불러오기로 처리합니다.
-  if (field === 'memo') return;
   const patch = {}; patch[field] = String(change.valueSummary == null ? '' : change.valueSummary);
   applyCustomerInlinePatchOptimistic_(rowNo, patch);
   try { refreshCustomerInlineCellDisplay_(rowNo, field); } catch(e) {}
@@ -2179,13 +2451,14 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
   const memoValue = getProtectedExpandedMemoValueP473_(rowNo, memoCustomerNoP473, rawMemoValueP473);
   const hasProtectedDraftP473 = memoValue !== String(rawMemoValueP473 == null ? '' : rawMemoValueP473);
   const expandedMemoInputId = 'expandedMemo_' + rowNo;
+  const expandedMemoDraftContextP494C = typeof getCustomerSearchExpandedDraftContextKeyP494C_ === 'function' ? getCustomerSearchExpandedDraftContextKeyP494C_(rowNo, memoCustomerNoP473) : '';
   html += '<div class="customer-expand-form-block customer-expand-memo-box-v58" id="expandedMemoBox_' + rowNo + '">' +
     '<div class="customer-expand-memo-label-v58">마스터시트<br>메모</div>' +
     '<div class="customer-expand-memo-main-v58">' +
       (!isFullMemoReadyP300 && !hasImmediateMemoP360 ? '<div class="customer-expand-memo-loading-p300">전체 메모를 백그라운드에서 불러오는 중입니다.</div>' : '') +
       '<div class="customer-expand-memo-edit-wrap-p15 customer-expand-memo-edit-wrap-fixed-tags">' +
         '<div class="customer-expand-memo-tag-row customer-expand-memo-tag-row-always">' + renderCustomerMemoTagPopover_(expandedMemoInputId, 'customer-expand-memo-tag-popover') + '</div>' +
-        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '" data-customer-no="' + escAttr(memoCustomerNoP473) + '" onfocus="onExpandedMemoFocusP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')" oninput="onExpandedMemoInputP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')" onblur="onExpandedMemoBlurP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')"' + (!hasProtectedDraftP473 && !isFullMemoReadyP300 && !hasImmediateMemoP360 ? ' readonly data-memo-loading="Y" placeholder="전체 메모 불러오는 중"' : '') + '>' + esc(memoValue) + '</textarea>' +
+        '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '" data-customer-no="' + escAttr(memoCustomerNoP473) + '" data-original="' + escAttr(rawMemoValueP473 || '') + '" data-p494-draft-context="' + escAttr(expandedMemoDraftContextP494C) + '" data-p494-draft-key="memo" onfocus="onExpandedMemoFocusP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')" oninput="onExpandedMemoInputP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')" onblur="onExpandedMemoBlurP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')"' + (!hasProtectedDraftP473 && !isFullMemoReadyP300 && !hasImmediateMemoP360 ? ' readonly data-memo-loading="Y" placeholder="전체 메모 불러오는 중"' : '') + '>' + esc(memoValue) + '</textarea>' +
       '</div>' +
       '<div class="customer-expand-save-row">' +
         '<button type="button" class="secondary" onclick="event.stopPropagation(); resetExpandedCustomerMemo(' + rowNo + ')">되돌리기</button>' +
@@ -2409,6 +2682,69 @@ function applyCustomerOrderResultToCachesP250_(res) {
 let businessRegistrationModalStateP436 = null;
 let businessRegistrationModalTouchedP436 = false;
 
+
+// P494D: 사업자등록증 입력 모달 보호.
+function getBusinessRegistrationDraftContextKeyP494D_() {
+  const state = businessRegistrationModalStateP436 || {};
+  const rowNo = Number(state.rowNo || 0) || 0;
+  const customerNo = normalizeCustomerNoForKey_(state.customerNo || '');
+  if (typeof makePortalDraftContextKeyP494_ === 'function') return makePortalDraftContextKeyP494_('businessRegModal', rowNo || '0', customerNo || 'unknown');
+  return 'businessRegModal:' + (rowNo || '0') + ':' + (customerNo || 'unknown');
+}
+
+function isBusinessRegistrationDraftGuardEnabledP494D_() {
+  try { return typeof isPortalDraftGuardEnabledP494_ !== 'function' || isPortalDraftGuardEnabledP494_('businessReg'); } catch (err) { return true; }
+}
+
+function registerBusinessRegistrationDraftFieldsP494D_(values, options) {
+  options = options || {};
+  if (!isBusinessRegistrationDraftGuardEnabledP494D_() || typeof registerPortalDraftFieldP494_ !== 'function') return;
+  values = values || {};
+  const ctx = getBusinessRegistrationDraftContextKeyP494D_();
+  const overlay = document.getElementById('businessRegistrationModalP436');
+  if (!overlay) return;
+  Array.from(overlay.querySelectorAll('[data-biz-key]')).forEach(function(el) {
+    const key = el.getAttribute('data-biz-key') || '';
+    if (!key) return;
+    try {
+      el.setAttribute('data-p494-draft-context', ctx);
+      el.setAttribute('data-p494-draft-key', key);
+      const base = Object.prototype.hasOwnProperty.call(values, key) ? values[key] : (el.value || '');
+      const field = registerPortalDraftFieldP494_(el, { scope:'businessReg', contextKey:ctx, fieldKey:key, baseValue:base || '', serverValue:base || '', baseLoaded:true });
+      if (field && options.forceBase) {
+        field.baseValue = String(base == null ? '' : base);
+        field.serverValue = field.baseValue;
+        field.draftValue = typeof readPortalDraftElementValueP494_ === 'function' ? readPortalDraftElementValueP494_(el) : (el.value || '');
+        field.dirty = false;
+        field.userTouched = false;
+        field.pending = false;
+        field.conflict = false;
+      }
+    } catch (err) {}
+  });
+}
+
+function markBusinessRegistrationPendingP494D_(dirty) {
+  try {
+    if (!isBusinessRegistrationDraftGuardEnabledP494D_() || typeof markPortalDraftPendingP494_ !== 'function') return;
+    markPortalDraftPendingP494_(getBusinessRegistrationDraftContextKeyP494D_(), dirty || {}, 'BIZREG_' + Date.now());
+  } catch (err) {}
+}
+
+function markBusinessRegistrationSavedP494D_(values) {
+  try {
+    if (!isBusinessRegistrationDraftGuardEnabledP494D_() || typeof markPortalDraftSavedP494_ !== 'function') return;
+    markPortalDraftSavedP494_(getBusinessRegistrationDraftContextKeyP494D_(), values || {}, 'BIZREG');
+  } catch (err) {}
+}
+
+function markBusinessRegistrationConflictP494D_(serverValues) {
+  try {
+    if (!isBusinessRegistrationDraftGuardEnabledP494D_() || typeof markPortalDraftConflictP494_ !== 'function') return;
+    markPortalDraftConflictP494_(getBusinessRegistrationDraftContextKeyP494D_(), ['businessNo','businessLegalName','representativeName','businessAddress'], serverValues || {});
+  } catch (err) {}
+}
+
 function getBusinessRegistrationDetailP436_(rowNo, customerNo) {
   rowNo = Number(rowNo) || 0;
   const cno = normalizeCustomerNoForKey_(customerNo || '');
@@ -2441,6 +2777,7 @@ function openBusinessRegistrationModalP436_(rowNo, customerNo) {
     }
   };
   businessRegistrationModalTouchedP436 = false;
+  try { releasePortalDraftContextP494_(getBusinessRegistrationDraftContextKeyP494D_(), { force:true }); } catch (err) {}
   renderBusinessRegistrationModalP436_(businessRegistrationModalStateP436.original, false);
 
   if (detail && (detail.__summary || detail.__lite || !detail.__masterBacked)) {
@@ -2471,6 +2808,7 @@ function renderBusinessRegistrationModalP436_(values, saving) {
   }
   const state = businessRegistrationModalStateP436 || {};
   const disabled = saving ? ' disabled' : '';
+  const draftSnapshotP494D = isBusinessRegistrationDraftGuardEnabledP494D_() && typeof capturePortalDraftSnapshotBeforeRenderP494_ === 'function' ? capturePortalDraftSnapshotBeforeRenderP494_(getBusinessRegistrationDraftContextKeyP494D_(), overlay) : null;
   overlay.innerHTML = '' +
     '<div class="business-registration-modal-p436" onclick="event.stopPropagation();">' +
       '<div class="business-registration-modal-head-p436">' +
@@ -2490,13 +2828,17 @@ function renderBusinessRegistrationModalP436_(values, saving) {
       '</div>' +
     '</div>';
   overlay.onclick = function() { if (!saving) closeBusinessRegistrationModalP436_(); };
+  registerBusinessRegistrationDraftFieldsP494D_(values);
+  if (draftSnapshotP494D && typeof restorePortalDraftSnapshotAfterRenderP494_ === 'function') {
+    try { restorePortalDraftSnapshotAfterRenderP494_(draftSnapshotP494D, overlay); } catch (err) {}
+  }
   Array.from(overlay.querySelectorAll('[data-biz-key]')).forEach(function(el) {
     el.addEventListener('input', function() { businessRegistrationModalTouchedP436 = true; });
   });
 }
 
 function renderBusinessRegistrationInputP436_(key, label, value, placeholder, disabled, wide) {
-  const common = ' data-biz-key="' + escAttr(key) + '"' + disabled + ' placeholder="' + escAttr(placeholder || '') + '"';
+  const common = ' data-biz-key="' + escAttr(key) + '" data-p494-draft-context="' + escAttr(getBusinessRegistrationDraftContextKeyP494D_()) + '" data-p494-draft-key="' + escAttr(key) + '"' + disabled + ' placeholder="' + escAttr(placeholder || '') + '"';
   if (wide) {
     return '<label class="business-registration-field-p436 wide"><span>' + esc(label) + '</span><textarea' + common + '>' + esc(value || '') + '</textarea></label>';
   }
@@ -2504,6 +2846,7 @@ function renderBusinessRegistrationInputP436_(key, label, value, placeholder, di
 }
 
 function closeBusinessRegistrationModalP436_() {
+  try { releasePortalDraftContextP494_(getBusinessRegistrationDraftContextKeyP494D_(), { force:true }); } catch (err) {}
   const overlay = document.getElementById('businessRegistrationModalP436');
   if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
   businessRegistrationModalStateP436 = null;
@@ -2584,6 +2927,7 @@ function saveBusinessRegistrationModalP436_() {
     return;
   }
 
+  markBusinessRegistrationPendingP494D_(dirty);
   renderBusinessRegistrationModalP436_(allValues, true);
   applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, dirty);
 
@@ -2601,6 +2945,7 @@ function saveBusinessRegistrationModalP436_() {
     })).then(function(res) {
       if (isPortalSaveConflictResponseP474_(res)) {
         businessRegistrationModalTouchedP436 = true;
+        markBusinessRegistrationConflictP494D_(res && (res.currentValues || res.serverValues || {}));
         renderBusinessRegistrationModalP436_(allValues, false);
         showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: customerNo, key: '', label: '사업자등록증 정보' });
         toast('사업자등록증 저장 충돌 확인 필요: 입력값은 유지됩니다.');
@@ -2608,6 +2953,7 @@ function saveBusinessRegistrationModalP436_() {
       }
       applyCustomerMasterMetaFromSaveP202_(rowNo, customerNo, res);
       if (res && res.values) applyCustomerBusinessRegistrationPatchP436_(rowNo, customerNo, res.values);
+      markBusinessRegistrationSavedP494D_(res && res.values ? res.values : dirty);
       if (res && res.queuedFallbackP473) toast('사업자등록증 정보가 저장큐로 넘어갔습니다. 자동으로 다시 반영됩니다.');
       else toast((res && res.message) || '사업자등록증 정보 저장 완료');
       closeBusinessRegistrationModalP436_();
@@ -2862,7 +3208,11 @@ function saveExpandedCustomerMemo(rowNo) {
   const cachedForMemo = getCustomerDetailCache_(rowNo, prevRow && prevRow.customerNo);
   const prevDetail = cachedForMemo ? JSON.parse(JSON.stringify(cachedForMemo)) : null;
   const targetCustomerNo = String((prevDetail && prevDetail.customerNo) || (prevRow && prevRow.customerNo) || memoEl.getAttribute('data-customer-no') || '').trim();
-  const prevMemo = prevRow ? (prevRow.memo || '') : (prevDetail ? prevDetail.memo || '' : '');
+  let prevMemo = prevRow ? (prevRow.memo || '') : (prevDetail ? prevDetail.memo || '' : '');
+  try {
+    const fieldP494C = (typeof getExpandedMemoDraftFieldP494C_ === 'function') ? getExpandedMemoDraftFieldP494C_(rowNo, targetCustomerNo, false) : null;
+    if (fieldP494C && fieldP494C.baseLoaded !== false) prevMemo = String(fieldP494C.baseValue == null ? '' : fieldP494C.baseValue);
+  } catch (err) {}
   const operationIdP473 = 'DOP_EXP_MEMO_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
 
   if (btn) { btn.disabled = true; btn.textContent = '저장 중'; }
@@ -2886,6 +3236,10 @@ function saveExpandedCustomerMemo(rowNo) {
         applyCustomerMemoOptimistic_(rowNo, memoValue);
         if (isPortalSaveConflictResponseP474_(res)) {
           markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
+          try {
+            const infoP494C = (res && (res.conflictInfoP474 || res.conflictInfo)) || {};
+            markExpandedMemoConflictP494C_(rowNo, targetCustomerNo, infoP494C.currentValue || infoP494C.serverValue || '');
+          } catch(e) {}
           showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: targetCustomerNo, key: 'memo', label: '마스터시트 메모' });
         } else if (res && res.queuedFallbackP473) {
           markExpandedMemoSaveDoneP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
@@ -2919,7 +3273,12 @@ function resetExpandedCustomerMemo(rowNo) {
   const rowSummary = findCustomerRowSummaryByRowNo_(rowNo);
   const detail = getCustomerDetailCache_(rowNo, rowSummary && rowSummary.customerNo);
   if (!memoEl || !detail) return;
-  memoEl.value = getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '';
+  const resetValue = getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '';
+  memoEl.value = resetValue;
+  memoEl.setAttribute('data-original', resetValue);
+  const targetCustomerNo = memoEl.getAttribute('data-customer-no') || (rowSummary && rowSummary.customerNo) || '';
+  updateExpandedMemoDraftP473_(rowNo, targetCustomerNo, resetValue, { dirty: false, pending: false, focused: false, pendingOperationId: '', baseValue: resetValue, forceBase: true, userTouched: false });
+  try { clearExpandedMemoSyncNoticeP494C_(rowNo); } catch (err) {}
 }
 
 function updateCustomerRowMemoInCaches_(rowNo, memoValue) {
