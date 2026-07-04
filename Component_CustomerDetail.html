@@ -170,13 +170,23 @@ function renderDetail(d, options) {
   if (d.__summary || d.__lite) {
     html += '<div class="section-card detail-summary-banner-p484">기본 정보를 먼저 표시했습니다. 전체 상세정보와 최근 컨택 이력은 뒤에서 보강 중입니다.</div>';
   }
+  const tmContactBlockHtmlP492 = renderPortalLongNoContactTmBlockP475_(d, 'modal');
+
   html += renderCustomerBasicSection(d);
-  html += renderPortalLongNoContactTmBlockP475_(d, 'modal');
-  html += '<div class="detail-two-column-p484">';
-  html += '<div class="detail-column-p484 detail-column-left-p484">' + renderContractSection(d) + renderMasterMemoSectionP484_(d) + '</div>';
-  html += '<div class="detail-column-p484 detail-column-right-p484">' + renderQuoteInfoSectionP484_(d) + renderRecentContactSectionP484_(d) + '</div>';
+  html += '<div class="detail-two-column-p484 detail-contract-quote-row-p492">';
+  html += '<div class="detail-column-p484 detail-column-left-p484">' + renderContractSection(d) + '</div>';
+  html += '<div class="detail-column-p484 detail-column-right-p484">' + renderQuoteInfoSectionP484_(d) + '</div>';
   html += '</div>';
+  if (tmContactBlockHtmlP492) {
+    html += '<div class="detail-two-column-p484 detail-memo-tm-row-p492">';
+    html += '<div class="detail-column-p484 detail-column-left-p484">' + renderMasterMemoSectionP484_(d) + '</div>';
+    html += '<div class="detail-column-p484 detail-column-right-p484 detail-tm-column-p492">' + tmContactBlockHtmlP492 + '</div>';
+    html += '</div>';
+  } else {
+    html += renderMasterMemoSectionP484_(d);
+  }
   if (!d.isNew) html += renderTempMemoPanel();
+  html += renderRecentContactSectionP484_(d);
   html += '</div>';
 
   modalBody.innerHTML = html;
