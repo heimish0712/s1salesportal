@@ -1586,7 +1586,10 @@ function buildCustomerDetailFromObj_(obj, rowNo, options) {
     contactMethods: PORTAL_CONFIG.CONTACT_METHODS,
     detailFields: buildDetailFieldValues_(obj),
     quoteCalcDefaults: buildQuoteCalcDefaults_(obj),
-    contactProfiles: (typeof getContactProfilesForCustomerP484_ === 'function') ? getContactProfilesForCustomerP484_(customerNo, rowNo) : [],
+    // P492: 고객상세 기본 조회에서는 담당자프로필_DB를 읽지 않습니다.
+    // 담당자 프로필 패널을 실제로 열 때 getCustomerContactProfilesP484()로 1회 lazy-load합니다.
+    contactProfiles: (options.includeContactProfiles === true && typeof getContactProfilesForCustomerP484_ === 'function') ? getContactProfilesForCustomerP484_(customerNo, rowNo) : [],
+    contactProfilesLazy: options.includeContactProfiles !== true,
     contactLogs: options.includeLogs === false ? [] : getContactHistoryByCustomer_(customerNo, rowNo),
     orderInfo: orderInfoP250 || { exists: false, contractNo: '', rowNo: 0, customerNo: customerNo, company: company },
     raw: options.includeRaw === false ? {} : obj,

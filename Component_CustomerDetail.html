@@ -4,7 +4,8 @@ let customerDetailModalRequestSeq = 0;
 let contactSelectedTagsP11 = [];
 let contactNextActionTagsP119 = [];
 let customerDetailFullRequestMapP468 = {};
-let contactProfileStateP484 = { rowNo: 0, customerNo: '', profiles: [], representativeProfileId: '', dirty: false, open: false };
+let contactProfileStateP484 = { rowNo: 0, customerNo: '', profiles: [], representativeProfileId: '', dirty: false, open: false, loaded: false, loading: false, error: '' };
+let contactProfileRequestSeqP492 = 0;
 let quoteLastManualFieldP484 = 'discountRate';
 let quoteRoundTenThousandP484 = true;
 let masterMemoSelectionP484 = { start: 0, end: 0, focused: false };
@@ -594,9 +595,27 @@ function bindDetailDraftProtectionP457_() {
   });
 }
 
+function isCustomerDetailFullReadyForEditP492_() {
+  const d = currentDetail || {};
+  if (d && d.isNew) return true;
+  const rowNo = Number(d && d.rowNo) || 0;
+  const customerNo = normalizeCustomerNoForKey_((d && d.customerNo) || currentDetailCustomerNo || '');
+  if (!rowNo || !customerNo) return false;
+  if (d.__summary || d.__lite || d.__loading || d.__masterBacked === false) return false;
+  return true;
+}
+
+function getCustomerDetailNotReadyMessageP492_() {
+  return '전체 상세정보를 아직 불러오는 중입니다. 로딩 완료 후 수정/저장해 주세요.';
+}
+
 function updateDetailSaveButtonDirtyStateP457_() {
   const saveBtn = document.getElementById('footerSaveDetail');
   if (!saveBtn || !isDetailEditMode) return;
+  if (!isCustomerDetailFullReadyForEditP492_()) {
+    saveBtn.disabled = true;
+    return;
+  }
   const dirty = getDirtyDetailInputValues_();
   const profileDirty = !!(contactProfileStateP484 && contactProfileStateP484.dirty);
   saveBtn.disabled = Object.keys(dirty).length === 0 && !profileDirty;
@@ -1284,16 +1303,49 @@ function normalizeContactProfileClientP484_(profile, d, index) {
   };
 }
 
+function isContactProfileListProvidedP492_(d) {
+  if (!d || !Array.isArray(d.contactProfiles)) return false;
+  // P492: 고객상세 기본 로딩에서는 담당자프로필_DB를 읽지 않습니다.
+  // 서버가 contactProfilesLazy를 내려준 경우에는 lazy-load 대상입니다.
+  return d.contactProfilesLazy !== true;
+}
+
+function normalizeContactProfileStateRepresentativeP492_() {
+  const state = contactProfileStateP484 || { profiles: [] };
+  const profiles = Array.isArray(state.profiles) ? state.profiles : [];
+  let representative = profiles.find(function(p) { return p && String(p.profileId) === String(state.representativeProfileId || '') && p.active !== false; });
+  if (!representative) representative = profiles.find(function(p) { return p && p.representative && p.active !== false; });
+  if (!representative) representative = profiles.find(function(p) { return p && p.active !== false; });
+  if (representative) state.representativeProfileId = representative.profileId;
+  profiles.forEach(function(p) { if (p) p.representative = representative ? String(p.profileId) === String(representative.profileId) : false; });
+}
+
 function initializeContactProfileStateP484_(d, options) {
   options = options || {};
   d = d || {};
   const rowNo = Number(d.rowNo) || 0;
   const customerNo = normalizeCustomerNoForKey_(d.customerNo || currentDetailCustomerNo || '');
   const sameTarget = contactProfileStateP484 && Number(contactProfileStateP484.rowNo) === rowNo && normalizeCustomerNoForKey_(contactProfileStateP484.customerNo || '') === customerNo;
-  if (sameTarget && options.preserveEditMode && contactProfileStateP484.dirty) return;
-  let profiles = Array.isArray(d.contactProfiles) ? d.contactProfiles.slice() : [];
+  const defaultProfile = buildDefaultContactProfileP484_(d);
+
+  // P492: 사용자가 프로필을 열었거나/불러왔거나/수정 중이면 전체상세 hydration으로 프로필 상태를 초기화하지 않습니다.
+  // 기존에는 전체상세 로딩 중 빈 profile/default 값이 다시 렌더되면서 저장 버튼을 눌렀을 때 위험한 값이 섞일 수 있었습니다.
+  if (sameTarget && (contactProfileStateP484.dirty || contactProfileStateP484.loading || contactProfileStateP484.loaded || contactProfileStateP484.open)) {
+    contactProfileStateP484.rowNo = rowNo;
+    contactProfileStateP484.customerNo = customerNo;
+    contactProfileStateP484.defaultProfile = defaultProfile;
+    if (!contactProfileStateP484.loaded && !contactProfileStateP484.loading && !contactProfileStateP484.dirty) {
+      contactProfileStateP484.profiles = [defaultProfile];
+      contactProfileStateP484.representativeProfileId = defaultProfile.profileId;
+    }
+    normalizeContactProfileStateRepresentativeP492_();
+    return;
+  }
+
+  const provided = isContactProfileListProvidedP492_(d);
+  let profiles = provided ? (d.contactProfiles || []).slice() : [];
   profiles = profiles.map(function(p, idx) { return normalizeContactProfileClientP484_(p, d, idx); }).filter(function(p) { return p.active !== false; });
-  if (!profiles.length) profiles = [buildDefaultContactProfileP484_(d)];
+  if (!profiles.length) profiles = [defaultProfile];
   let representative = profiles.find(function(p) { return p.representative; });
   if (!representative) {
     profiles[0].representative = true;
@@ -1306,13 +1358,20 @@ function initializeContactProfileStateP484_(d, options) {
     profiles: profiles,
     representativeProfileId: representative.profileId,
     dirty: false,
-    open: sameTarget ? !!contactProfileStateP484.open : false
+    open: sameTarget ? !!contactProfileStateP484.open : false,
+    loaded: !!provided,
+    loading: false,
+    error: '',
+    defaultProfile: defaultProfile
   };
 }
 
 function renderContactProfileControlsP484_() {
-  // P486: 담당자 프로필 기능은 유지하되, 고객상세 팝업의 웹 버튼만 임시 숨김 처리.
-  return '';
+  if (currentDetail && currentDetail.isNew) return '';
+  return '<div class="contact-profile-actions-p484">'
+    + '<button type="button" class="secondary contact-profile-btn-p484" onclick="toggleContactProfilePanelP484_()">담당자 프로필</button>'
+    + '<button type="button" class="secondary contact-profile-btn-p484" onclick="toggleContactProfilePanelP484_(true)">대표담당자 변경</button>'
+    + '</div>';
 }
 
 function renderContactProfilePanelP484_() {
@@ -1320,21 +1379,34 @@ function renderContactProfilePanelP484_() {
   return '<div id="contactProfilePanelHolderP484">' + renderContactProfilePanelInnerP484_() + '</div>';
 }
 
+function isContactProfilePanelReadyP492_() {
+  return !!(contactProfileStateP484 && contactProfileStateP484.open && contactProfileStateP484.loaded && !contactProfileStateP484.loading && !contactProfileStateP484.error);
+}
+
 function renderContactProfilePanelInnerP484_() {
   const state = contactProfileStateP484 || { profiles: [] };
   const display = state.open ? '' : ' style="display:none;"';
+  const ready = !!(state.open && state.loaded && !state.loading && !state.error);
   let html = '<div id="contactProfilePanelP484" class="contact-profile-panel-p484"' + display + '>';
-  html += '<div class="contact-profile-panel-head-p484"><b>담당자 프로필</b><span>대표로 선택한 프로필만 마스터시트 담당자 필드에 반영됩니다.</span><button type="button" class="secondary" onclick="addContactProfileRowP484_()">프로필 추가</button></div>';
+  html += '<div class="contact-profile-panel-head-p484"><b>담당자 프로필</b><span>대표로 선택한 프로필만 저장 버튼을 눌렀을 때 마스터시트 담당자 필드에 반영됩니다.</span><button type="button" class="secondary contact-profile-add-btn-p484" onclick="addContactProfileRowP484_()"' + (!ready ? ' disabled' : '') + '>프로필 추가</button></div>';
+  if (state.loading) {
+    html += '<div class="contact-profile-state-p492">담당자 프로필을 불러오는 중입니다. 로딩 중에는 프로필 저장을 막아 빈 값이 마스터시트로 넘어가지 않게 했습니다.</div>';
+  } else if (state.error) {
+    html += '<div class="contact-profile-state-p492 contact-profile-state-error-p492">담당자 프로필을 불러오지 못했습니다. <button type="button" class="secondary contact-profile-retry-btn-p492" onclick="loadContactProfilesForCurrentDetailP492_(true)">다시 불러오기</button><br><span>' + esc(state.error) + '</span></div>';
+  } else if (!state.loaded && state.open) {
+    html += '<div class="contact-profile-state-p492">담당자 프로필 DB를 불러올 준비 중입니다.</div>';
+  }
   html += '<div class="contact-profile-rows-p484">';
   (state.profiles || []).forEach(function(profile, idx) {
     const id = String(profile.profileId || makeTempContactProfileIdP484_());
     const checked = String(id) === String(state.representativeProfileId) || profile.representative;
+    const disabledAttr = ready ? '' : ' disabled';
     html += '<div class="contact-profile-row-p484" data-profile-id="' + escAttr(id) + '">';
-    html += '<label class="contact-profile-rep-p484"><input class="contact-profile-radio-p484" name="contactProfileRepresentativeP484" type="radio" value="' + escAttr(id) + '"' + (checked ? ' checked' : '') + ' disabled><span>대표</span></label>';
-    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="contact" placeholder="담당자명" value="' + escAttr(profile.contact || '') + '" disabled>';
-    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="phone" placeholder="대표번호" value="' + escAttr(profile.phone || '') + '" disabled>';
-    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="directPhone" placeholder="직통번호" value="' + escAttr(profile.directPhone || '') + '" disabled>';
-    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="email" placeholder="이메일" value="' + escAttr(profile.email || '') + '" disabled>';
+    html += '<label class="contact-profile-rep-p484"><input class="contact-profile-radio-p484" name="contactProfileRepresentativeP484" type="radio" value="' + escAttr(id) + '"' + (checked ? ' checked' : '') + disabledAttr + '><span>대표</span></label>';
+    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="contact" placeholder="담당자명" value="' + escAttr(profile.contact || '') + '"' + disabledAttr + '>';
+    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="phone" placeholder="대표번호" value="' + escAttr(profile.phone || '') + '"' + disabledAttr + '>';
+    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="directPhone" placeholder="직통번호" value="' + escAttr(profile.directPhone || '') + '"' + disabledAttr + '>';
+    html += '<input class="contact-profile-input-p484" data-profile-id="' + escAttr(id) + '" data-profile-field="email" placeholder="이메일" value="' + escAttr(profile.email || '') + '"' + disabledAttr + '>';
     html += '</div>';
   });
   html += '</div>';
@@ -1347,13 +1419,78 @@ function refreshContactProfilePanelP484_() {
   if (holder) {
     holder.innerHTML = renderContactProfilePanelInnerP484_();
     bindContactProfileInputsP484_();
-    toggleDetailEdit(isDetailEditMode);
+    applyContactProfileEditabilityP492_();
   }
 }
 
+function applyContactProfileEditabilityP492_() {
+  const ready = isContactProfilePanelReadyP492_();
+  document.querySelectorAll('.contact-profile-input-p484,.contact-profile-radio-p484').forEach(function(el) {
+    el.disabled = !(isDetailEditMode && ready);
+  });
+  document.querySelectorAll('.contact-profile-add-btn-p484').forEach(function(btn) {
+    btn.disabled = !(isDetailEditMode && ready);
+  });
+}
+
+function loadContactProfilesForCurrentDetailP492_(force) {
+  const state = contactProfileStateP484;
+  if (!state || !state.rowNo || !state.customerNo) return;
+  if (!force && (state.loading || state.loaded || state.dirty)) return;
+  const rowNo = Number(state.rowNo) || 0;
+  const customerNo = normalizeCustomerNoForKey_(state.customerNo || '');
+  const requestSeq = ++contactProfileRequestSeqP492;
+  state.open = true;
+  state.loading = true;
+  state.error = '';
+  refreshContactProfilePanelP484_();
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (requestSeq !== contactProfileRequestSeqP492) return;
+      if (!contactProfileStateP484 || Number(contactProfileStateP484.rowNo) !== rowNo || normalizeCustomerNoForKey_(contactProfileStateP484.customerNo || '') !== customerNo) return;
+      const baseDetail = currentDetail || { rowNo: rowNo, customerNo: customerNo };
+      let profiles = (res && Array.isArray(res.profiles) ? res.profiles : [])
+        .map(function(p, idx) { return normalizeContactProfileClientP484_(p, baseDetail, idx); })
+        .filter(function(p) { return p.active !== false; });
+      if (!profiles.length) profiles = [buildDefaultContactProfileP484_(baseDetail)];
+      contactProfileStateP484.profiles = profiles;
+      contactProfileStateP484.loading = false;
+      contactProfileStateP484.loaded = true;
+      contactProfileStateP484.error = '';
+      contactProfileStateP484.dirty = false;
+      let representative = profiles.find(function(p) { return p.representative; }) || profiles[0];
+      contactProfileStateP484.representativeProfileId = representative ? representative.profileId : '';
+      normalizeContactProfileStateRepresentativeP492_();
+      refreshContactProfilePanelP484_();
+      try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
+    })
+    .withFailureHandler(function(err) {
+      if (requestSeq !== contactProfileRequestSeqP492) return;
+      if (!contactProfileStateP484 || Number(contactProfileStateP484.rowNo) !== rowNo || normalizeCustomerNoForKey_(contactProfileStateP484.customerNo || '') !== customerNo) return;
+      contactProfileStateP484.loading = false;
+      contactProfileStateP484.loaded = false;
+      contactProfileStateP484.error = getErrorMessage_(err);
+      contactProfileStateP484.dirty = false;
+      refreshContactProfilePanelP484_();
+      try { toast('담당자 프로필 조회가 실패했습니다. 기존 고객정보 저장은 계속 가능합니다.'); } catch(e) {}
+    })
+    .getCustomerContactProfilesP484({ rowNo: rowNo, customerNo: customerNo });
+}
+
 function toggleContactProfilePanelP484_(forceOpen) {
+  if (!contactProfileStateP484) initializeContactProfileStateP484_(currentDetail || {}, {});
+  if (forceOpen === true && !isDetailEditMode) {
+    if (typeof isCustomerDetailFullReadyForEditP492_ === 'function' && isCustomerDetailFullReadyForEditP492_()) {
+      toggleDetailEdit(true);
+    } else {
+      try { toast(getCustomerDetailNotReadyMessageP492_()); } catch(e) {}
+    }
+  }
   contactProfileStateP484.open = forceOpen === true ? true : !contactProfileStateP484.open;
   refreshContactProfilePanelP484_();
+  if (contactProfileStateP484.open && !contactProfileStateP484.loaded && !contactProfileStateP484.loading && !contactProfileStateP484.dirty) {
+    loadContactProfilesForCurrentDetailP492_(false);
+  }
 }
 
 function findContactProfileStateItemP484_(id) {
@@ -1362,12 +1499,22 @@ function findContactProfileStateItemP484_(id) {
 }
 
 function markContactProfileDirtyP484_() {
+  if (!contactProfileStateP484 || !contactProfileStateP484.loaded || contactProfileStateP484.loading || contactProfileStateP484.error) return;
   contactProfileStateP484.dirty = true;
   const saveBtn = document.getElementById('footerSaveDetail');
   if (saveBtn && isDetailEditMode) saveBtn.disabled = false;
 }
 
 function addContactProfileRowP484_() {
+  if (!contactProfileStateP484 || !contactProfileStateP484.loaded || contactProfileStateP484.loading || contactProfileStateP484.error) {
+    if (contactProfileStateP484) {
+      contactProfileStateP484.open = true;
+      refreshContactProfilePanelP484_();
+      loadContactProfilesForCurrentDetailP492_(!!contactProfileStateP484.error);
+    }
+    try { toast('담당자 프로필을 먼저 불러온 뒤 추가할 수 있습니다.'); } catch(e) {}
+    return;
+  }
   if (!isDetailEditMode) toggleDetailEdit(true);
   contactProfileStateP484.open = true;
   contactProfileStateP484.profiles.push({
@@ -1387,8 +1534,13 @@ function addContactProfileRowP484_() {
   }, 0);
 }
 
+function contactProfileHasAnyValueP492_(profile) {
+  profile = profile || {};
+  return !!(String(profile.contact || '').trim() || String(profile.phone || '').trim() || String(profile.directPhone || '').trim() || String(profile.email || '').trim());
+}
+
 function applyRepresentativeProfileToDetailP484_(profile) {
-  if (!profile) return;
+  if (!profile || !contactProfileHasAnyValueP492_(profile)) return;
   if (!isDetailEditMode) toggleDetailEdit(true);
   setInputValueByKey('contact', normalizeContactProfileNameClientP484_(profile.contact || ''));
   setInputValueByKey('phone', profile.phone || '');
@@ -1397,8 +1549,16 @@ function applyRepresentativeProfileToDetailP484_(profile) {
 }
 
 function selectRepresentativeContactProfileP484_(id) {
+  if (!contactProfileStateP484 || !contactProfileStateP484.loaded || contactProfileStateP484.loading || contactProfileStateP484.error) {
+    try { toast('담당자 프로필을 불러온 뒤 대표담당자를 변경할 수 있습니다.'); } catch(e) {}
+    return;
+  }
   const profile = findContactProfileStateItemP484_(id);
   if (!profile) return;
+  if (!contactProfileHasAnyValueP492_(profile)) {
+    try { toast('빈 담당자 프로필은 대표담당자로 선택할 수 없습니다.'); } catch(e) {}
+    return;
+  }
   contactProfileStateP484.representativeProfileId = String(profile.profileId);
   (contactProfileStateP484.profiles || []).forEach(function(p) { p.representative = String(p.profileId) === String(profile.profileId); });
   applyRepresentativeProfileToDetailP484_(profile);
@@ -1411,6 +1571,7 @@ function bindContactProfileInputsP484_() {
     if (input.__contactProfileBoundP484) return;
     input.__contactProfileBoundP484 = true;
     const handler = function() {
+      if (!contactProfileStateP484 || !contactProfileStateP484.loaded || contactProfileStateP484.loading || contactProfileStateP484.error) return;
       const id = input.getAttribute('data-profile-id');
       const field = input.getAttribute('data-profile-field');
       const profile = findContactProfileStateItemP484_(id);
@@ -1419,6 +1580,7 @@ function bindContactProfileInputsP484_() {
       markContactProfileDirtyP484_();
     };
     input.addEventListener('input', function() {
+      if (!contactProfileStateP484 || !contactProfileStateP484.loaded || contactProfileStateP484.loading || contactProfileStateP484.error) return;
       const id = input.getAttribute('data-profile-id');
       const field = input.getAttribute('data-profile-field');
       const profile = findContactProfileStateItemP484_(id);
@@ -1442,6 +1604,7 @@ function bindContactProfileInputsP484_() {
 }
 
 function syncContactProfileStateFromDomP484_() {
+  if (!contactProfileStateP484 || !contactProfileStateP484.loaded || contactProfileStateP484.loading || contactProfileStateP484.error) return;
   document.querySelectorAll('.contact-profile-input-p484').forEach(function(input) {
     const id = input.getAttribute('data-profile-id');
     const field = input.getAttribute('data-profile-field');
@@ -1459,13 +1622,14 @@ function syncContactProfileStateFromDomP484_() {
 
 function collectContactProfileSavePayloadP484_() {
   if (!contactProfileStateP484 || !contactProfileStateP484.dirty) return null;
+  if (!contactProfileStateP484.loaded || contactProfileStateP484.loading || contactProfileStateP484.error) return null;
   const rowNo = Number(contactProfileStateP484.rowNo || (currentDetail && currentDetail.rowNo) || 0) || 0;
   const customerNo = normalizeCustomerNoForKey_(contactProfileStateP484.customerNo || (currentDetail && currentDetail.customerNo) || currentDetailCustomerNo || '');
   if (!rowNo || !customerNo) return null;
   syncContactProfileStateFromDomP484_();
   const companyEl = getDetailInputByKey_('company');
   const company = companyEl ? String(companyEl.value || '').trim() : getDetailFieldValueByKeyP484_('basic', 'company', currentDetail && currentDetail.company || '');
-  const profiles = (contactProfileStateP484.profiles || []).map(function(p) {
+  const nonBlankProfiles = (contactProfileStateP484.profiles || []).map(function(p) {
     return {
       profileId: p.profileId,
       contact: normalizeContactProfileNameClientP484_(p.contact || ''),
@@ -1475,20 +1639,27 @@ function collectContactProfileSavePayloadP484_() {
       representative: String(p.profileId) === String(contactProfileStateP484.representativeProfileId),
       active: p.active !== false
     };
-  }).filter(function(p) { return p.active !== false && (p.contact || p.phone || p.directPhone || p.email || p.representative); });
-  if (!profiles.length) return null;
-  return { rowNo: rowNo, customerNo: customerNo, company: company, representativeProfileId: contactProfileStateP484.representativeProfileId || '', profiles: profiles };
+  }).filter(function(p) { return p.active !== false && (p.contact || p.phone || p.directPhone || p.email); });
+  if (!nonBlankProfiles.length) return null;
+  const repExists = nonBlankProfiles.some(function(p) { return p.representative; });
+  if (!repExists) nonBlankProfiles[0].representative = true;
+  const repProfile = nonBlankProfiles.find(function(p) { return p.representative; }) || nonBlankProfiles[0];
+  return { rowNo: rowNo, customerNo: customerNo, company: company, representativeProfileId: repProfile ? repProfile.profileId : '', profiles: nonBlankProfiles };
 }
 
 function saveContactProfilesOnlyP484_(profilePayload) {
   if (!profilePayload) return;
+  try { toast('저장이 완료되었습니다.'); } catch(e) {}
   try { if (typeof setCustomerDetailSaveUiP430_ === 'function') setCustomerDetailSaveUiP430_(true); } catch(e) {}
   google.script.run
     .withSuccessHandler(function(res) {
       contactProfileStateP484.dirty = false;
+      contactProfileStateP484.loaded = true;
+      contactProfileStateP484.loading = false;
+      contactProfileStateP484.error = '';
       try { if (typeof setCustomerDetailSaveUiP430_ === 'function') setCustomerDetailSaveUiP430_(false); } catch(e) {}
-      try { if (res && Array.isArray(res.profiles)) { contactProfileStateP484.profiles = res.profiles.map(function(p, idx) { return normalizeContactProfileClientP484_(p, currentDetail, idx); }); } } catch(e) {}
-      toast('담당자 프로필을 저장했습니다.');
+      try { if (res && Array.isArray(res.profiles)) { contactProfileStateP484.profiles = res.profiles.map(function(p, idx) { return normalizeContactProfileClientP484_(p, currentDetail, idx); }); normalizeContactProfileStateRepresentativeP492_(); } } catch(e) {}
+      try { refreshContactProfilePanelP484_(); } catch(e) {}
       try { updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
     })
     .withFailureHandler(function(err) {
@@ -1503,7 +1674,11 @@ function saveContactProfilesAfterDetailSaveP484_(profilePayload) {
   google.script.run
     .withSuccessHandler(function(res) {
       contactProfileStateP484.dirty = false;
-      try { if (res && Array.isArray(res.profiles)) { contactProfileStateP484.profiles = res.profiles.map(function(p, idx) { return normalizeContactProfileClientP484_(p, currentDetail, idx); }); } } catch(e) {}
+      contactProfileStateP484.loaded = true;
+      contactProfileStateP484.loading = false;
+      contactProfileStateP484.error = '';
+      try { if (res && Array.isArray(res.profiles)) { contactProfileStateP484.profiles = res.profiles.map(function(p, idx) { return normalizeContactProfileClientP484_(p, currentDetail, idx); }); normalizeContactProfileStateRepresentativeP492_(); } } catch(e) {}
+      try { refreshContactProfilePanelP484_(); } catch(e) {}
       try { updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
     })
     .withFailureHandler(function(err) {
@@ -1753,15 +1928,21 @@ function renderGenericOptions(options, current, key) {
 }
 
 function toggleDetailEdit(enable) {
+  if (enable && !isCustomerDetailFullReadyForEditP492_()) {
+    try { toast(getCustomerDetailNotReadyMessageP492_()); } catch(e) {}
+    return;
+  }
   const wasEditMode = !!isDetailEditMode;
   isDetailEditMode = !!enable;
   document.querySelectorAll('.detail-edit-input').forEach(el => {
     const editable = el.getAttribute('data-editable') === 'Y';
     el.disabled = !(enable && editable);
   });
-  document.querySelectorAll('.contact-profile-input-p484,.contact-profile-radio-p484').forEach(function(el) {
-    el.disabled = !enable;
-  });
+  try { if (typeof applyContactProfileEditabilityP492_ === 'function') applyContactProfileEditabilityP492_(); } catch (err) {
+    document.querySelectorAll('.contact-profile-input-p484,.contact-profile-radio-p484').forEach(function(el) {
+      el.disabled = true;
+    });
+  }
   const roundCheckP484 = document.getElementById('quoteRoundTenThousandP484');
   if (roundCheckP484) roundCheckP484.disabled = !enable;
   const discountAmountP484 = document.getElementById('quoteDiscountAmountP484');
@@ -1900,7 +2081,8 @@ function applyServerDetailAfterSaveP112_(detail, rowNo) {
   return true;
 }
 
-function notifyCustomerDetailSaveResultP488_(res) {
+function notifyCustomerDetailSaveResultP488_(res, options) {
+  options = options || {};
   try {
     if (res && res.conflictP473) {
       toast('저장 충돌이 발생했습니다. 입력값은 화면에 보존했습니다.');
@@ -1910,12 +2092,16 @@ function notifyCustomerDetailSaveResultP488_(res) {
       toast('저장큐로 넘어갔습니다. 입력값은 유지되고 자동으로 반영됩니다.');
       return;
     }
-    toast('저장되었습니다.');
+    if (!options.suppressSuccessToast) toast('저장이 완료되었습니다.');
   } catch (err) {}
 }
 
 function saveDetailFields() {
   if (!currentDetail || !currentDetail.rowNo) return;
+  if (!isCustomerDetailFullReadyForEditP492_()) {
+    try { toast(getCustomerDetailNotReadyMessageP492_()); } catch(e) {}
+    return;
+  }
   const rowNo = Number(currentDetail.rowNo);
   const targetCustomerNo = normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo);
 
@@ -1978,6 +2164,10 @@ function saveDetailFields() {
   try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch(e) {}
   try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
 
+  // P492: 고객상세 모달 저장은 Optimistic Direct Save 구조입니다.
+  // 저장 버튼 클릭 즉시 완료 토스트를 보여주고, 서버 응답은 충돌/큐 fallback/실패만 후속 안내합니다.
+  try { toast('저장이 완료되었습니다.'); } catch(e) {}
+
   enqueueCustomerSaveP220_(rowNo, targetCustomerNo, function() {
     try { if (opP457 && typeof markDetailOperationQueuedP457_ === 'function') markDetailOperationQueuedP457_(opP457); } catch(e) {}
     try { if (opP457 && typeof markDetailOperationApplyingP457_ === 'function') markDetailOperationApplyingP457_(opP457); } catch(e) {}
@@ -2035,7 +2225,7 @@ function saveDetailFields() {
         repaintCustomerResultsIfVisible_();
         try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, res || { message: '마스터시트 저장 완료' });
-        notifyCustomerDetailSaveResultP488_(res || {});
+        notifyCustomerDetailSaveResultP488_(res || {}, { suppressSuccessToast: true });
         if (profilePayloadP484) saveContactProfilesAfterDetailSaveP484_(profilePayloadP484);
         if (detailModalStillActiveP456) {
           try { renderDetailSyncStatusP457_(); } catch(e) {}
