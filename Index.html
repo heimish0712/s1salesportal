@@ -15,6 +15,7 @@
       <div class="nav-item" data-page="today" onclick="switchPage('today')"><span class="nav-icon">✓</span><span class="nav-label">오늘 할 일</span></div>
       <div class="nav-item" data-page="customers" onclick="switchPage('customers')"><span class="nav-icon">⌕</span><span class="nav-label">고객 상세 검색</span></div>
       <div class="nav-item" data-page="favorites" onclick="switchPage('favorites')"><span class="nav-icon">★</span><span class="nav-label">고객 즐겨찾기</span></div>
+      <div class="nav-item" data-page="myCustomerFolder" onclick="switchPage('myCustomerFolder')"><span class="nav-icon">▣</span><span class="nav-label">나의고객폴더</span></div>
       <div class="nav-item" data-page="focusCustomers" onclick="switchPage('focusCustomers')"><span class="nav-icon">◆</span><span class="nav-label">중점고객관리</span></div>
       <div class="nav-item" data-page="send" onclick="switchPage('send')"><span class="nav-icon">✉</span><span class="nav-label">견적/자료 발송</span></div>
       <div class="nav-item" data-page="contracts" onclick="switchPage('contracts')"><span class="nav-icon">▤</span><span class="nav-label">계약종합관리</span></div>
@@ -130,6 +131,15 @@
           </div>
         </div>
         <div id="favoriteResultArea" class="loading customer-result-area">즐겨찾기 고객을 불러오는 중입니다.</div>
+      </section>
+
+      <section class="panel page-section my-customer-folder-section-p497" id="myCustomerFolderSectionP497">
+        <div id="myCustomerFolderAreaP497" class="my-customer-folder-area-p497">
+          <div class="loading">나의고객폴더를 불러오는 중입니다.</div>
+        </div>
+        <div class="my-folder-busy-overlay-p497" id="myCustomerFolderBusyP497" style="display:none;">
+          <div class="my-folder-busy-box-p497"><div class="my-folder-spinner-p497"></div><div id="myCustomerFolderBusyTextP497">처리 중입니다.</div></div>
+        </div>
       </section>
 
       <section class="panel page-section focus-customer-panel-p290" id="focusCustomerSection">
@@ -418,6 +428,7 @@
   <?!= include('Component_Notice'); ?>
   <?!= include('Component_CustomerSearch'); ?>
   <?!= include('Component_Favorites'); ?>
+  <?!= include('Component_MyCustomerFolder'); ?>
   <?!= include('Component_FocusCustomer'); ?>
   <?!= include('Component_ContractComplete'); ?>
   <?!= include('Component_Send'); ?>

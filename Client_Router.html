@@ -15,6 +15,7 @@ function normalizePortalPageP470_(page) {
     notices: true,
     customers: true,
     favorites: true,
+    myCustomerFolder: true,
     focusCustomers: true,
     contracts: true,
     send: true,
@@ -96,6 +97,10 @@ function portalResetCurrentPageP469_() {
   if (page === 'favorites') {
     try { const el = document.getElementById('favoriteKeyword'); if (el) el.value = ''; } catch (err) {}
     try { if (typeof refreshFavoriteCustomers === 'function') refreshFavoriteCustomers(true); } catch (err) {}
+    return;
+  }
+  if (page === 'myCustomerFolder') {
+    try { if (typeof resetMyCustomerFolderPageP497_ === 'function') resetMyCustomerFolderPageP497_(); } catch (err) {}
     return;
   }
   if (page === 'focusCustomers') {
@@ -365,7 +370,7 @@ function switchPage(page, skipSearch) {
   } catch (err) {}
 
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.getAttribute('data-page') === page));
-  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
+  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'myCustomerFolderSectionP497', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('active');
   });
@@ -409,6 +414,15 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '내가 즐겨찾기한 고객만 빠르게 조회합니다.';
     deferPortalRouteLoadP462_('favorites', function(){ refreshFavoriteCustomers(false); });
     setTimeout(function() { const el = document.getElementById('favoriteKeyword'); if (el) el.focus(); }, 80);
+    return;
+  }
+
+  if (page === 'myCustomerFolder') {
+    document.getElementById('myCustomerFolderSectionP497').classList.add('active');
+    pageTitle.textContent = '나의고객폴더';
+    pageSubtitle.textContent = '유저별 개인 폴더에 고객을 중복 분류하고 빠르게 조회합니다.';
+    deferPortalRouteLoadP462_('myCustomerFolder', function(){ loadMyCustomerFolderPageP497(false); });
+    setTimeout(function() { const el = document.getElementById('myCustomerFolderAddKeywordP497'); if (el) el.focus(); }, 120);
     return;
   }
 
@@ -498,6 +512,7 @@ function getPortalSectionIdForPageP470_(page) {
     notices: 'noticeSection',
     customers: 'customerSearchSection',
     favorites: 'customerFavoritesSection',
+    myCustomerFolder: 'myCustomerFolderSectionP497',
     focusCustomers: 'focusCustomerSection',
     contracts: 'contractCompleteSection',
     send: 'placeholderSection',
@@ -512,7 +527,7 @@ function getPortalSectionIdForPageP470_(page) {
 
 function forcePortalHomeVisibleP470_(reason) {
   try {
-    ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(function(id) {
+    ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'myCustomerFolderSectionP497', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(function(id) {
       const el = document.getElementById(id);
       if (el) el.classList.remove('active');
     });
@@ -533,7 +548,7 @@ function forcePortalHomeVisibleP470_(reason) {
 
 function ensurePortalActiveSectionP470_(page) {
   try {
-    const active = document.querySelector('#homeSection.active, #noticeSection.active, #supportSection.active, #activityLogSection.active, #systemHealthSection.active, #todaySection.active, #customerSearchSection.active, #customerFavoritesSection.active, #focusCustomerSection.active, #contractCompleteSection.active, #placeholderSection.active');
+    const active = document.querySelector('#homeSection.active, #noticeSection.active, #supportSection.active, #activityLogSection.active, #systemHealthSection.active, #todaySection.active, #customerSearchSection.active, #customerFavoritesSection.active, #myCustomerFolderSectionP497.active, #focusCustomerSection.active, #contractCompleteSection.active, #placeholderSection.active');
     if (active) return true;
     const sectionId = getPortalSectionIdForPageP470_(page || getPortalCurrentPageP469_());
     const section = document.getElementById(sectionId) || document.getElementById('homeSection');

@@ -172,12 +172,13 @@ function renderDetail(d, options) {
     html += '<div class="section-card detail-summary-banner-p484">기본 정보를 먼저 표시했습니다. 전체 상세정보와 최근 컨택 이력은 뒤에서 보강 중입니다.</div>';
   }
   html += renderCustomerBasicSection(d);
-  html += renderPortalLongNoContactTmBlockP475_(d, 'modal');
-  html += '<div class="detail-two-column-p484">';
-  html += '<div class="detail-column-p484 detail-column-left-p484">' + renderContractSection(d) + renderMasterMemoSectionP484_(d) + '</div>';
-  html += '<div class="detail-column-p484 detail-column-right-p484">' + renderQuoteInfoSectionP484_(d) + renderRecentContactSectionP484_(d) + '</div>';
+  html += '<div class="detail-two-column-p484 detail-main-two-column-p496">';
+  html += '<div class="detail-column-p484 detail-column-left-p484">' + renderContractSection(d) + '</div>';
+  html += '<div class="detail-column-p484 detail-column-right-p484">' + renderQuoteInfoSectionP484_(d) + '</div>';
   html += '</div>';
+  html += renderMasterMemoTmRowP496_(d);
   if (!d.isNew) html += renderTempMemoPanel();
+  html += renderRecentContactSectionP484_(d);
   html += '</div>';
 
   modalBody.innerHTML = html;
@@ -1484,6 +1485,17 @@ function renderMasterMemoSectionP484_(d) {
   return html;
 }
 
+function renderMasterMemoTmRowP496_(d) {
+  const memoHtml = renderMasterMemoSectionP484_(d);
+  const tmHtml = renderPortalLongNoContactTmBlockP475_(d, 'modal');
+  if (!tmHtml) {
+    return '<div class="detail-memo-tm-row-p496 detail-memo-tm-row-no-tm-p496">' + memoHtml + '</div>';
+  }
+  return '<div class="detail-memo-tm-row-p496">'
+    + '<div class="detail-memo-tm-memo-p496">' + memoHtml + '</div>'
+    + '<div class="detail-memo-tm-tm-p496">' + tmHtml + '</div>'
+    + '</div>';
+}
 function renderQuoteInfoSectionP484_(d) {
   const f = getFieldMap('contract');
   const discountFieldRaw = f.discountRate || { key: 'discountRate', label: '할인율(%)', type: 'text', editable: true, value: '' };
