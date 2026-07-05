@@ -674,6 +674,154 @@ function resetSendMailContentToDefaultP493_() {
   renderSendPreview();
 }
 
+function ensureSendMailBodyEditorModalP493_() {
+  let backdrop = document.getElementById('sendMailBodyEditorBackdropP493');
+  if (backdrop) return backdrop;
+  backdrop = document.createElement('div');
+  backdrop.id = 'sendMailBodyEditorBackdropP493';
+  backdrop.className = 'support-modal-backdrop';
+  backdrop.style.zIndex = '1605';
+  backdrop.innerHTML = '' +
+    '<div class="support-modal" style="width:920px;max-width:94vw;max-height:88vh;">' +
+      '<div class="support-modal-header">' +
+        '<div class="support-modal-title">메일 본문 수정</div>' +
+        '<button type="button" class="support-modal-close" onclick="closeSendMailBodyEditorP493_()">X</button>' +
+      '</div>' +
+      '<div class="support-modal-body">' +
+        '<div id="sendMailBodyEditorStatusP493" style="margin-bottom:12px;border:1px solid #dbe3ef;background:#f8fafc;color:#344054;border-radius:10px;padding:10px 12px;font-size:12px;font-weight:800;line-height:1.55;"></div>' +
+        '<label style="display:block;margin-bottom:12px;">' +
+          '<span style="display:block;margin-bottom:6px;color:#344054;font-size:12px;font-weight:900;">메일 제목</span>' +
+          '<input id="sendMailSubjectModalInputP493" style="width:100%;box-sizing:border-box;border:1px solid #d0d5dd;border-radius:10px;background:#fff;color:#101828;font-size:14px;line-height:1.55;padding:10px 12px;" placeholder="메일 제목을 입력하세요.">' +
+        '</label>' +
+        '<label style="display:block;">' +
+          '<span style="display:block;margin-bottom:6px;color:#344054;font-size:12px;font-weight:900;">메일 본문</span>' +
+          '<textarea id="sendMailBodyModalInputP493" rows="16" style="width:100%;min-height:340px;box-sizing:border-box;border:1px solid #d0d5dd;border-radius:10px;background:#fff;color:#101828;font-size:14px;line-height:1.65;padding:12px;font-family:inherit;white-space:pre-wrap;resize:vertical;" placeholder="메일 본문을 입력하세요."></textarea>' +
+        '</label>' +
+        '<div style="margin-top:8px;color:#667085;font-size:12px;line-height:1.45;font-weight:700;">수정내용 적용을 누른 경우에만 나에게 테스트 발송과 고객 발송 payload에 수정본을 넘깁니다.</div>' +
+      '</div>' +
+      '<div class="support-modal-footer">' +
+        '<button type="button" class="secondary" onclick="resetSendMailBodyEditorToDefaultP493_()">기본값으로 초기화</button>' +
+        '<button type="button" class="btn-blue" onclick="applySendMailBodyEditorP493_()">수정내용 적용</button>' +
+        '<button type="button" class="secondary" onclick="closeSendMailBodyEditorP493_()">닫기</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(backdrop);
+  return backdrop;
+}
+
+function updateSendMailBodyEditorStatusP493_() {
+  const statusEl = document.getElementById('sendMailBodyEditorStatusP493');
+  if (!statusEl) return;
+  const edited = getSendMailContentTouchedP493_() || getSendMailDraftHasUserEditP494D_();
+  statusEl.innerHTML = edited
+    ? '현재 상태: <b style="color:#1d4ed8;">수정본 적용 예정</b><br>아래 제목/본문으로 테스트 발송과 고객 발송이 진행됩니다.'
+    : '현재 상태: <b>기본 자동 문구 사용</b><br>제목/본문은 현재 선택 고객과 선택 자료 기준으로 자동 생성된 기본값입니다.';
+}
+
+function openSendMailBodyEditorP493_() {
+  const ws = getActiveSendWorkspaceP211_ && getActiveSendWorkspaceP211_();
+  if (!ws) return;
+  applySendWorkspaceToGlobalsP211_(ws);
+  setSendMessage('', false);
+  if (!sendSelectedDetail) {
+    setSendMessage('메일 본문을 수정할 고객을 먼저 선택하세요.', true);
+    return;
+  }
+  const files = getSelectedSendFiles();
+  if (!files.length) {
+    setSendMessage('메일 본문을 수정할 발송자료를 하나 이상 선택하세요.', true);
+    return;
+  }
+  const model = buildCurrentSendPreviewModel_('PREVIEW');
+  syncSendMailContentDraftP493_(model);
+  const subjectValue = getSendMailDraftValueP494D_('subject', sendMailSubjectDraftP493 || buildDefaultPortalMailSubjectP493_(model));
+  const bodyValue = getSendMailDraftValueP494D_('body', sendMailBodyDraftP493 || buildDefaultPortalMailBodyP493_(model));
+  sendMailSubjectDraftP493 = subjectValue || '';
+  sendMailBodyDraftP493 = bodyValue || '';
+
+  const backdrop = ensureSendMailBodyEditorModalP493_();
+  const subjectEl = document.getElementById('sendMailSubjectModalInputP493');
+  const bodyEl = document.getElementById('sendMailBodyModalInputP493');
+  if (subjectEl) subjectEl.value = sendMailSubjectDraftP493 || '';
+  if (bodyEl) bodyEl.value = sendMailBodyDraftP493 || '';
+  updateSendMailBodyEditorStatusP493_();
+  backdrop.style.display = 'flex';
+  setTimeout(function(){ if (subjectEl) subjectEl.focus(); }, 50);
+}
+
+function closeSendMailBodyEditorP493_() {
+  const backdrop = document.getElementById('sendMailBodyEditorBackdropP493');
+  if (backdrop) backdrop.style.display = 'none';
+}
+
+function resetSendMailBodyEditorToDefaultP493_() {
+  const ws = getActiveSendWorkspaceP211_ && getActiveSendWorkspaceP211_();
+  if (!guardSendWorkspaceMutationP479_(ws, '메일 본문 기본값 초기화')) return;
+  const model = buildCurrentSendPreviewModel_('PREVIEW');
+  try { releaseSendMailDraftContextP494D_(); } catch (err) {}
+  sendMailContentTouchedP493 = { subject: false, body: false };
+  sendMailContentOwnerKeyP493 = '';
+  syncSendMailContentDraftP493_(model, { forceReset: true });
+  const subjectEl = document.getElementById('sendMailSubjectModalInputP493');
+  const bodyEl = document.getElementById('sendMailBodyModalInputP493');
+  if (subjectEl) subjectEl.value = sendMailSubjectDraftP493 || '';
+  if (bodyEl) bodyEl.value = sendMailBodyDraftP493 || '';
+  updateSendMailBodyEditorStatusP493_();
+  captureSendGlobalsToWorkspaceP211_(ws);
+  renderSendPreview();
+  setSendMessage('메일 본문 수정내용을 초기화했습니다. 기본 자동 문구를 사용합니다.', false);
+}
+
+function applySendMailBodyEditorP493_() {
+  const ws = getActiveSendWorkspaceP211_ && getActiveSendWorkspaceP211_();
+  if (!guardSendWorkspaceMutationP479_(ws, '메일 본문 수정')) return;
+  if (!sendSelectedDetail) {
+    setSendMessage('메일 본문을 수정할 고객을 먼저 선택하세요.', true);
+    return;
+  }
+  const files = getSelectedSendFiles();
+  if (!files.length) {
+    setSendMessage('메일 본문을 수정할 발송자료를 하나 이상 선택하세요.', true);
+    return;
+  }
+  const subjectEl = document.getElementById('sendMailSubjectModalInputP493');
+  const bodyEl = document.getElementById('sendMailBodyModalInputP493');
+  const subject = String(subjectEl && subjectEl.value || '').trim();
+  const bodyText = String(bodyEl && bodyEl.value || '').replace(/\r\n/g, '\n').trim();
+  if (!subject) {
+    setSendMessage('메일 제목이 비어 있습니다. 제목을 입력하세요.', true);
+    if (subjectEl) subjectEl.focus();
+    return;
+  }
+  if (!bodyText) {
+    setSendMessage('메일 본문이 비어 있습니다. 본문을 입력하세요.', true);
+    if (bodyEl) bodyEl.focus();
+    return;
+  }
+  if (subject.length > 250) {
+    setSendMessage('메일 제목이 너무 깁니다. 250자 이하로 줄여 주세요.', true);
+    if (subjectEl) subjectEl.focus();
+    return;
+  }
+  if (bodyText.length > 30000) {
+    setSendMessage('메일 본문이 너무 깁니다. 30,000자 이하로 줄여 주세요.', true);
+    if (bodyEl) bodyEl.focus();
+    return;
+  }
+  const model = buildCurrentSendPreviewModel_('PREVIEW');
+  sendMailSubjectDraftP493 = subject;
+  sendMailBodyDraftP493 = bodyText;
+  sendMailContentTouchedP493 = { subject: true, body: true };
+  sendMailContentOwnerKeyP493 = getSendMailContentOwnerKeyP493_(sendSelectedDetail, model.keys || sendSelectedFileKeysV50);
+  try { releaseSendMailDraftContextP494D_(); } catch (err) {}
+  captureSendGlobalsToWorkspaceP211_(ws);
+  renderSendPreview();
+  renderSendWorkspaceTabsP211_();
+  updateSendMailBodyEditorStatusP493_();
+  closeSendMailBodyEditorP493_();
+  setSendMessage('메일 본문 수정내용을 적용했습니다. 테스트 발송과 고객 발송에 수정본이 반영됩니다.', false);
+}
+
 function collectPortalMailContentOverrideP493_(model) {
   const subjectEl = document.getElementById('sendMailSubjectInputP493');
   const bodyEl = document.getElementById('sendMailBodyInputP493');
@@ -1042,6 +1190,7 @@ function renderSendPreview() {
     return;
   }
   const model = buildCurrentSendPreviewModel_('PREVIEW');
+  syncSendMailContentDraftP493_(model);
   let html = '<div class="send-preview-panel">';
   html += '<div class="send-preview-grid">';
   html += '<div class="send-preview-label">선택 행</div><div class="send-preview-value">' + esc(model.rowNo + '행') + '</div>';
@@ -1054,7 +1203,6 @@ function renderSendPreview() {
   html += '<div class="send-preview-label">첨부</div><div class="send-preview-value"><div class="send-chip-row">' + (model.labels.length ? model.labels.map(chipHtml_).join('') : '<span class="send-chip-muted">발송자료를 선택하세요.</span>') + '</div></div>';
   html += '<div class="send-preview-label">테스트 수신</div><div class="send-preview-value"><input id="sendTestInput" placeholder="예: bang 또는 bang@s1samsung.com" style="width:100%;"></div>';
   html += '</div>';
-  html += renderSendMailContentEditorP493_(model);
   if (sendReviewSessionIdV75) {
     const folderLink = sendReviewFolderUrlV75 ? (' · <a href="' + escAttr(sendReviewFolderUrlV75) + '" target="_blank" rel="noopener">Drive 폴더 열기</a>') : '';
     html += '<div class="send-preview-warn" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;">파일 확인/수정 세션 적용 중' + (sendReviewRequestNoV75 ? ' · 접수번호 ' + esc(sendReviewRequestNoV75) : '') + folderLink + '<br>수정 후 발송하면 Drive 폴더의 최종 수정본 기준으로 첨부됩니다.</div>';
@@ -1795,6 +1943,7 @@ function renderSendWorkspaceBodyP211_() {
         '<div id="sendInlineProgress" class="send-inline-progress"></div>' +
       '</div>' +
       '<div class="send-fixed-footer">' +
+        '<button class="secondary" onclick="openSendMailBodyEditorP493_()">메일 본문 수정</button>' +
         '<button class="secondary" onclick="preparePortalMailFilesForReviewFromUi()">파일 확인/수정</button>' +
         '<button onclick="sendPortalMailFromUi(\'TEST\')">나에게 테스트 발송</button>' +
         '<button onclick="sendPortalMailFromUi(\'CUSTOMER\')">고객에게 발송</button>' +
