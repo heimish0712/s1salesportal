@@ -7145,4 +7145,123 @@ body.sidebar-collapsed .my-folder-layout-p497 {
   }
 }
 
+
+
+/* P501: 나의 고객 폴더 정리 패치 - 기본/내 폴더 구획, 오류 안내, 드롭 UX */
+.my-folder-tree-section-p500.basic-zone-p501 {
+  border: 2px solid #cfe1ff;
+  background: #f8fbff;
+}
+.my-folder-tree-section-p500.basic-zone-p501 .my-folder-tree-section-head-p500 {
+  background: #eaf3ff;
+  color: #174ea6;
+}
+.my-folder-tree-section-p500.personal-p500 {
+  border: 2px solid #e5e7ef;
+  background: #fff;
+}
+.my-folder-tree-section-p500.personal-p500 .my-folder-tree-section-head-p500 {
+  background: #f8fafc;
+  color: #344054;
+}
+.my-folder-tree-subtitle-p501 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 10px 5px;
+  font-size: 11px;
+  font-weight: 950;
+  color: #475467;
+  background: rgba(255,255,255,.72);
+  border-top: 1px solid #edf0f5;
+}
+.my-folder-tree-subtitle-p501:first-of-type {
+  border-top: 0;
+}
+.my-folder-tree-subtitle-p501 em {
+  font-style: normal;
+  color: #98a2b3;
+  font-weight: 800;
+}
+.my-folder-tree-list-p497.system-list-p501 {
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #cfe1ff;
+}
+.my-folder-tree-list-p497.request-list-p501 {
+  min-height: 46px;
+}
+.my-folder-tree-node-p497.system-p500 {
+  border: 1px solid #cfe1ff;
+  color: #174ea6;
+  font-weight: 900;
+}
+.my-folder-tree-node-p497.admin-p500 {
+  border: 1px solid #ffe3ad;
+  color: #92400e;
+}
+.my-folder-tree-node-p497.personal-p500 {
+  border: 1px solid transparent;
+}
+.my-folder-tree-node-p497.droppable-p500 {
+  border: 1px solid #d7dde8;
+}
+.my-folder-tree-node-wrap-p497.drag-over-p501 .my-folder-tree-node-p497.droppable-p500,
+.my-folder-tree-node-p497.droppable-p500:hover {
+  border-color: #2f80ed;
+  background: #eaf3ff;
+  box-shadow: 0 0 0 2px rgba(47, 128, 237, .14);
+}
+.my-folder-notice-p501,
+.my-folder-modal-notice-p501 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 14px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+.my-folder-modal-notice-p501 {
+  margin: 0 0 10px;
+}
+.my-folder-notice-p501.error,
+.my-folder-modal-notice-p501.error {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #991b1b;
+}
+.my-folder-notice-p501.warn,
+.my-folder-modal-notice-p501.warn {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+.my-folder-notice-p501 button {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.my-folder-picker-node-p499 .my-folder-transfer-actions-p499 button:disabled::after {
+  content: '';
+}
+.my-folder-picker-node-p499 .my-folder-transfer-actions-p499 button:disabled {
+  min-width: 52px;
+}
+.my-folder-list-head-p500 .secondary {
+  white-space: nowrap;
+}
+
 </style>

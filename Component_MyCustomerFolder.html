@@ -15,6 +15,8 @@ let myCustomerFolderTransferStateP499 = null;
 let myCustomerFolderBulkModeP500 = false;
 let myCustomerFolderSelectedRowsP500 = {};
 let myCustomerFolderDragPayloadP500 = null;
+let myCustomerFolderNoticeP501 = null;
+let myCustomerFolderIndexEnsureRequestedP501 = false;
 
 const MY_CUSTOMER_FOLDER_SYSTEM_MY_ALL_P500 = 'SYS_MY_ALL';
 const MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500 = '__PORTAL_ADMIN_REQUEST__';
@@ -31,18 +33,7 @@ function loadMyCustomerFolderPageP497(force) {
     return;
   }
 
-  try { if (typeof loadCustomerSearchIndexFromLocalStorage_ === 'function') loadCustomerSearchIndexFromLocalStorage_(); } catch (err) {}
-  try {
-    if (typeof initializeCustomerSearchIndex === 'function') {
-      initializeCustomerSearchIndex({
-        silent: true,
-        useLocalFirst: true,
-        skipNetworkIfReady: true,
-        renderAfterLoad: false,
-        onLoaded: function() { renderMyCustomerFolderPageP497_(); }
-      });
-    }
-  } catch (err) {}
+  ensureMyCustomerFolderSearchIndexP501_(false);
 
   if (!force && myCustomerFolderBundleP497) {
     renderMyCustomerFolderPageP497_();
@@ -98,12 +89,87 @@ function buildMyCustomerFolderFallbackBundleClientP497_(message) {
       targetSalesRep: ''
     }],
     items: [],
+    folderVersion: 501,
     source: 'client-fallback-empty',
     loadedAt: '',
     dbReady: false,
     dbWarning: '웹앱 DB 연결이 지연되어 기본 자동 폴더만 표시합니다. DB 초기화/복구 후 다시 새로고침해 주세요.',
     dbError: String(message || '')
   };
+}
+
+function ensureMyCustomerFolderSearchIndexP501_(force) {
+  try { if (typeof loadCustomerSearchIndexFromLocalStorage_ === 'function') loadCustomerSearchIndexFromLocalStorage_(); } catch (err) {}
+  try {
+    if (typeof initializeCustomerSearchIndex !== 'function') return;
+    const hasRows = !!(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length);
+    const loading = !!(customerSearchIndexState && customerSearchIndexState.loading);
+    if (!force && (hasRows || loading)) return;
+    myCustomerFolderIndexEnsureRequestedP501 = true;
+    initializeCustomerSearchIndex({
+      silent: true,
+      useLocalFirst: true,
+      skipNetworkIfReady: false,
+      maxAgeMs: 60000,
+      renderAfterLoad: false,
+      onLoaded: function() {
+        myCustomerFolderIndexEnsureRequestedP501 = false;
+        invalidateMyCustomerFolderClientIndexesP499_();
+        renderMyCustomerFolderPageP497_({ keepFocus: true });
+      }
+    });
+    setTimeout(function() {
+      if (!isMyCustomerFolderIndexLoadingP501_()) {
+        myCustomerFolderIndexEnsureRequestedP501 = false;
+        renderMyCustomerFolderPageP497_({ keepFocus: true });
+      }
+    }, 7000);
+  } catch (err) {
+    console.warn('나의 고객 폴더 검색인덱스 준비 실패', err);
+  }
+}
+
+function isMyCustomerFolderIndexLoadingP501_() {
+  return !!(customerSearchIndexState && customerSearchIndexState.loading);
+}
+
+function hasMyCustomerFolderIndexRowsP501_() {
+  return !!(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length);
+}
+
+function showMyCustomerFolderNoticeP501_(message, type) {
+  const msg = String(message || '').trim() || '처리 중 문제가 발생했습니다.';
+  const kind = String(type || 'error').trim() || 'error';
+  myCustomerFolderNoticeP501 = { message: msg, type: kind, createdAt: Date.now() };
+  try { if (typeof toast === 'function') toast(msg); } catch (err) {}
+  try {
+    const body = document.getElementById('myFolderPickerBodyP499');
+    if (body && (myCustomerFolderPickerStateP499 || myCustomerFolderTransferStateP499)) {
+      const old = body.querySelector('.my-folder-modal-notice-p501');
+      if (old) old.remove();
+      const box = document.createElement('div');
+      box.className = 'my-folder-modal-notice-p501 ' + kind;
+      box.textContent = msg;
+      body.insertBefore(box, body.firstChild);
+    }
+  } catch (err) {}
+  try {
+    const section = document.getElementById('myCustomerFolderSectionP497');
+    if (section && section.classList.contains('active')) renderMyCustomerFolderPageP497_({ keepFocus: true });
+  } catch (err) {}
+  return false;
+}
+
+function clearMyCustomerFolderNoticeP501_() {
+  myCustomerFolderNoticeP501 = null;
+  renderMyCustomerFolderPageP497_({ keepFocus: true });
+}
+
+function renderMyCustomerFolderNoticeP501_() {
+  const n = myCustomerFolderNoticeP501;
+  if (!n || !n.message) return '';
+  const type = String(n.type || 'info');
+  return '<div class="my-folder-notice-p501 ' + escAttr(type) + '"><span>' + esc(n.message) + '</span><button type="button" onclick="clearMyCustomerFolderNoticeP501_()">닫기</button></div>';
 }
 
 function repairMyCustomerFolderDbP497_() {
@@ -116,7 +182,7 @@ function repairMyCustomerFolderDbP497_() {
     })
     .withFailureHandler(function(err) {
       setMyCustomerFolderBusyP497_(false);
-      alert('DB 초기화/복구 실패: ' + getErrorMessage_(err));
+      showMyCustomerFolderNoticeP501_('DB 초기화/복구 실패: ' + getErrorMessage_(err), 'error');
     })
     .setupMyCustomerFolderDbP497();
 }
@@ -243,6 +309,21 @@ function getMyCustomerFolderBasicFoldersP500_() {
   return getMyCustomerFolderFoldersP497_().filter(function(f) { return isMyCustomerFolderSystemFolderP500_(f) || isMyCustomerFolderAdminFolderP500_(f); });
 }
 
+function getMyCustomerFolderSystemFoldersP501_() {
+  return getMyCustomerFolderFoldersP497_().filter(isMyCustomerFolderSystemFolderP500_);
+}
+
+function getMyCustomerFolderAdminFoldersP501_() {
+  return getMyCustomerFolderFoldersP497_().filter(isMyCustomerFolderAdminFolderP500_);
+}
+
+function formatMyCustomerFolderTreeCountP501_(folder) {
+  if (isMyCustomerFolderSystemFolderP500_(folder) && !hasMyCustomerFolderIndexRowsP501_()) {
+    return isMyCustomerFolderIndexLoadingP501_() || myCustomerFolderIndexEnsureRequestedP501 ? '…' : '0';
+  }
+  return String(getMyCustomerFolderItemCountP499_(folder && folder.folderId));
+}
+
 function getMyCustomerFolderPersonalFoldersP500_() {
   return getMyCustomerFolderFoldersP497_().filter(function(f) { return isMyCustomerFolderPersonalFolderP500_(f); });
 }
@@ -270,6 +351,7 @@ function renderMyCustomerFolderPageP497_(options) {
   const selectedEditable = canEditMyCustomerFolderP500_(selected);
   const canAddCustomerHere = selectedEditable;
   const isAdmin = !!(user && user.canEditBasicFolders);
+  if (selectedScope === 'SYSTEM' && !hasMyCustomerFolderIndexRowsP501_() && !isMyCustomerFolderIndexLoadingP501_()) ensureMyCustomerFolderSearchIndexP501_(true);
 
   let html = '<div class="my-folder-layout-p497 my-folder-layout-p500">';
   html += '<aside class="my-folder-tree-panel-p497">';
@@ -277,14 +359,17 @@ function renderMyCustomerFolderPageP497_(options) {
   html += '<div><div class="my-folder-tree-title-p497">나의 고객 폴더</div><div class="my-folder-tree-sub-p497">' + esc(user.label || '') + '</div></div>';
   html += '</div>';
 
-  html += '<div class="my-folder-tree-section-p500">';
-  html += '<div class="my-folder-tree-section-head-p500"><span>기본 폴더</span>' + (isAdmin ? '<button type="button" class="my-folder-mini-btn-p497 primary" onclick="createMyCustomerFolderP497_(\'\',\'ADMIN\')">+ 기본</button>' : '') + '</div>';
+  html += '<div class="my-folder-tree-section-p500 basic-zone-p501">';
+  html += '<div class="my-folder-tree-section-head-p500"><span>기본 폴더</span>' + (isAdmin ? '<button type="button" class="my-folder-mini-btn-p497 primary" onclick="createMyCustomerFolderP497_(\'\',\'ADMIN\')">+ 요청</button>' : '') + '</div>';
+  html += '<div class="my-folder-tree-subtitle-p501">자동 폴더</div>';
+  html += '<div class="my-folder-tree-list-p497 basic-p500 system-list-p501">' + renderMyCustomerFolderTreeSectionP500_(getMyCustomerFolderSystemFoldersP501_(), 'system') + '</div>';
+  html += '<div class="my-folder-tree-subtitle-p501 request-p501"><span>요청 폴더</span>' + (isAdmin ? '<em>관리자/서무 수정 가능</em>' : '<em>읽기 전용</em>') + '</div>';
   html += '<div class="my-folder-tree-tools-p497 compact-p500">';
   html += '<button type="button" class="my-folder-mini-btn-p497" ' + (selected && selectedScope === 'ADMIN' && selectedEditable ? '' : 'disabled') + ' onclick="createMyCustomerFolderP497_(myCustomerFolderSelectedIdP497,\'ADMIN\')">하위</button>';
   html += '<button type="button" class="my-folder-mini-btn-p497" ' + (selected && selectedScope === 'ADMIN' && selectedEditable ? '' : 'disabled') + ' onclick="renameMyCustomerFolderP497_()">이름변경</button>';
   html += '<button type="button" class="my-folder-mini-btn-p497 danger" ' + (selected && selectedScope === 'ADMIN' && selectedEditable ? '' : 'disabled') + ' onclick="deleteMyCustomerFolderP497_()">삭제</button>';
   html += '</div>';
-  html += '<div class="my-folder-tree-list-p497 basic-p500">' + renderMyCustomerFolderTreeSectionP500_(getMyCustomerFolderBasicFoldersP500_(), 'basic') + '</div>';
+  html += '<div class="my-folder-tree-list-p497 basic-p500 request-list-p501">' + renderMyCustomerFolderTreeSectionP500_(getMyCustomerFolderAdminFoldersP501_(), 'admin') + '</div>';
   html += '</div>';
 
   html += '<div class="my-folder-tree-section-p500 personal-p500">';
@@ -315,6 +400,7 @@ function renderMyCustomerFolderPageP497_(options) {
   if (dbWarning || dbError) {
     html += '<div class="my-folder-warning-p497"><b>' + esc(dbWarning || 'DB 연결 지연이 감지되었습니다.') + '</b>' + (dbError ? '<span>' + esc(dbError) + '</span>' : '') + '</div>';
   }
+  html += renderMyCustomerFolderNoticeP501_();
 
   if (!selected) {
     html += '<div class="my-folder-empty-p497">선택된 폴더가 없습니다.</div>';
@@ -379,7 +465,7 @@ function renderMyCustomerFolderTreeSectionP500_(folders, section) {
   });
   const renderLevel = function(list, depth) {
     return (list || []).map(function(f) {
-      const count = getMyCustomerFolderItemCountP499_(f.folderId);
+      const count = formatMyCustomerFolderTreeCountP501_(f);
       const canDrop = canDropToMyCustomerFolderP500_(f);
       const dropAttrs = canDrop ? ' ondragover="handleMyCustomerFolderTreeDragOverP500_(event,\'' + escAttr(f.folderId) + '\')" ondrop="dropMyCustomerFolderRowsP500_(event,\'' + escAttr(f.folderId) + '\')"' : '';
       const scopeClass = isMyCustomerFolderSystemFolderP500_(f) ? ' system-p500' : (isMyCustomerFolderAdminFolderP500_(f) ? ' admin-p500' : ' personal-p500');
@@ -430,7 +516,9 @@ function getMyCustomerFolderIndexRowsP497_() {
 function canMyCustomerFolderClassifyRowClientP497_(row) {
   const p = getPortalPermission_ ? getPortalPermission_() : null;
   if (!portalPermissionLoadedV63 || !p || p.active === false) return false;
-  if (p.canUseAdminHome || p.isAdmin || p.level === 'ADMIN') return true;
+  const level = String(p.level || '').toUpperCase();
+  const defaultScope = String(p.defaultScope || '').toUpperCase();
+  if (p.canUseAdminHome || p.isAdmin || p.canViewAllCustomers || level === 'ADMIN' || level === 'MANAGER' || defaultScope === 'ALL') return true;
   const salesRep = normalizePortalPermissionTextClient_(row && (row.salesRep || row['영업담당자'] || row.salesRepName || ''));
   const aliases = splitPortalPermissionAliasesClient_(p.salesRepName || p.name || '');
   if (!salesRep || !aliases.length) return false;
@@ -571,8 +659,12 @@ function renderMyCustomerFolderCustomerListP497_(folderId) {
   const indexReady = !!(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length);
   const selectedCount = getSelectedMyCustomerFolderRecordsP500_().length;
   if (!rows.length) {
-    return '<div class="my-folder-list-head-p497"><div>고객 목록 <b>0</b>건</div><button type="button" class="secondary" onclick="toggleMyCustomerFolderBulkModeP500_()">일괄 이동/복사</button></div>' +
-      '<div class="my-folder-empty-p497">이 폴더에 표시할 고객이 없습니다.<br><span>' + (folderScope === 'SYSTEM' ? '고객검색 인덱스가 로딩되면 자동 폴더 고객이 표시됩니다.' : '위 검색창에서 고객을 찾아 추가하세요.') + '</span></div>';
+    const loadingIndex = folderScope === 'SYSTEM' && (isMyCustomerFolderIndexLoadingP501_() || myCustomerFolderIndexEnsureRequestedP501);
+    const emptyHelp = folderScope === 'SYSTEM'
+      ? (loadingIndex ? '고객검색 인덱스를 불러오는 중입니다. 잠시 후 자동 표시됩니다.' : '담당 고객이 없거나 검색인덱스를 아직 불러오지 못했습니다. 새로고침을 눌러 주세요.')
+      : '위 검색창에서 고객을 찾아 추가하세요.';
+    return '<div class="my-folder-list-head-p497"><div>고객 목록 <b>0</b>건</div>' + (folderScope === 'SYSTEM' ? '<span>자동 폴더</span>' : '<button type="button" class="secondary" onclick="toggleMyCustomerFolderBulkModeP500_()">일괄 이동/복사</button>') + '</div>' +
+      '<div class="my-folder-empty-p497">이 폴더에 표시할 고객이 없습니다.<br><span>' + esc(emptyHelp) + '</span></div>';
   }
 
   let html = '<div class="my-folder-list-head-p497 my-folder-list-head-p500"><div>고객 목록 <b>' + rows.length + '</b>건</div><div class="my-folder-bulk-tools-p500">';
@@ -684,7 +776,7 @@ function createMyCustomerFolderP497_(parentFolderId, scope) {
   const name = prompt(label + '을 입력하세요.');
   if (name == null) return;
   const folderName = String(name || '').trim();
-  if (!folderName) return alert('폴더명을 입력해 주세요.');
+  if (!folderName) return showMyCustomerFolderNoticeP501_('폴더명을 입력해 주세요.', 'warn');
   setMyCustomerFolderBusyP497_(true, '폴더 생성 중입니다.');
   google.script.run
     .withSuccessHandler(function(res) {
@@ -697,7 +789,7 @@ function createMyCustomerFolderP497_(parentFolderId, scope) {
     })
     .withFailureHandler(function(err) {
       setMyCustomerFolderBusyP497_(false);
-      alert('폴더 생성 실패: ' + getErrorMessage_(err));
+      showMyCustomerFolderNoticeP501_('폴더 생성 실패: ' + getErrorMessage_(err), 'error');
     })
     .createMyCustomerFolderP497({ parentFolderId: parentFolderId, folderName: folderName, scope: scope === 'ADMIN' ? 'ADMIN' : 'PERSONAL' });
 }
@@ -705,11 +797,11 @@ function createMyCustomerFolderP497_(parentFolderId, scope) {
 function renameMyCustomerFolderP497_() {
   const folder = getMyCustomerFolderSelectedFolderP497_();
   if (!folder) return;
-  if (!canEditMyCustomerFolderP500_(folder)) return alert('이 폴더는 이름을 변경할 수 없습니다.');
+  if (!canEditMyCustomerFolderP500_(folder)) return showMyCustomerFolderNoticeP501_('이 폴더는 이름을 변경할 수 없습니다.', 'warn');
   const name = prompt('새 폴더명을 입력하세요.', folder.folderName || '');
   if (name == null) return;
   const folderName = String(name || '').trim();
-  if (!folderName) return alert('폴더명을 입력해 주세요.');
+  if (!folderName) return showMyCustomerFolderNoticeP501_('폴더명을 입력해 주세요.', 'warn');
   setMyCustomerFolderBusyP497_(true, '폴더명 변경 중입니다.');
   google.script.run
     .withSuccessHandler(function(res) {
@@ -722,7 +814,7 @@ function renameMyCustomerFolderP497_() {
     })
     .withFailureHandler(function(err) {
       setMyCustomerFolderBusyP497_(false);
-      alert('폴더명 변경 실패: ' + getErrorMessage_(err));
+      showMyCustomerFolderNoticeP501_('폴더명 변경 실패: ' + getErrorMessage_(err), 'error');
     })
     .renameMyCustomerFolderP497({ folderId: folder.folderId, folderName: folderName });
 }
@@ -730,7 +822,7 @@ function renameMyCustomerFolderP497_() {
 function deleteMyCustomerFolderP497_() {
   const folder = getMyCustomerFolderSelectedFolderP497_();
   if (!folder) return;
-  if (!canEditMyCustomerFolderP500_(folder)) return alert('이 폴더는 삭제할 수 없습니다.');
+  if (!canEditMyCustomerFolderP500_(folder)) return showMyCustomerFolderNoticeP501_('이 폴더는 삭제할 수 없습니다.', 'warn');
   const count = getMyCustomerFolderItemCountP499_(folder.folderId);
   if (!confirm('폴더 [' + folder.folderName + ']을 삭제할까요?\n하위 폴더와 폴더 안 고객 분류도 함께 삭제됩니다.\n현재 폴더 고객: ' + count + '건')) return;
   setMyCustomerFolderBusyP497_(true, '폴더 삭제 중입니다.');
@@ -746,7 +838,7 @@ function deleteMyCustomerFolderP497_() {
     })
     .withFailureHandler(function(err) {
       setMyCustomerFolderBusyP497_(false);
-      alert('폴더 삭제 실패: ' + getErrorMessage_(err));
+      showMyCustomerFolderNoticeP501_('폴더 삭제 실패: ' + getErrorMessage_(err), 'error');
     })
     .deleteMyCustomerFolderP497({ folderId: folder.folderId });
 }
@@ -871,7 +963,7 @@ function applyMyCustomerFolderDeltaP499_(res) {
 
 function addMyCustomerToFolderP497_(customerNo, rowNo, company) {
   const folder = getMyCustomerFolderSelectedFolderP497_();
-  if (!folder || !canEditMyCustomerFolderP500_(folder)) return alert('고객을 추가할 수 있는 폴더를 선택해 주세요.');
+  if (!folder || !canEditMyCustomerFolderP500_(folder)) return showMyCustomerFolderNoticeP501_('고객을 추가할 수 있는 폴더를 선택해 주세요.', 'warn');
   setMyCustomerFolderBusyP497_(true, '고객 추가 중입니다.');
   google.script.run
     .withSuccessHandler(function(res) {
@@ -888,7 +980,7 @@ function addMyCustomerToFolderP497_(customerNo, rowNo, company) {
     })
     .withFailureHandler(function(err) {
       setMyCustomerFolderBusyP497_(false);
-      alert('고객 추가 실패: ' + getErrorMessage_(err));
+      showMyCustomerFolderNoticeP501_('고객 추가 실패: ' + getErrorMessage_(err), 'error');
     })
     .addCustomersToMyFolderFastP499({
       folderId: folder.folderId,
@@ -915,7 +1007,7 @@ function removeMyCustomerFromFolderP497_(itemId) {
     })
     .withFailureHandler(function(err) {
       setMyCustomerFolderBusyP497_(false);
-      alert('고객 제거 실패: ' + getErrorMessage_(err));
+      showMyCustomerFolderNoticeP501_('고객 제거 실패: ' + getErrorMessage_(err), 'error');
     })
     .removeCustomerFromMyFolderP497({ itemId: itemId });
 }
@@ -1025,7 +1117,7 @@ function openMyCustomerFolderPickerForCustomerP499_(customer, options) {
   options = options || {};
   const rowNo = Number(customer.rowNo) || 0;
   const customerNo = String(customer.customerNo || '').trim();
-  if (!rowNo && !customerNo) return alert('고객번호 또는 행 번호가 없어 폴더에 추가할 수 없습니다.');
+  if (!rowNo && !customerNo) return showMyCustomerFolderNoticeP501_('고객번호 또는 행 번호가 없어 폴더에 추가할 수 없습니다.', 'warn');
   myCustomerFolderPickerStateP499 = { customer: customer, source: options.source || '' };
   const el = ensureMyCustomerFolderPickerModalP499_();
   el.style.display = 'flex';
@@ -1072,7 +1164,7 @@ function renderMyCustomerFolderPickerP499_(options) {
 }
 
 function getMyCustomerFolderWritableFoldersP500_() {
-  return getMyCustomerFolderFoldersP497_().filter(canDropToMyCustomerFolderP500_);
+  return getMyCustomerFolderFoldersP497_().filter(function(f) { return !isMyCustomerFolderSystemFolderP500_(f) && canDropToMyCustomerFolderP500_(f); });
 }
 
 function getMyCustomerFolderMembershipMapForCustomerP499_(customer) {
@@ -1150,7 +1242,7 @@ function addCustomerToFolderFromPickerP499_(folderId) {
     })
     .withFailureHandler(function(err) {
       if (body) body.classList.remove('saving');
-      alert('폴더 추가 실패: ' + getErrorMessage_(err));
+      showMyCustomerFolderNoticeP501_('폴더 추가 실패: ' + getErrorMessage_(err), 'error');
     })
     .addCustomersToMyFolderFastP499({
       folderId: folderId,
@@ -1164,7 +1256,7 @@ function addCustomerToFolderFromPickerP499_(folderId) {
 function openMyCustomerFolderTransferModalP499_(itemId) {
   itemId = String(itemId || '').trim();
   const item = getMyCustomerFolderItemsP497_().find(function(x) { return String(x && x.itemId || '') === itemId; });
-  if (!item) return alert('복사/이동할 고객 항목을 찾지 못했습니다.');
+  if (!item) return showMyCustomerFolderNoticeP501_('복사/이동할 고객 항목을 찾지 못했습니다.', 'warn');
   const record = {
     selectionId: 'ITEM:' + item.itemId,
     itemId: item.itemId,
@@ -1182,19 +1274,19 @@ function openMyCustomerFolderTransferModalP499_(itemId) {
 
 function openMyCustomerFolderTransferForRowP500_(selectionId) {
   const row = findMyCustomerFolderDisplayRowBySelectionIdP500_(selectionId);
-  if (!row) return alert('복사/이동할 고객을 찾지 못했습니다.');
+  if (!row) return showMyCustomerFolderNoticeP501_('복사/이동할 고객을 찾지 못했습니다.', 'warn');
   openMyCustomerFolderTransferForRecordsP500_([buildMyCustomerFolderSelectionRecordP500_(row)], { preferredMode: row.__folderCanMoveP500 ? 'move' : 'copy' });
 }
 
 function openMyCustomerFolderBulkTransferModalP500_(mode) {
   const records = getSelectedMyCustomerFolderRecordsP500_();
-  if (!records.length) return alert('먼저 고객을 선택해 주세요.');
+  if (!records.length) return showMyCustomerFolderNoticeP501_('먼저 고객을 선택해 주세요.', 'warn');
   openMyCustomerFolderTransferForRecordsP500_(records, { preferredMode: mode || 'copy' });
 }
 
 function openMyCustomerFolderTransferForRecordsP500_(records, options) {
   records = (Array.isArray(records) ? records : []).filter(Boolean);
-  if (!records.length) return alert('복사/이동할 고객이 없습니다.');
+  if (!records.length) return showMyCustomerFolderNoticeP501_('복사/이동할 고객이 없습니다.', 'warn');
   options = options || {};
   myCustomerFolderPickerStateP499 = null;
   myCustomerFolderTransferStateP499 = {
@@ -1263,7 +1355,7 @@ function transferMyCustomerFolderItemP499_(mode, toFolderId) {
   };
   const finishFail = function(err) {
     if (body) body.classList.remove('saving');
-    alert('복사/이동 실패: ' + getErrorMessage_(err));
+    showMyCustomerFolderNoticeP501_('복사/이동 실패: ' + getErrorMessage_(err), 'error');
   };
 
   if (mode === 'copy') {
@@ -1280,7 +1372,7 @@ function transferMyCustomerFolderItemP499_(mode, toFolderId) {
   const itemIds = items.map(function(item) { return String(item && item.itemId || ''); }).filter(Boolean);
   if (!itemIds.length || itemIds.length !== items.length) {
     if (body) body.classList.remove('saving');
-    return alert('자동 기본 폴더의 고객은 이동할 수 없습니다. 복사를 사용해 주세요.');
+    return showMyCustomerFolderNoticeP501_('자동 기본 폴더의 고객은 이동할 수 없습니다. 복사를 사용해 주세요.', 'warn');
   }
   google.script.run
     .withSuccessHandler(finishSuccess)
@@ -1311,7 +1403,7 @@ function handleMyCustomerFolderTreeDragOverP500_(event, folderId) {
 function dropMyCustomerFolderRowsP500_(event, folderId) {
   event.preventDefault();
   const folder = getMyCustomerFolderFolderByIdP500_(folderId);
-  if (!canDropToMyCustomerFolderP500_(folder)) return alert('이 폴더에는 고객을 넣을 수 없습니다.');
+  if (!canDropToMyCustomerFolderP500_(folder)) return showMyCustomerFolderNoticeP501_('이 폴더에는 고객을 넣을 수 없습니다.', 'warn');
   const payload = myCustomerFolderDragPayloadP500;
   myCustomerFolderDragPayloadP500 = null;
   const records = payload && Array.isArray(payload.records) ? payload.records : [];

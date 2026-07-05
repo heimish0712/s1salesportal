@@ -38,6 +38,7 @@ const PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497 = [
 const PORTAL_MY_CUSTOMER_FOLDER_CACHE_PREFIX_P497 = 'MY_CUSTOMER_FOLDER_P497_';
 const PORTAL_MY_CUSTOMER_FOLDER_CACHE_TTL_SEC_P497 = 300;
 const PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497 = '나의 고객 폴더';
+const PORTAL_MY_CUSTOMER_FOLDER_VERSION_P501 = 501;
 
 // P500: 기본 폴더 / 내 폴더 분리
 // 기본 자동 폴더는 DB에 고객을 저장하지 않고 고객검색 인덱스/마스터 기준으로 실시간 계산합니다.
@@ -523,7 +524,7 @@ function buildMyCustomerFolderBundleP497_(user, folders, items, extra) {
   const decoratedItems = filterMyCustomerFolderItemsForBundleP500_(user, items);
   return {
     ok: true,
-    folderVersion: 500,
+    folderVersion: PORTAL_MY_CUSTOMER_FOLDER_VERSION_P501,
     user: {
       ownerEmail: user.key,
       label: user.label,
@@ -716,7 +717,7 @@ function getMyCustomerFolderCachedBundleP497_(cacheKey) {
     const cached = CacheService.getUserCache().get(cacheKey);
     if (!cached) return null;
     const parsed = JSON.parse(cached);
-    return parsed && parsed.ok && Number(parsed.folderVersion || 0) >= 500 ? parsed : null;
+    return parsed && parsed.ok && Number(parsed.folderVersion || 0) >= PORTAL_MY_CUSTOMER_FOLDER_VERSION_P501 ? parsed : null;
   } catch (err) {}
   return null;
 }
@@ -910,7 +911,7 @@ function getMyCustomerFolderNowTextP497_() {
 }
 
 function makeMyCustomerFolderCacheKeyP497_(ownerEmail) {
-  return (PORTAL_MY_CUSTOMER_FOLDER_CACHE_PREFIX_P497 + String(ownerEmail || '').trim().toLowerCase().replace(/[^a-z0-9@._+-]/g, '_')).slice(0, 240);
+  return (PORTAL_MY_CUSTOMER_FOLDER_CACHE_PREFIX_P497 + 'V' + PORTAL_MY_CUSTOMER_FOLDER_VERSION_P501 + '_' + String(ownerEmail || '').trim().toLowerCase().replace(/[^a-z0-9@._+-]/g, '_')).slice(0, 240);
 }
 
 function invalidateMyCustomerFolderCacheP497_(ownerEmail) {
