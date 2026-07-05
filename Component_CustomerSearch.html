@@ -526,6 +526,51 @@ function formatCustomerInlineMemoNow_() {
   return pad(d.getFullYear() % 100) + '.' + pad(d.getMonth() + 1) + '.' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' ';
 }
 
+function appendCustomerMemoTemplateAtBottomP508_(value, templateText) {
+  value = String(value == null ? '' : value);
+  templateText = String(templateText == null ? '' : templateText);
+  if (!value) return templateText;
+  return value + (/\n$/.test(value) ? '' : '\n') + templateText;
+}
+
+function getCustomerMemoTemplateAuthorP508_() {
+  try {
+    if (typeof getPortalCurrentUserNameForContactP432_ === 'function') {
+      const name = getPortalCurrentUserNameForContactP432_();
+      if (name) return String(name || '').trim();
+    }
+  } catch (err) {}
+  try {
+    const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : (typeof portalCurrentPermissionV63 !== 'undefined' ? portalCurrentPermissionV63 : null);
+    const raw = (p && (p.name || p.salesRepName || p.displayName || p.email)) || '';
+    if (typeof normalizePersonNameOnlyP438_ === 'function') return normalizePersonNameOnlyP438_(raw);
+    return String(raw || '').trim();
+  } catch (err) {}
+  return '';
+}
+
+function isCustomerMemoTemplateLineP508_(line) {
+  const text = String(line || '');
+  if (/\[컨택이력\]\[[^\]]*\]\[[^\]]*\]\s+\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2}/.test(text)) return true;
+  if (/(^|\s)\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2}/.test(text)) return true;
+  return false;
+}
+
+function appendCurrentUserToCustomerMemoTemplateLinesP508_(memo, baselineMemo) {
+  const author = getCustomerMemoTemplateAuthorP508_();
+  if (!author) return String(memo == null ? '' : memo);
+  const baselineSet = {};
+  String(baselineMemo == null ? '' : baselineMemo).split(/\r?\n/).forEach(function(line) {
+    baselineSet[String(line || '')] = true;
+  });
+  return String(memo == null ? '' : memo).split(/\r?\n/).map(function(line) {
+    if (!line || baselineSet[line] || !isCustomerMemoTemplateLineP508_(line)) return line;
+    if (/\([^()]{1,20}\)\s*$/.test(line)) return line;
+    return line.replace(/\s*$/, '') + ' (' + author + ')';
+  }).join('\n');
+}
+
+
 function holdCustomerMemoTagFocus_(event, inputId) {
   if (event) {
     event.preventDefault();
@@ -533,11 +578,14 @@ function holdCustomerMemoTagFocus_(event, inputId) {
   }
   window.customerInlineMemoTagPointerDownP1I = inputId;
   const editor = document.getElementById(inputId);
-  if (editor && editor.focus) {
+  // P508: 버튼 클릭 전 textarea가 이미 포커스된 경우에만 포커스를 유지합니다.
+  // 포커스가 없던 상태에서는 버튼 클릭 시 맨 아래에 템플릿을 추가해야 하므로 여기서 강제 focus를 주지 않습니다.
+  if (editor && editor.focus && document.activeElement === editor) {
     setTimeout(function() { try { editor.focus({ preventScroll: true }); } catch (err) { editor.focus(); } }, 0);
   }
   return false;
 }
+
 
 function insertCustomerMemoTemplateIntoEditor_(event, inputId, templateType) {
   if (event) {
@@ -552,22 +600,43 @@ function insertCustomerMemoTemplateIntoEditor_(event, inputId, templateType) {
     ? '[컨택이력][0차][전화] ' + nowText
     : nowText;
 
-  try { editor.focus({ preventScroll: true }); } catch (err) { editor.focus(); }
   const value = String(editor.value || '');
-  const start = typeof editor.selectionStart === 'number' ? editor.selectionStart : value.length;
-  const end = typeof editor.selectionEnd === 'number' ? editor.selectionEnd : start;
-  editor.value = value.slice(0, start) + insertText + value.slice(end);
-  const nextPos = start + insertText.length;
+  const hasLiveCursor = document.activeElement === editor && typeof editor.selectionStart === 'number';
+  let nextValue;
+  let nextPos;
+  if (hasLiveCursor) {
+    const start = Number(editor.selectionStart) || 0;
+    const end = typeof editor.selectionEnd === 'number' ? Number(editor.selectionEnd) : start;
+    nextValue = value.slice(0, start) + insertText + value.slice(end);
+    nextPos = start + insertText.length;
+  } else {
+    nextValue = appendCustomerMemoTemplateAtBottomP508_(value, insertText);
+    nextPos = nextValue.length;
+  }
+
+  editor.value = nextValue;
+  try { editor.focus({ preventScroll: true }); } catch (err) { editor.focus(); }
   if (editor.setSelectionRange) editor.setSelectionRange(nextPos, nextPos);
+  try { editor.dispatchEvent(new Event('input', { bubbles: true })); } catch (err) {}
   if (document.body && document.body.classList) document.body.classList.add('portal-user-editing');
   setTimeout(function() { if (window.customerInlineMemoTagPointerDownP1I === inputId) window.customerInlineMemoTagPointerDownP1I = null; }, 0);
   return false;
 }
 
+
 function renderCustomerMemoTagPopover_(inputId, extraClass) {
   return '<div class="customer-memo-tag-popover ' + escAttr(extraClass || '') + '" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="event.stopPropagation();">' +
     '<button type="button" tabindex="-1" class="customer-memo-tag-btn" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="return insertCustomerMemoTemplateIntoEditor_(event,\'' + escAttr(inputId) + '\',\'contact\')">#컨택이력</button>' +
     '<button type="button" tabindex="-1" class="customer-memo-tag-btn" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="return insertCustomerMemoTemplateIntoEditor_(event,\'' + escAttr(inputId) + '\',\'now\')">#지금시간</button>' +
+  '</div>';
+}
+
+
+function renderCustomerMemoTemplateBottomRowP508_(inputId, extraClass) {
+  return '<div class="memo-template-row-p484 customer-expand-memo-template-row-p508 ' + escAttr(extraClass || '') + '" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="event.stopPropagation();">' +
+    '<span class="memo-template-label-p484 customer-expand-memo-template-label-p508">텍스트 템플릿</span>' +
+    '<button type="button" tabindex="-1" class="secondary customer-memo-template-btn-p508" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="return insertCustomerMemoTemplateIntoEditor_(event,\'' + escAttr(inputId) + '\',\'contact\')">#컨택이력</button>' +
+    '<button type="button" tabindex="-1" class="secondary customer-memo-template-btn-p508" onmousedown="return holdCustomerMemoTagFocus_(event,\'' + escAttr(inputId) + '\');" onclick="return insertCustomerMemoTemplateIntoEditor_(event,\'' + escAttr(inputId) + '\',\'now\')">#지금시간</button>' +
   '</div>';
 }
 
@@ -1742,7 +1811,14 @@ function commitCustomerInlineEdit_(inputId, options) {
   const rowNo = Number(editor.getAttribute('data-row-no')) || 0;
   const key = String(editor.getAttribute('data-key') || '').trim();
   const originalValue = String(editor.getAttribute('data-original') || '');
-  const nextValue = String(editor.value == null ? '' : editor.value).trim();
+  let nextValue = String(editor.value == null ? '' : editor.value).trim();
+  if (key === 'memo') {
+    const nextWithAuthorP508 = appendCurrentUserToCustomerMemoTemplateLinesP508_(nextValue, originalValue);
+    if (nextWithAuthorP508 !== nextValue) {
+      nextValue = nextWithAuthorP508;
+      editor.value = nextValue;
+    }
+  }
   const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
   const customerNo = rowSummary.customerNo || '';
   const cell = editor.closest('td');
@@ -2457,9 +2533,9 @@ function renderCustomerExpandedContent_(rowNo, rowSummary) {
     '<div class="customer-expand-memo-label-v58">마스터시트<br>메모</div>' +
     '<div class="customer-expand-memo-main-v58">' +
       (!isFullMemoReadyP300 && !hasImmediateMemoP360 ? '<div class="customer-expand-memo-loading-p300">전체 메모를 백그라운드에서 불러오는 중입니다.</div>' : '') +
-      '<div class="customer-expand-memo-edit-wrap-p15 customer-expand-memo-edit-wrap-fixed-tags">' +
-        '<div class="customer-expand-memo-tag-row customer-expand-memo-tag-row-always">' + renderCustomerMemoTagPopover_(expandedMemoInputId, 'customer-expand-memo-tag-popover') + '</div>' +
+      '<div class="customer-expand-memo-edit-wrap-p15 customer-expand-memo-edit-wrap-bottom-tags-p508">' +
         '<textarea class="customer-expand-memo" id="expandedMemo_' + rowNo + '" data-customer-no="' + escAttr(memoCustomerNoP473) + '" data-original="' + escAttr(rawMemoValueP473 || '') + '" data-p494-draft-context="' + escAttr(expandedMemoDraftContextP494C) + '" data-p494-draft-key="memo" onfocus="onExpandedMemoFocusP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')" oninput="onExpandedMemoInputP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')" onblur="onExpandedMemoBlurP473_(' + rowNo + ',\'' + escAttr(memoCustomerNoP473) + '\')"' + (!hasProtectedDraftP473 && !isFullMemoReadyP300 && !hasImmediateMemoP360 ? ' readonly data-memo-loading="Y" placeholder="전체 메모 불러오는 중"' : '') + '>' + esc(memoValue) + '</textarea>' +
+        renderCustomerMemoTemplateBottomRowP508_(expandedMemoInputId, 'customer-expand-memo-template-bottom-p508') +
       '</div>' +
       '<div class="customer-expand-save-row">' +
         '<button type="button" class="secondary" onclick="event.stopPropagation(); resetExpandedCustomerMemo(' + rowNo + ')">되돌리기</button>' +
@@ -3204,7 +3280,7 @@ function saveExpandedCustomerMemo(rowNo) {
     return;
   }
 
-  const memoValue = memoEl.value || '';
+  let memoValue = memoEl.value || '';
   const prevRow = findCustomerRowSummaryByRowNo_(rowNo);
   const cachedForMemo = getCustomerDetailCache_(rowNo, prevRow && prevRow.customerNo);
   const prevDetail = cachedForMemo ? JSON.parse(JSON.stringify(cachedForMemo)) : null;
@@ -3214,6 +3290,12 @@ function saveExpandedCustomerMemo(rowNo) {
     const fieldP494C = (typeof getExpandedMemoDraftFieldP494C_ === 'function') ? getExpandedMemoDraftFieldP494C_(rowNo, targetCustomerNo, false) : null;
     if (fieldP494C && fieldP494C.baseLoaded !== false) prevMemo = String(fieldP494C.baseValue == null ? '' : fieldP494C.baseValue);
   } catch (err) {}
+  const memoValueBeforeAuthorP508 = memoValue;
+  memoValue = appendCurrentUserToCustomerMemoTemplateLinesP508_(memoValue, prevMemo);
+  if (memoValue !== memoValueBeforeAuthorP508) {
+    memoEl.value = memoValue;
+    try { memoEl.dispatchEvent(new Event('input', { bubbles: true })); } catch (err) {}
+  }
   const operationIdP473 = 'DOP_EXP_MEMO_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
 
   if (btn) { btn.disabled = true; btn.textContent = '저장 중'; }
