@@ -73,8 +73,8 @@ function buildMyCustomerFolderFallbackBundleClientP497_(message) {
       ownerEmail: email || String(p && p.name || '').trim(),
       label: String(p && (p.displayName || p.name || p.email) || '').trim(),
       level: String(p && p.level || '').trim(),
-      canClassifyAllCustomers: !!(p && (p.isAdmin || p.canUseAdminHome || p.level === 'ADMIN')),
-      canEditBasicFolders: !!(p && (p.isAdmin || p.canUseAdminHome || p.level === 'ADMIN'))
+      canClassifyAllCustomers: !!(p && (p.isAdmin || p.canUseAdminHome || String(p.level || '').toUpperCase() === 'ADMIN')),
+      canEditBasicFolders: !!(p && (p.isAdmin || p.canUseAdminHome || String(p.level || '').toUpperCase() === 'ADMIN'))
     },
     folders: [{
       folderId: MY_CUSTOMER_FOLDER_SYSTEM_MY_ALL_P500,
@@ -91,7 +91,7 @@ function buildMyCustomerFolderFallbackBundleClientP497_(message) {
       targetSalesRep: ''
     }],
     items: [],
-    folderVersion: 501,
+    folderVersion: 504,
     source: 'client-fallback-empty',
     loadedAt: '',
     dbReady: false,
@@ -252,6 +252,7 @@ function getMyCustomerFolderItemsByFolderMapP499_() {
   if (myCustomerFolderItemsByFolderCacheP499) return myCustomerFolderItemsByFolderCacheP499;
   const map = {};
   getMyCustomerFolderItemsP497_().forEach(function(item) {
+    if (!canViewMyCustomerFolderStoredItemClientP504_(item)) return;
     const folderId = String(item && item.folderId || '').trim();
     if (!folderId) return;
     if (!map[folderId]) map[folderId] = [];
@@ -533,18 +534,59 @@ function getMyCustomerFolderIndexRowsP497_() {
   return getMyCustomerFolderRawIndexRowsP500_().filter(canMyCustomerFolderClassifyRowClientP497_);
 }
 
-function canMyCustomerFolderClassifyRowClientP497_(row) {
+function isMyCustomerFolderAdminPermissionClientP504_() {
   const p = getPortalPermission_ ? getPortalPermission_() : null;
   if (!portalPermissionLoadedV63 || !p || p.active === false) return false;
   const level = String(p.level || '').toUpperCase();
-  const defaultScope = String(p.defaultScope || '').toUpperCase();
-  if (p.canUseAdminHome || p.isAdmin || p.canViewAllCustomers || level === 'ADMIN' || level === 'MANAGER' || defaultScope === 'ALL') return true;
-  const salesRep = normalizePortalPermissionTextClient_(row && (row.salesRep || row['영업담당자'] || row.salesRepName || ''));
-  const aliases = splitPortalPermissionAliasesClient_(p.salesRepName || p.name || '');
+  // P504: 나의 고객 폴더에서는 전체고객열람(canViewAllCustomers)만으로 전체 고객을 보여주지 않습니다.
+  // 기본 자동 폴더/내 폴더 노출은 관리자성 권한만 전체 허용하고, SALES는 반드시 담당자 필터를 강제합니다.
+  return !!(p.isAdmin || p.canUseAdminHome || level === 'ADMIN');
+}
+
+function getMyCustomerFolderPermissionAliasesClientP504_() {
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  const list = [];
+  if (p) {
+    if (Array.isArray(p.salesRepAliases)) p.salesRepAliases.forEach(function(v) { if (v) list.push(v); });
+    if (p.salesRepName) list.push(p.salesRepName);
+    if (p.name) list.push(p.name);
+    if (p.displayName) list.push(p.displayName);
+  }
+  const seen = {};
+  return list.map(function(v) { return String(v || '').trim(); }).filter(function(v) {
+    const key = normalizePortalPermissionTextClient_(v);
+    if (!key || seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+
+function isMyCustomerFolderRowOwnedByCurrentUserP504_(row) {
+  const salesRep = normalizePortalPermissionTextClient_(row && (row.salesRep || row['영업담당자'] || row.salesRepName || row['견적담당'] || ''));
+  const aliases = getMyCustomerFolderPermissionAliasesClientP504_();
   if (!salesRep || !aliases.length) return false;
   return aliases.some(function(alias) {
     const a = normalizePortalPermissionTextClient_(alias);
     return a && (salesRep === a || salesRep.indexOf(a) >= 0 || a.indexOf(salesRep) >= 0);
+  });
+}
+
+function canMyCustomerFolderClassifyRowClientP497_(row) {
+  const p = getPortalPermission_ ? getPortalPermission_() : null;
+  if (!portalPermissionLoadedV63 || !p || p.active === false) return false;
+  if (isMyCustomerFolderAdminPermissionClientP504_()) return true;
+  return isMyCustomerFolderRowOwnedByCurrentUserP504_(row);
+}
+
+function canViewMyCustomerFolderStoredItemClientP504_(item) {
+  if (isMyCustomerFolderAdminPermissionClientP504_()) return true;
+  item = item || {};
+  const indexRow = findMyCustomerFolderIndexRowP497_(item);
+  return isMyCustomerFolderRowOwnedByCurrentUserP504_(indexRow || {
+    salesRep: item.assignedUserSnapshot,
+    salesRepName: item.assignedUserSnapshot,
+    '영업담당자': item.assignedUserSnapshot,
+    '견적담당': item.assignedUserSnapshot
   });
 }
 
@@ -592,7 +634,9 @@ function getMyCustomerFolderVirtualRowsP500_(folder) {
   if (!folder) return [];
   let rows = getMyCustomerFolderIndexRowsP497_();
   if (String(folder.folderType || '') === 'VIRTUAL_REP_ALL' && folder.targetSalesRep) {
-    rows = getMyCustomerFolderRawIndexRowsP500_().filter(function(r) { return doesMyCustomerFolderRowMatchSalesRepP500_(r, folder.targetSalesRep); });
+    rows = getMyCustomerFolderRawIndexRowsP500_()
+      .filter(function(r) { return doesMyCustomerFolderRowMatchSalesRepP500_(r, folder.targetSalesRep); })
+      .filter(canMyCustomerFolderClassifyRowClientP497_);
   }
   return rows.map(function(r) {
     const row = Object.assign({}, r || {});

@@ -38,7 +38,8 @@ const PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497 = [
 const PORTAL_MY_CUSTOMER_FOLDER_CACHE_PREFIX_P497 = 'MY_CUSTOMER_FOLDER_P497_';
 const PORTAL_MY_CUSTOMER_FOLDER_CACHE_TTL_SEC_P497 = 300;
 const PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497 = '나의 고객 폴더';
-const PORTAL_MY_CUSTOMER_FOLDER_VERSION_P501 = 501;
+// P504: 권한_DB에서 SALES로 전환된 계정이 과거 전체고객 캐시를 재사용하지 못하도록 버전 상향
+const PORTAL_MY_CUSTOMER_FOLDER_VERSION_P501 = 504;
 
 // P500: 기본 폴더 / 내 폴더 분리
 // 기본 자동 폴더는 DB에 고객을 저장하지 않고 고객검색 인덱스/마스터 기준으로 실시간 계산합니다.
@@ -500,10 +501,7 @@ function readMyCustomerFolderBundleRowsFastP499_(ownerEmail, options) {
         const item = mapMyCustomerFolderItemRowP497_(row, idx + 2);
         if (!includeStoredOwner_(item.ownerEmail)) return;
         if (!options.includeDeleted && item.isDeleted) return;
-        if (item.ownerEmail === PORTAL_MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500 && !isAdmin) {
-          const pseudo = { salesRep: item.assignedUserSnapshot, salesRepName: item.assignedUserSnapshot, '영업담당자': item.assignedUserSnapshot };
-          if (!canMyCustomerFolderClassifyIndexRowP497_(pseudo, user.permission)) return;
-        }
+        if (!isAdmin && !isMyCustomerFolderStoredItemAllowedForUserP504_(item, user)) return;
         if (item.itemId && item.folderId) items.push(item);
       });
       items.sort(function(a, b) {
@@ -622,14 +620,29 @@ function filterMyCustomerFolderItemsForBundleP500_(user, items) {
   const isAdmin = isMyCustomerFolderAdminUserP497_(user && user.permission);
   return items.filter(function(item) {
     if (!item || item.isDeleted) return false;
-    if (item.ownerEmail === user.key) return true;
+    if (item.ownerEmail === user.key) {
+      // P504: 같은 이메일 계정이 ADMIN → SALES로 권한 전환된 경우,
+      // 과거 개인 폴더에 담긴 타 영업담당 고객이 그대로 노출되지 않도록 담당자 필터를 다시 적용합니다.
+      return isAdmin || isMyCustomerFolderStoredItemAllowedForUserP504_(item, user);
+    }
     if (item.ownerEmail === PORTAL_MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500) {
       if (isAdmin) return true;
-      const pseudo = { salesRep: item.assignedUserSnapshot, salesRepName: item.assignedUserSnapshot, '영업담당자': item.assignedUserSnapshot };
-      return canMyCustomerFolderClassifyIndexRowP497_(pseudo, user.permission);
+      return isMyCustomerFolderStoredItemAllowedForUserP504_(item, user);
     }
     return false;
   });
+}
+
+function isMyCustomerFolderStoredItemAllowedForUserP504_(item, user) {
+  user = user || { permission: getPortalCurrentPermission_() };
+  if (isMyCustomerFolderAdminUserP497_(user.permission)) return true;
+  const pseudo = {
+    salesRep: item && item.assignedUserSnapshot,
+    salesRepName: item && item.assignedUserSnapshot,
+    '영업담당자': item && item.assignedUserSnapshot,
+    '견적담당': item && item.assignedUserSnapshot
+  };
+  return canMyCustomerFolderClassifyIndexRowP497_(pseudo, user.permission);
 }
 
 function getMyCustomerFolderScopeOrderP500_(folder) {
@@ -673,11 +686,12 @@ function readMyCustomerFolderItemRowsForActorP500_(user, options) {
   return values.map(function(row, idx) { return mapMyCustomerFolderItemRowP497_(row, idx + 2); }).filter(function(item) {
     if (!item.itemId || !item.folderId) return false;
     if (!options.includeDeleted && item.isDeleted) return false;
-    if (item.ownerEmail === user.key) return true;
+    if (item.ownerEmail === user.key) {
+      return isAdmin || isMyCustomerFolderStoredItemAllowedForUserP504_(item, user);
+    }
     if (item.ownerEmail === PORTAL_MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500) {
       if (isAdmin) return true;
-      const pseudo = { salesRep: item.assignedUserSnapshot, salesRepName: item.assignedUserSnapshot, '영업담당자': item.assignedUserSnapshot };
-      return canMyCustomerFolderClassifyIndexRowP497_(pseudo, user.permission);
+      return isMyCustomerFolderStoredItemAllowedForUserP504_(item, user);
     }
     return false;
   }).sort(function(a, b) {
