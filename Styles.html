@@ -7000,4 +7000,149 @@ body.sidebar-collapsed .my-folder-layout-p497 {
   padding: 0 7px;
 }
 
+
+/* P500: 나의 고객 폴더 - 기본 폴더 / 내 폴더 / 일괄 이동복사 */
+.my-folder-layout-p500 .my-folder-tree-panel-p497 {
+  gap: 12px;
+  overflow: auto;
+}
+.my-folder-tree-section-p500 {
+  border: 1px solid #e5e7ef;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.my-folder-tree-section-p500.personal-p500 {
+  margin-top: 10px;
+}
+.my-folder-tree-section-head-p500 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 10px 8px;
+  background: #f8fafc;
+  border-bottom: 1px solid #edf0f5;
+  font-size: 12px;
+  font-weight: 950;
+  color: #344054;
+}
+.my-folder-tree-tools-p497.compact-p500 {
+  padding: 8px 10px;
+  border-bottom: 1px solid #edf0f5;
+  background: #fbfcff;
+}
+.my-folder-tree-list-p497.basic-p500,
+.my-folder-tree-list-p497.personal-p500 {
+  padding: 8px;
+}
+.my-folder-tree-node-p497.system-p500 {
+  background: #f8fbff;
+  border-color: #d8e8ff;
+}
+.my-folder-tree-node-p497.admin-p500 {
+  background: #fffaf2;
+  border-color: #ffe3ad;
+}
+.my-folder-tree-node-p497.personal-p500 {
+  background: #ffffff;
+}
+.my-folder-tree-node-p497.droppable-p500 {
+  cursor: copy;
+}
+.my-folder-tree-node-wrap-p497:has(.droppable-p500):hover .my-folder-tree-node-p497.droppable-p500 {
+  border-color: #84b7ff;
+  box-shadow: 0 0 0 2px rgba(47, 128, 237, .08);
+}
+.my-folder-info-p500 {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid #d8e8ff;
+  border-radius: 12px;
+  background: #f8fbff;
+  color: #475467;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.my-folder-list-head-p500 {
+  gap: 10px;
+}
+.my-folder-bulk-tools-p500 {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.my-folder-bulk-tools-p500 button {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid #cfd7e6;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.my-folder-bulk-tools-p500 button:not(:disabled):hover {
+  background: #e8f0fe;
+  border-color: #9cc2ff;
+  color: #174ea6;
+}
+.my-folder-bulk-tools-p500 button:disabled {
+  color: #98a2b3;
+  background: #f2f4f7;
+  cursor: default;
+}
+.my-folder-check-cell-p500 {
+  text-align: center;
+  vertical-align: middle;
+}
+.my-folder-check-cell-p500 input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+.my-folder-main-row-p497.selected-p500 {
+  background: #f0f7ff;
+}
+.my-folder-picker-section-title-p500 {
+  margin: 10px 0 6px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #f2f4f7;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 950;
+}
+.my-folder-transfer-help-p500 {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e5e7ef;
+  background: #fbfcff;
+  color: #475467;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.my-folder-drop-target-label-p500 {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #e8f0fe;
+  color: #174ea6;
+  font-size: 11px;
+  font-weight: 900;
+}
+.my-folder-picker-node-p499 .my-folder-transfer-actions-p499 {
+  margin-left: auto;
+}
+@media (max-width: 1100px) {
+  .my-folder-bulk-tools-p500 {
+    justify-content: flex-start;
+  }
+}
+
 </style>
