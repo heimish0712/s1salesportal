@@ -7264,4 +7264,158 @@ body.sidebar-collapsed .my-folder-layout-p497 {
   white-space: nowrap;
 }
 
+
+/* P502: 나의 고객 폴더 UI/속도 정리 - 체크박스 즉시 반응, 버튼 정렬, 폴더 접기/펼치기 */
+.my-folder-tree-node-p497 {
+  position: relative;
+}
+.my-folder-node-icon-p497.folder-toggle-p502 {
+  width: 18px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #475467;
+  font-size: 11px;
+  cursor: pointer;
+}
+.my-folder-node-icon-p497.folder-toggle-p502:hover {
+  background: rgba(47, 128, 237, .12);
+  color: #174ea6;
+}
+.my-folder-node-icon-p497.folder-spacer-p502 {
+  color: #c7ced9;
+  font-size: 9px;
+}
+.my-folder-node-icon-p497.system-icon-p502 {
+  color: #2f80ed;
+  font-size: 10px;
+}
+.my-folder-tree-node-wrap-p497.collapsed-p502 > .my-folder-tree-node-p497 .my-folder-node-name-p497 {
+  font-weight: 850;
+}
+.my-folder-list-head-p500 {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.my-folder-bulk-tools-p500 {
+  min-height: 34px;
+  padding: 4px;
+  border: 1px solid #e5e7ef;
+  border-radius: 10px;
+  background: #fbfcff;
+  flex-wrap: nowrap;
+  max-width: 100%;
+}
+.my-folder-bulk-tools-p500 .my-folder-bulk-hint-p502,
+.my-folder-bulk-tools-p500 .my-folder-bulk-status-p502 {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: #f2f4f7;
+  color: #475467;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.my-folder-bulk-tools-p500 .my-folder-bulk-status-p502 {
+  background: #eaf3ff;
+  color: #174ea6;
+}
+.my-folder-bulk-tools-p500 button,
+.my-folder-bulk-tools-p500 .secondary {
+  min-width: 74px;
+  height: 28px;
+  padding: 0 10px;
+  white-space: nowrap;
+  line-height: 1;
+}
+.my-folder-bulk-tools-p500 .my-folder-bulk-start-p502 {
+  min-width: 106px;
+}
+.my-folder-check-cell-p500 {
+  width: 42px;
+  min-width: 42px;
+}
+.my-folder-check-cell-p500 input,
+#myFolderBulkHeaderCheckP502 {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #2f80ed;
+}
+.my-folder-main-row-p497.selected-p500 > td {
+  background: #eef6ff !important;
+}
+.my-folder-result-table-p497 .customer-actions.my-folder-actions-p497 {
+  display: grid;
+  grid-template-columns: repeat(2, 74px);
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  min-width: 154px;
+}
+.my-folder-actions-p497 .customer-row-btn {
+  min-width: 0;
+  width: 74px;
+  height: 27px;
+  padding: 0 4px;
+  border-radius: 7px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  text-align: center;
+}
+.my-folder-actions-p497 .customer-row-expand-btn {
+  width: 34px;
+  min-width: 34px;
+  justify-self: end;
+}
+.my-folder-picker-node-p499 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.my-folder-picker-node-main-p499 {
+  min-width: 0;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 {
+  display: grid;
+  grid-template-columns: 58px 68px;
+  gap: 6px;
+  align-items: center;
+  justify-content: end;
+  min-width: 132px;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 button {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 button:disabled {
+  color: #98a2b3 !important;
+  background: #f2f4f7 !important;
+  border-color: #e5e7ef !important;
+  opacity: 1;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 .my-folder-drop-target-label-p500 {
+  grid-column: 1 / -1;
+  justify-self: end;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+@media (max-width: 1280px) {
+  .my-folder-bulk-tools-p500 {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
 </style>
