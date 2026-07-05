@@ -7417,6 +7417,53 @@ body.sidebar-collapsed .my-folder-layout-p497 {
     justify-content: flex-start;
   }
 }
+
+/* P505: 나의 고객 폴더 - 권한 프로필 분리 + 이동 버튼 깨짐 방지 */
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 {
+  grid-template-columns: 62px 74px !important;
+  min-width: 146px !important;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 .my-folder-transfer-btn-p502,
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 .my-folder-transfer-disabled-p505 {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 .my-folder-transfer-btn-p502.copy {
+  border: 1px solid #b7cdf7 !important;
+  background: #eef5ff !important;
+  color: #1d4ed8 !important;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 .my-folder-transfer-btn-p502.move {
+  border: 1px solid #1d4ed8 !important;
+  background: #1d4ed8 !important;
+  color: #fff !important;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 .my-folder-transfer-btn-p502.copy:hover {
+  background: #dbeafe !important;
+  border-color: #93b5fd !important;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 .my-folder-transfer-btn-p502.move:hover {
+  background: #1746b3 !important;
+  border-color: #1746b3 !important;
+}
+.my-folder-transfer-actions-p499.my-folder-transfer-actions-p502 .my-folder-transfer-disabled-p505 {
+  border: 1px solid #e5e7ef;
+  background: #f2f4f7;
+  color: #98a2b3;
+  cursor: default;
+}
+
 /* P503: 시스템 점검 보수공사 */
 .system-health-main-p503 {
   padding: 0 0 28px;

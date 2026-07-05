@@ -71,6 +71,9 @@ function buildMyCustomerFolderFallbackBundleClientP497_(message) {
     ok: true,
     user: {
       ownerEmail: email || String(p && p.name || '').trim(),
+      ownerKey: '',
+      ownerName: String(p && (p.salesRepName || p.name || p.displayName) || '').trim(),
+      loginEmail: email,
       label: String(p && (p.displayName || p.name || p.email) || '').trim(),
       level: String(p && p.level || '').trim(),
       canClassifyAllCustomers: !!(p && (p.isAdmin || p.canUseAdminHome || String(p.level || '').toUpperCase() === 'ADMIN')),
@@ -91,7 +94,7 @@ function buildMyCustomerFolderFallbackBundleClientP497_(message) {
       targetSalesRep: ''
     }],
     items: [],
-    folderVersion: 504,
+    folderVersion: 505,
     source: 'client-fallback-empty',
     loadedAt: '',
     dbReady: false,
@@ -1424,10 +1427,12 @@ function renderMyCustomerFolderTransferPickerP499_() {
   const fixedTarget = state.fixedTargetFolderId || '';
   const actionRenderer = function(f) {
     const isFixed = fixedTarget && String(f.folderId) === fixedTarget;
-    const moveLabel = canMove ? '이동' : '이동불가';
+    const moveControl = canMove
+      ? '<button type="button" class="my-folder-transfer-btn-p502 move" onclick="transferMyCustomerFolderItemP499_(\'move\',\'' + escAttr(f.folderId) + '\')">이동</button>'
+      : '<span class="my-folder-transfer-disabled-p505" title="자동 폴더 고객은 이동할 수 없습니다.">이동불가</span>';
     return '<div class="my-folder-transfer-actions-p499 my-folder-transfer-actions-p502">' +
       '<button type="button" class="my-folder-transfer-btn-p502 copy" onclick="transferMyCustomerFolderItemP499_(\'copy\',\'' + escAttr(f.folderId) + '\')">복사</button>' +
-      '<button type="button" class="my-folder-transfer-btn-p502 move" ' + (canMove ? '' : 'disabled title="자동 폴더 고객은 이동할 수 없습니다."') + ' onclick="transferMyCustomerFolderItemP499_(\'move\',\'' + escAttr(f.folderId) + '\')">' + moveLabel + '</button>' +
+      moveControl +
       (isFixed ? '<span class="my-folder-drop-target-label-p500">드롭 대상</span>' : '') +
     '</div>';
   };
