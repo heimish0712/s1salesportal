@@ -306,6 +306,7 @@ function renderResults(response, fromCache) {
     html += '<td><div class="customer-actions">' +
       '<button type="button" class="customer-row-btn primary" onclick="event.stopPropagation(); openDetailSafe_(' + rowNo + ')">상세</button>' +
       '<button type="button" class="customer-row-btn" onclick="event.stopPropagation(); openSendForCustomer(' + rowNo + ')">발송</button>' +
+      '<button type="button" class="customer-row-btn" onclick="event.stopPropagation(); openMyCustomerFolderPickerForRowP499_(' + rowNo + ',\'' + escAttr(r.customerNo || '') + '\')">폴더</button>' +
       '<button type="button" class="customer-row-btn customer-row-expand-btn" onclick="event.stopPropagation(); toggleCustomerExpand(' + rowNo + ')">' + (isExpanded ? '▲' : '▼') + '</button>' +
       '</div></td>';
     html += '</tr>';

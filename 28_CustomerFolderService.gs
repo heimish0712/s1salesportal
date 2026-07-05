@@ -36,7 +36,7 @@ const PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497 = [
 ];
 
 const PORTAL_MY_CUSTOMER_FOLDER_CACHE_PREFIX_P497 = 'MY_CUSTOMER_FOLDER_P497_';
-const PORTAL_MY_CUSTOMER_FOLDER_CACHE_TTL_SEC_P497 = 60;
+const PORTAL_MY_CUSTOMER_FOLDER_CACHE_TTL_SEC_P497 = 300;
 const PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497 = '나의 고객 폴더';
 
 function getMyCustomerFolderBundleP497(options) {
@@ -51,9 +51,11 @@ function getMyCustomerFolderBundleP497(options) {
 
   try {
     // 조회 경로에서는 DB 시트 생성/헤더 보정을 하지 않습니다.
+    // P499: 웹앱 DB Spreadsheet open을 한 번만 수행해 메뉴/팝업 첫 로딩 체감 속도를 줄입니다.
     // 웹앱 DB가 순간적으로 timeout 나더라도 화면이 죽지 않도록 fallback bundle을 반환합니다.
-    const folders = readMyCustomerFolderRowsP497_(user.key, { noEnsure: true });
-    const items = readMyCustomerFolderItemRowsP497_(user.key, { noEnsure: true });
+    const bundleRowsP499 = readMyCustomerFolderBundleRowsFastP499_(user.key, { noEnsure: true });
+    const folders = bundleRowsP499.folders;
+    const items = bundleRowsP499.items;
     const result = buildMyCustomerFolderBundleP497_(user, folders, items, {
       source: PORTAL_MY_CUSTOMER_FOLDER_SHEET_P497 + ' + ' + PORTAL_MY_CUSTOMER_FOLDER_ITEM_SHEET_P497,
       dbReady: true
@@ -427,6 +429,55 @@ function getExistingMyCustomerFolderItemSheetP497_() {
   return ss.getSheetByName(PORTAL_MY_CUSTOMER_FOLDER_ITEM_SHEET_P497) || null;
 }
 
+
+function readMyCustomerFolderBundleRowsFastP499_(ownerEmail, options) {
+  options = options || {};
+  ownerEmail = String(ownerEmail || '').trim();
+  const ss = getWebAppDbSpreadsheet_();
+  const folderSheet = ss.getSheetByName(PORTAL_MY_CUSTOMER_FOLDER_SHEET_P497) || null;
+  const itemSheet = ss.getSheetByName(PORTAL_MY_CUSTOMER_FOLDER_ITEM_SHEET_P497) || null;
+  const folders = [];
+  const items = [];
+
+  if (folderSheet) {
+    const folderLastRow = folderSheet.getLastRow();
+    if (folderLastRow >= 2) {
+      const values = folderSheet.getRange(2, 1, folderLastRow - 1, PORTAL_MY_CUSTOMER_FOLDER_HEADERS_P497.length).getDisplayValues();
+      values.forEach(function(row, idx) {
+        const f = mapMyCustomerFolderRowP497_(row, idx + 2);
+        if (ownerEmail && f.ownerEmail !== ownerEmail) return;
+        if (!options.includeDeleted && f.isDeleted) return;
+        if (f.folderId) folders.push(f);
+      });
+      folders.sort(function(a, b) {
+        const ao = Number(a.sortOrder) || 0;
+        const bo = Number(b.sortOrder) || 0;
+        return (ao - bo) || String(a.folderName || '').localeCompare(String(b.folderName || ''));
+      });
+    }
+  }
+
+  if (itemSheet) {
+    const itemLastRow = itemSheet.getLastRow();
+    if (itemLastRow >= 2) {
+      const values = itemSheet.getRange(2, 1, itemLastRow - 1, PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497.length).getDisplayValues();
+      values.forEach(function(row, idx) {
+        const item = mapMyCustomerFolderItemRowP497_(row, idx + 2);
+        if (ownerEmail && item.ownerEmail !== ownerEmail) return;
+        if (!options.includeDeleted && item.isDeleted) return;
+        if (item.itemId && item.folderId) items.push(item);
+      });
+      items.sort(function(a, b) {
+        const ao = Number(a.sortOrder) || 0;
+        const bo = Number(b.sortOrder) || 0;
+        return (ao - bo) || String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+      });
+    }
+  }
+
+  return { folders: folders, items: items };
+}
+
 function buildMyCustomerFolderBundleP497_(user, folders, items, extra) {
   extra = extra || {};
   return {
@@ -687,4 +738,308 @@ function getNextMyCustomerFolderItemSortOrderP497_(items, folderId) {
     return Math.max(acc, Number(item.sortOrder) || 0);
   }, 0);
   return max + 10;
+}
+
+
+/***************************************
+ * P499: 나의 고객 폴더 2차 - 빠른 추가/복사/이동
+ * - 고객검색/상세모달 폴더 선택 팝업에서 사용
+ * - 저장 성공 후 전체 bundle 재조회 없이 delta만 반환하여 체감 속도 개선
+ ***************************************/
+function addCustomersToMyFolderFastP499(payload) {
+  payload = payload || {};
+  const user = getMyCustomerFolderUserP497_();
+  const folderId = String(payload.folderId || '').trim();
+  const customers = Array.isArray(payload.customers) ? payload.customers : [];
+  if (!folderId) throw new Error('고객을 넣을 폴더가 선택되지 않았습니다.');
+  if (!customers.length) throw new Error('추가할 고객이 없습니다.');
+
+  return withPortalScriptLockP201_('my-customer-folder-add-fast-p499', function() {
+    const itemSheet = ensureMyCustomerFolderItemSheetP497_();
+    const folder = readMyCustomerFolderRowsP497_(user.key).find(function(f) { return f.folderId === folderId && !f.isDeleted; });
+    if (!folder) throw new Error('고객을 넣을 폴더를 찾지 못했습니다.');
+
+    const nowText = getMyCustomerFolderNowTextP497_();
+    const existingItems = readMyCustomerFolderItemRowsP497_(user.key, { includeDeleted: true });
+    const activeByFolderKey = {};
+    const deletedByFolderKey = {};
+    existingItems.forEach(function(item) {
+      const key = makeMyCustomerFolderItemKeyP497_(item.folderId, item.customerNo, item.rowNo);
+      if (!key) return;
+      if (item.isDeleted) deletedByFolderKey[key] = item;
+      else activeByFolderKey[key] = item;
+    });
+
+    let added = 0;
+    let restored = 0;
+    let skipped = 0;
+    let nextSort = getNextMyCustomerFolderItemSortOrderP497_(existingItems, folderId);
+    const newRows = [];
+    const savedItems = [];
+    const restoredRowWrites = [];
+
+    customers.forEach(function(c) {
+      const target = assertCustomerTarget_({ customerNo: c && c.customerNo, rowNo: c && c.rowNo }, PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497 + ' 고객 추가', { readObject: true });
+      assertMyCustomerFolderCanClassifyTargetP497_(target, user.permission);
+      const snapshot = buildMyCustomerFolderCustomerSnapshotP497_(target);
+      const key = makeMyCustomerFolderItemKeyP497_(folderId, snapshot.customerNo, snapshot.rowNo);
+      if (!key || activeByFolderKey[key]) {
+        skipped += 1;
+        return;
+      }
+
+      const restoreItem = deletedByFolderKey[key] || null;
+      const itemId = restoreItem && restoreItem.itemId ? restoreItem.itemId : makeMyCustomerFolderIdP497_('FIT');
+      const sortOrder = nextSort;
+      nextSort += 10;
+      const rowValues = [
+        itemId,
+        user.key,
+        folderId,
+        snapshot.customerNo,
+        snapshot.rowNo || '',
+        snapshot.company,
+        snapshot.salesRep,
+        sortOrder,
+        '',
+        '',
+        restoreItem && restoreItem.createdAt ? restoreItem.createdAt : nowText,
+        nowText
+      ];
+
+      const saved = {
+        itemId: itemId,
+        ownerEmail: user.key,
+        folderId: folderId,
+        customerNo: snapshot.customerNo,
+        rowNo: Number(snapshot.rowNo) || 0,
+        companyNameSnapshot: snapshot.company,
+        assignedUserSnapshot: snapshot.salesRep,
+        sortOrder: sortOrder,
+        memo: '',
+        isDeleted: false,
+        createdAt: rowValues[10],
+        updatedAt: nowText
+      };
+
+      if (restoreItem && restoreItem.rowNoInSheet) {
+        restoredRowWrites.push({ rowNoInSheet: restoreItem.rowNoInSheet, rowValues: rowValues });
+        restored += 1;
+      } else {
+        newRows.push(rowValues);
+        added += 1;
+      }
+      savedItems.push(saved);
+      activeByFolderKey[key] = saved;
+      existingItems.push(saved);
+    });
+
+    restoredRowWrites.forEach(function(w) {
+      itemSheet.getRange(w.rowNoInSheet, 1, 1, PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497.length).setValues([w.rowValues]);
+    });
+    if (newRows.length) {
+      const startRow = Math.max(2, itemSheet.getLastRow() + 1);
+      itemSheet.getRange(startRow, 1, newRows.length, PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497.length).setValues(newRows);
+    }
+
+    if (added || restored) invalidateMyCustomerFolderCacheP497_(user.key);
+    try {
+      if (added || restored || skipped) appendPortalActivityLog_({
+        actionType: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        screen: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        summary: '고객 폴더 빠른 추가: ' + folder.folderName + ' / ' + (added + restored) + '건',
+        detail: { action: 'addCustomersFastP499', folderId: folderId, folderName: folder.folderName, added: added, restored: restored, skipped: skipped, customers: savedItems.slice(0, 20) }
+      });
+    } catch (err) {}
+
+    return {
+      ok: true,
+      fastDelta: true,
+      folderId: folderId,
+      added: added,
+      restored: restored,
+      skipped: skipped,
+      savedItems: savedItems,
+      loadedAt: nowText
+    };
+  }, { attempts: 2, waitMs: 300, sleepBaseMs: 80 });
+}
+
+function transferMyCustomerFolderItemsP499(payload) {
+  payload = payload || {};
+  const user = getMyCustomerFolderUserP497_();
+  const mode = String(payload.mode || '').toLowerCase() === 'move' ? 'move' : 'copy';
+  const toFolderId = String(payload.toFolderId || '').trim();
+  const itemIds = (Array.isArray(payload.itemIds) ? payload.itemIds : [payload.itemId]).map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+  if (!toFolderId) throw new Error('대상 폴더가 선택되지 않았습니다.');
+  if (!itemIds.length) throw new Error('복사/이동할 고객이 선택되지 않았습니다.');
+
+  return withPortalScriptLockP201_('my-customer-folder-transfer-p499', function() {
+    const itemSheet = ensureMyCustomerFolderItemSheetP497_();
+    const folders = readMyCustomerFolderRowsP497_(user.key);
+    const toFolder = folders.find(function(f) { return f.folderId === toFolderId && !f.isDeleted; });
+    if (!toFolder) throw new Error('대상 폴더를 찾지 못했습니다.');
+
+    const nowText = getMyCustomerFolderNowTextP497_();
+    const items = readMyCustomerFolderItemRowsP497_(user.key, { includeDeleted: true });
+    const itemIdSet = {};
+    itemIds.forEach(function(id) { itemIdSet[id] = true; });
+    const activeItems = items.filter(function(item) { return item.ownerEmail === user.key && !item.isDeleted; });
+    const sourceItems = activeItems.filter(function(item) { return itemIdSet[item.itemId]; });
+    if (!sourceItems.length) throw new Error('복사/이동할 고객 항목을 찾지 못했습니다.');
+
+    const activeByTargetKey = {};
+    const deletedByTargetKey = {};
+    items.forEach(function(item) {
+      if (item.ownerEmail !== user.key) return;
+      const key = makeMyCustomerFolderItemKeyP497_(item.folderId, item.customerNo, item.rowNo);
+      if (!key) return;
+      if (item.isDeleted) deletedByTargetKey[key] = item;
+      else activeByTargetKey[key] = item;
+    });
+
+    let nextSort = getNextMyCustomerFolderItemSortOrderP497_(items, toFolderId);
+    const newRows = [];
+    const upsertItems = [];
+    const deletedItemIds = [];
+    let copied = 0;
+    let moved = 0;
+    let skipped = 0;
+    let duplicateSkipped = 0;
+
+    function markDeleted(item) {
+      if (!item || !item.rowNoInSheet) return;
+      itemSheet.getRange(item.rowNoInSheet, 10).setValue('Y');
+      itemSheet.getRange(item.rowNoInSheet, 12).setValue(nowText);
+      deletedItemIds.push(item.itemId);
+    }
+
+    sourceItems.forEach(function(source) {
+      if (String(source.folderId || '') === toFolderId) {
+        skipped += 1;
+        return;
+      }
+      const targetKey = makeMyCustomerFolderItemKeyP497_(toFolderId, source.customerNo, source.rowNo);
+      const activeTarget = activeByTargetKey[targetKey];
+      const deletedTarget = deletedByTargetKey[targetKey];
+      const sortOrder = nextSort;
+      nextSort += 10;
+
+      if (activeTarget) {
+        duplicateSkipped += 1;
+        if (mode === 'move') {
+          markDeleted(source);
+          moved += 1;
+        }
+        return;
+      }
+
+      if (mode === 'move' && source.rowNoInSheet && !deletedTarget) {
+        const movedItem = {
+          itemId: source.itemId,
+          ownerEmail: user.key,
+          folderId: toFolderId,
+          customerNo: source.customerNo,
+          rowNo: Number(source.rowNo) || 0,
+          companyNameSnapshot: source.companyNameSnapshot,
+          assignedUserSnapshot: source.assignedUserSnapshot,
+          sortOrder: sortOrder,
+          memo: source.memo || '',
+          isDeleted: false,
+          createdAt: source.createdAt || nowText,
+          updatedAt: nowText
+        };
+        itemSheet.getRange(source.rowNoInSheet, 1, 1, PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497.length).setValues([[
+          movedItem.itemId,
+          movedItem.ownerEmail,
+          movedItem.folderId,
+          movedItem.customerNo,
+          movedItem.rowNo || '',
+          movedItem.companyNameSnapshot,
+          movedItem.assignedUserSnapshot,
+          movedItem.sortOrder,
+          movedItem.memo,
+          '',
+          movedItem.createdAt,
+          movedItem.updatedAt
+        ]]);
+        upsertItems.push(movedItem);
+        moved += 1;
+        activeByTargetKey[targetKey] = movedItem;
+        return;
+      }
+
+      const itemId = deletedTarget && deletedTarget.itemId ? deletedTarget.itemId : makeMyCustomerFolderIdP497_('FIT');
+      const targetItem = {
+        itemId: itemId,
+        ownerEmail: user.key,
+        folderId: toFolderId,
+        customerNo: source.customerNo,
+        rowNo: Number(source.rowNo) || 0,
+        companyNameSnapshot: source.companyNameSnapshot,
+        assignedUserSnapshot: source.assignedUserSnapshot,
+        sortOrder: sortOrder,
+        memo: source.memo || '',
+        isDeleted: false,
+        createdAt: deletedTarget && deletedTarget.createdAt ? deletedTarget.createdAt : nowText,
+        updatedAt: nowText
+      };
+      const rowValues = [
+        targetItem.itemId,
+        targetItem.ownerEmail,
+        targetItem.folderId,
+        targetItem.customerNo,
+        targetItem.rowNo || '',
+        targetItem.companyNameSnapshot,
+        targetItem.assignedUserSnapshot,
+        targetItem.sortOrder,
+        targetItem.memo,
+        '',
+        targetItem.createdAt,
+        targetItem.updatedAt
+      ];
+      if (deletedTarget && deletedTarget.rowNoInSheet) {
+        itemSheet.getRange(deletedTarget.rowNoInSheet, 1, 1, PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497.length).setValues([rowValues]);
+      } else {
+        newRows.push(rowValues);
+      }
+      upsertItems.push(targetItem);
+      activeByTargetKey[targetKey] = targetItem;
+      if (mode === 'move') {
+        markDeleted(source);
+        moved += 1;
+      } else {
+        copied += 1;
+      }
+    });
+
+    if (newRows.length) {
+      const startRow = Math.max(2, itemSheet.getLastRow() + 1);
+      itemSheet.getRange(startRow, 1, newRows.length, PORTAL_MY_CUSTOMER_FOLDER_ITEM_HEADERS_P497.length).setValues(newRows);
+    }
+
+    if (copied || moved || deletedItemIds.length) invalidateMyCustomerFolderCacheP497_(user.key);
+    try {
+      appendPortalActivityLog_({
+        actionType: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        screen: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        summary: '고객 폴더 ' + (mode === 'move' ? '이동' : '복사') + ': ' + (copied + moved) + '건',
+        detail: { action: 'transferItemsP499', mode: mode, toFolderId: toFolderId, copied: copied, moved: moved, skipped: skipped, duplicateSkipped: duplicateSkipped, itemIds: itemIds.slice(0, 50) }
+      });
+    } catch (err) {}
+
+    return {
+      ok: true,
+      fastDelta: true,
+      mode: mode,
+      toFolderId: toFolderId,
+      copied: copied,
+      moved: moved,
+      skipped: skipped,
+      duplicateSkipped: duplicateSkipped,
+      upsertItems: upsertItems,
+      deletedItemIds: deletedItemIds,
+      loadedAt: nowText
+    };
+  }, { attempts: 2, waitMs: 300, sleepBaseMs: 80 });
 }

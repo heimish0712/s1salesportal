@@ -6843,4 +6843,161 @@ body.sidebar-collapsed .my-folder-layout-p497 {
   color: #7a5b00;
   word-break: break-all;
 }
+
+/* P499: 나의 고객 폴더 선택/복사/이동 팝업 */
+.my-folder-picker-backdrop-p499 {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, .38);
+  padding: 24px;
+}
+.my-folder-picker-dialog-p499 {
+  width: min(560px, 96vw);
+  max-height: min(720px, 90vh);
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .28);
+  border: 1px solid #d7dde8;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.my-folder-picker-head-p499 {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #edf0f5;
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+}
+.my-folder-picker-title-p499 {
+  font-size: 16px;
+  font-weight: 950;
+  color: #101828;
+}
+.my-folder-picker-sub-p499 {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #667085;
+  line-height: 1.4;
+}
+.my-folder-picker-close-p499 {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #d7dde8;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.my-folder-picker-body-p499 {
+  padding: 12px;
+  overflow: auto;
+  min-height: 180px;
+  position: relative;
+}
+.my-folder-picker-body-p499.saving {
+  opacity: .62;
+  pointer-events: none;
+}
+.my-folder-picker-loading-p499,
+.my-folder-picker-empty-p499,
+.my-folder-picker-error-p499 {
+  padding: 28px 14px;
+  border: 1px dashed #d7dde8;
+  border-radius: 12px;
+  background: #f8fafc;
+  text-align: center;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.my-folder-picker-error-p499 {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #991b1b;
+}
+.my-folder-picker-list-p499 {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.my-folder-picker-node-wrap-p499 {
+  display: block;
+}
+.my-folder-picker-node-p499 {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #edf0f5;
+  border-radius: 10px;
+  background: #fff;
+  margin-bottom: 4px;
+  padding: 7px 9px 7px 12px;
+}
+.my-folder-picker-node-p499:hover {
+  background: #f8fbff;
+  border-color: #cfe1ff;
+}
+.my-folder-picker-node-main-p499 {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #344054;
+}
+.my-folder-picker-node-main-p499 b {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #101828;
+}
+.my-folder-picker-node-main-p499 em {
+  font-style: normal;
+  font-size: 11px;
+  color: #98a2b3;
+  white-space: nowrap;
+}
+.my-folder-picker-node-p499 button {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #cfd7e6;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.my-folder-picker-node-p499 button:not(:disabled):hover {
+  background: #e8f0fe;
+  border-color: #9cc2ff;
+  color: #174ea6;
+}
+.my-folder-picker-node-p499 button:disabled {
+  cursor: default;
+  color: #98a2b3;
+  background: #f2f4f7;
+}
+.my-folder-transfer-actions-p499 {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.my-folder-transfer-actions-p499 button {
+  min-width: 46px;
+}
+.my-folder-actions-p497 .customer-row-btn {
+  min-width: 54px;
+  padding: 0 7px;
+}
+
 </style>
