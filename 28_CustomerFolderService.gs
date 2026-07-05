@@ -45,7 +45,7 @@ const PORTAL_MY_CUSTOMER_FOLDER_CACHE_PREFIX_P497 = 'MY_CUSTOMER_FOLDER_P497_';
 const PORTAL_MY_CUSTOMER_FOLDER_CACHE_TTL_SEC_P497 = 300;
 const PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497 = '나의 고객 폴더';
 // P505: 내 폴더 소유 기준을 로그인 이메일이 아닌 권한_DB 기준 현재 프로필(ownerKey)로 분리
-const PORTAL_MY_CUSTOMER_FOLDER_VERSION_P501 = 505;
+const PORTAL_MY_CUSTOMER_FOLDER_VERSION_P501 = 507;
 
 // P500: 기본 폴더 / 내 폴더 분리
 // 기본 자동 폴더는 DB에 고객을 저장하지 않고 고객검색 인덱스/마스터 기준으로 실시간 계산합니다.
@@ -1053,6 +1053,85 @@ function collectMyCustomerFolderDescendantIdsP497_(folders, rootId) {
   };
   visit(rootId);
   return ids;
+}
+
+
+
+/***************************************
+ * P507: 내 폴더 트리 드래그 이동
+ * - 내 폴더를 다른 내 폴더 하위로 이동
+ * - 빈 공간 드롭 시 최상위 폴더로 이동
+ * - 자동/기본 요청 폴더 이동 및 순환 구조 방지
+ ***************************************/
+function moveMyCustomerFolderP507(payload) {
+  payload = payload || {};
+  const user = getMyCustomerFolderUserP497_();
+  const folderId = String(payload.folderId || '').trim();
+  let newParentFolderId = String(payload.newParentFolderId || '').trim();
+  if (!folderId) throw new Error('이동할 폴더가 선택되지 않았습니다.');
+  if (isMyCustomerFolderSystemFolderIdP500_(folderId)) throw new Error('기본 자동 폴더는 이동할 수 없습니다.');
+  if (isMyCustomerFolderSystemFolderIdP500_(newParentFolderId)) newParentFolderId = '';
+  if (folderId === newParentFolderId) throw new Error('자기 자신 안으로 폴더를 이동할 수 없습니다.');
+
+  return withPortalScriptLockP201_('my-customer-folder-move-folder-p507', function() {
+    const sheet = ensureMyCustomerFolderSheetP497_();
+    const foldersAll = readMyCustomerFolderRowsForActorP500_(user, { includeDeleted: true });
+    const activeFolders = foldersAll.filter(function(f) { return !f.isDeleted; });
+    const target = activeFolders.find(function(f) { return f.folderId === folderId; });
+    if (!target) throw new Error('이동할 폴더를 찾지 못했습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.');
+
+    const targetOwner = getMyCustomerFolderRecordOwnerKeyP505_(target);
+    if (target.folderScope !== 'PERSONAL' || targetOwner !== user.key) {
+      throw new Error('내 폴더만 이동할 수 있습니다. 기본 폴더와 요청 폴더는 이동할 수 없습니다.');
+    }
+
+    let parent = null;
+    if (newParentFolderId) {
+      parent = activeFolders.find(function(f) { return f.folderId === newParentFolderId; });
+      if (!parent) throw new Error('새 상위 폴더를 찾지 못했습니다.');
+      const parentOwner = getMyCustomerFolderRecordOwnerKeyP505_(parent);
+      if (parent.folderScope !== 'PERSONAL' || parentOwner !== user.key) {
+        throw new Error('내 폴더 안으로만 이동할 수 있습니다.');
+      }
+    }
+
+    const sameOwnerFolders = activeFolders.filter(function(f) {
+      return getMyCustomerFolderRecordOwnerKeyP505_(f) === user.key && f.folderScope === 'PERSONAL';
+    });
+    const descendantIds = collectMyCustomerFolderDescendantIdsP497_(sameOwnerFolders, folderId);
+    if (newParentFolderId && descendantIds.indexOf(newParentFolderId) >= 0) {
+      throw new Error('하위 폴더 안으로 상위 폴더를 이동할 수 없습니다.');
+    }
+
+    const sameName = sameOwnerFolders.some(function(f) {
+      return f.folderId !== folderId && !f.isDeleted && String(f.parentFolderId || '') === newParentFolderId && String(f.folderName || '').trim() === String(target.folderName || '').trim();
+    });
+    if (sameName) throw new Error('같은 위치에 동일한 이름의 폴더가 이미 있습니다.');
+
+    const maxOrder = sameOwnerFolders
+      .filter(function(f) { return f.folderId !== folderId && String(f.parentFolderId || '') === newParentFolderId; })
+      .reduce(function(max, f) { return Math.max(max, Number(f.sortOrder) || 0); }, 0);
+    const newSortOrder = maxOrder + 10;
+    const nowText = getMyCustomerFolderNowTextP497_();
+    const rowNo = Number(target.rowNoInSheet) || 0;
+    if (!rowNo) throw new Error('폴더 저장 위치를 찾지 못했습니다.');
+
+    sheet.getRange(rowNo, 3).setValue(newParentFolderId);
+    sheet.getRange(rowNo, 5).setValue(newSortOrder);
+    sheet.getRange(rowNo, 8).setValue(nowText);
+
+    invalidateMyCustomerFolderActorCachesP500_(user, user.key);
+    try {
+      appendPortalActivityLog_({
+        actionType: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        screen: PORTAL_MY_CUSTOMER_FOLDER_SCREEN_NAME_P497,
+        summary: '내 폴더 위치 이동: ' + target.folderName,
+        detail: { action: 'moveFolderP507', folderId: folderId, folderName: target.folderName, beforeParentFolderId: target.parentFolderId || '', newParentFolderId: newParentFolderId, newSortOrder: newSortOrder }
+      });
+    } catch (err) {}
+
+    return Object.assign({ ok: true, movedFolderId: folderId, newParentFolderId: newParentFolderId }, getMyCustomerFolderBundleP497({ force: true }));
+  }, { attempts: 3, waitMs: 400, sleepBaseMs: 100 });
 }
 
 function makeMyCustomerFolderItemKeyP497_(folderId, customerNo, rowNo) {

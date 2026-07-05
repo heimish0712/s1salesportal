@@ -7737,4 +7737,257 @@ body.sidebar-collapsed .my-folder-layout-p497 {
   .system-health-action-row-p503 { grid-template-columns: 1fr; }
 }
 
+
+/* P506: 나의 고객 폴더 - 팝업/일괄툴바/검색필터/정렬 UI 정리 */
+.my-folder-picker-close-p499 {
+  box-sizing: border-box !important;
+  flex: 0 0 34px !important;
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  min-height: 34px !important;
+  padding: 0 !important;
+  border: 1px solid #d0d7e2 !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  color: #344054 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  font-size: 0 !important;
+  font-weight: 900 !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+}
+.my-folder-picker-close-p499 span {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-size: 22px;
+  line-height: 30px;
+  transform: translateY(-1px);
+}
+.my-folder-picker-close-p499:hover {
+  background: #f2f4f7 !important;
+  border-color: #98a2b3 !important;
+  color: #101828 !important;
+}
+.my-folder-bulk-tools-p500 {
+  width: auto;
+  max-width: 100%;
+  overflow-x: auto;
+  align-items: center !important;
+}
+.my-folder-bulk-tools-p500 .my-folder-bulk-btn-p506,
+.my-folder-bulk-tools-p500 button.my-folder-bulk-btn-p506 {
+  box-sizing: border-box !important;
+  flex: 0 0 auto !important;
+  min-width: 78px !important;
+  width: auto !important;
+  height: 30px !important;
+  padding: 0 10px !important;
+  border: 1px solid #cfd7e6 !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  color: #344054 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 12px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  box-shadow: none !important;
+}
+.my-folder-bulk-tools-p500 .my-folder-bulk-btn-p506.primary:not(:disabled) {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+}
+.my-folder-bulk-tools-p500 .my-folder-bulk-btn-p506:not(:disabled):hover {
+  background: #e8f0fe !important;
+  border-color: #9cc2ff !important;
+  color: #174ea6 !important;
+}
+.my-folder-bulk-tools-p500 .my-folder-bulk-btn-p506.primary:not(:disabled):hover {
+  background: #1746b3 !important;
+  border-color: #1746b3 !important;
+  color: #ffffff !important;
+}
+.my-folder-bulk-tools-p500 .my-folder-bulk-btn-p506:disabled {
+  background: #f2f4f7 !important;
+  border-color: #e5e7ef !important;
+  color: #98a2b3 !important;
+  opacity: 1 !important;
+  cursor: default !important;
+}
+.my-folder-list-filter-p506 {
+  margin: 8px 0 10px;
+  padding: 10px;
+  border: 1px solid #e5e7ef;
+  border-radius: 12px;
+  background: #fbfcff;
+}
+.my-folder-list-filter-row-p506 {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.2fr) minmax(130px, .6fr) minmax(130px, .6fr) minmax(110px, .5fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.my-folder-list-filter-row-p506 input,
+.my-folder-list-filter-row-p506 select {
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  border: 1px solid #d0d7e2;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+  outline: none;
+}
+.my-folder-list-filter-row-p506 input:focus,
+.my-folder-list-filter-row-p506 select:focus {
+  border-color: #2f80ed;
+  box-shadow: 0 0 0 3px rgba(47,128,237,.12);
+}
+.my-folder-list-filter-row-p506 button {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 900;
+}
+.my-folder-list-filter-meta-p506 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #667085;
+  font-weight: 800;
+}
+.my-folder-current-sort-p506 {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #174ea6;
+}
+.my-folder-current-sort-p506.muted {
+  background: #f2f4f7;
+  color: #98a2b3;
+}
+.my-folder-filtered-count-p506 {
+  color: #667085 !important;
+  font-size: 11px !important;
+  font-weight: 800;
+}
+.my-folder-sort-th-p506 {
+  padding: 0 !important;
+  user-select: none;
+}
+.my-folder-sort-head-btn-p506 {
+  width: 100%;
+  height: 100%;
+  min-height: 32px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.my-folder-sort-head-btn-p506:hover,
+.my-folder-sort-head-btn-p506.active {
+  color: #174ea6;
+  background: #eef5ff;
+}
+.my-folder-sort-head-btn-p506 span {
+  min-width: 10px;
+  font-size: 10px;
+}
+.my-folder-result-table-p497 .customer-actions.my-folder-actions-p497.my-folder-actions-p506 {
+  grid-template-columns: repeat(2, 58px) !important;
+  min-width: 120px !important;
+  gap: 4px !important;
+}
+.my-folder-actions-p506 .customer-row-btn {
+  width: 58px !important;
+  min-width: 58px !important;
+  height: 28px !important;
+  padding: 0 4px !important;
+}
+.my-folder-actions-p506 .customer-row-expand-btn {
+  width: 58px !important;
+  min-width: 58px !important;
+  justify-self: auto !important;
+}
+@media (max-width: 1280px) {
+  .my-folder-list-filter-row-p506 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* P507: 나의 고객 폴더 - 폴더 트리 드래그 이동 */
+.my-folder-tree-node-wrap-p497.folder-draggable-p507 .my-folder-tree-node-p497 {
+  cursor: grab;
+}
+
+.my-folder-tree-node-wrap-p497.folder-draggable-p507 .my-folder-tree-node-p497:active {
+  cursor: grabbing;
+}
+
+body.my-folder-tree-dragging-p507 .my-folder-tree-node-p497.personal-p500.droppable-p500 {
+  outline: 1px dashed rgba(37, 99, 235, 0.35);
+  outline-offset: -3px;
+}
+
+.my-folder-tree-node-wrap-p497.folder-drag-over-p507 > .my-folder-tree-node-p497.personal-p500 {
+  border-color: #2563eb !important;
+  background: #eff6ff !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18) !important;
+}
+
+.my-folder-tree-root-drop-zone-p507 {
+  min-height: 54px;
+  border-radius: 10px;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.my-folder-tree-root-drop-zone-p507.root-drag-over-p507 {
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.28);
+}
+
+.my-folder-tree-root-drop-hint-p507 {
+  display: none;
+  margin: 8px 3px 0;
+  padding: 10px 12px;
+  border: 1px dashed #bfdbfe;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+body.my-folder-tree-dragging-p507 .my-folder-tree-root-drop-hint-p507 {
+  display: block;
+}
 </style>

@@ -36,14 +36,13 @@ function normalizePortalMailSelectedKeysP478_(selectedKeys, payload, actionLabel
   out.forEach(function(k) { set[k] = true; });
   const preset = String(payload && (payload.filePreset || payload.preset || payload.sendPreset || '') || '').trim().toLowerCase();
   const firstPreset = preset === 'first' || preset === '최초';
-  const looksLikeFirst =
-    set.quote && set.serviceApplication && set.appointmentDoc && set.termsGuide &&
-    !set.sampleReport && !set.compareQuote && !set.serviceStandardContract;
 
-  if ((firstPreset || looksLikeFirst) && !set.contractorInfo) {
+  // P501: quote/serviceApplication/appointmentDoc/termsGuide 조합만 보고 수행사정보를 자동 추가하지 않습니다.
+  // 수동 체크 중 사용자가 누르지 않은 자료가 체크/발송되는 원인이었으므로 명시적인 #최초 프리셋일 때만 보정합니다.
+  if (firstPreset && !set.contractorInfo) {
     out.push('contractorInfo');
     set.contractorInfo = true;
-    try { Logger.log('P478 ' + (actionLabel || 'mail') + ': 최초 발송 selectedKeys 수행사정보 누락 복구'); } catch (err) {}
+    try { Logger.log('P501 ' + (actionLabel || 'mail') + ': 명시적 최초 프리셋 수행사정보 보정'); } catch (err) {}
   }
   return out;
 }
@@ -115,6 +114,42 @@ function preparePortalMailFilesForReview(payload) {
     fileCount: result && result.fileCount || 0,
     files: result && result.files || [],
     result: result || null
+  };
+}
+
+function getPortalMailContentPreview(payload) {
+  payload = payload || {};
+  const target = assertCustomerTarget_(payload, '메일 본문 기본값 조회', { readObject: true });
+  const rowNo = target.rowNo;
+  const targetCustomerNo = target.customerNo;
+  const selectedKeys = normalizePortalMailSelectedKeysP478_(payload.selectedKeys, payload, 'mailPreview');
+
+  if (!selectedKeys.length) throw new Error('메일 본문을 확인할 발송자료를 하나 이상 선택하세요.');
+
+  const rowObj = target.obj || readMasterRowObject_(target.sheet, rowNo);
+  const company = getCompanyValue_(rowObj) || '(회사명 없음)';
+  const previewPayload = {
+    rowNo: rowNo,
+    customerNo: targetCustomerNo,
+    selectedKeys: selectedKeys,
+    filePreset: String(payload.filePreset || payload.preset || '').trim(),
+    compareQuoteSheets: payload.compareQuoteSheets || payload.selectedCompareQuoteSheets || null,
+    excludedCompareQuoteSheets: payload.excludedCompareQuoteSheets || payload.excludedCompareSheets || null
+  };
+
+  const result = callMailWorkerActionV44_('previewPortalMailContent', previewPayload);
+  const data = result && result.result ? result.result : (result || {});
+  return {
+    ok: true,
+    company: company,
+    rowNo: rowNo,
+    customerNo: targetCustomerNo,
+    selectedKeys: selectedKeys,
+    subject: String(data.subject || ''),
+    bodyText: String(data.bodyText || ''),
+    bodyHtml: String(data.bodyHtml || ''),
+    selectedLabels: data.selectedLabels || selectedKeys.map(function(k) { return getPortalSendFileLabel_(k); }),
+    result: data
   };
 }
 

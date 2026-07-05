@@ -18,6 +18,13 @@ var sendMailBodyDraftP493 = '';
 var sendMailContentTouchedP493 = { subject: false, body: false };
 var sendMailContentOwnerKeyP493 = '';
 
+// P501: 포털 메일 본문 기본값은 포털에서 임의 생성하지 않고 Worker의 실제 기본 템플릿을 조회합니다.
+var sendMailBodyHtmlDraftP501 = '';
+var sendMailDefaultPreviewP501 = { ownerKey: '', subject: '', bodyText: '', bodyHtml: '', loading: false, error: '' };
+
+// P501: 수동 체크와 Quick 프리셋을 구분합니다. 수동 체크에서는 다른 자료를 자동 체크하지 않습니다.
+var sendSelectedFilePresetP501 = '';
+
 
 // P477/P481: 발송/파일확인 작업은 전역 큐로 '요청 시작'만 순차 디스패치합니다.
 // 목적: 5개 작업창 상태가 섞이지 않게 payload는 고정하되, 앞 메일 발송 완료까지 기다리지 않고 다음 작업도 빠르게 서버로 넘깁니다.
@@ -428,8 +435,10 @@ function resetSendMailContentDraftP493_(reason) {
   try { releaseSendMailDraftContextP494D_(); } catch (err) {}
   sendMailSubjectDraftP493 = '';
   sendMailBodyDraftP493 = '';
+  sendMailBodyHtmlDraftP501 = '';
   sendMailContentTouchedP493 = { subject: false, body: false };
   sendMailContentOwnerKeyP493 = '';
+  sendMailDefaultPreviewP501 = { ownerKey: '', subject: '', bodyText: '', bodyHtml: '', loading: false, error: '' };
   if (reason && typeof console !== 'undefined') console.log('[sendMailContentDraft cleared]', reason);
 }
 
@@ -552,41 +561,51 @@ function releaseSendMailDraftContextP494D_() {
 }
 
 
+function getSendMailDefaultPreviewOwnerKeyP501_(model) {
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  return getSendMailContentOwnerKeyP493_(sendSelectedDetail, model.keys || sendSelectedFileKeysV50);
+}
+
+function isSendMailDefaultPreviewCurrentP501_(model) {
+  const ownerKey = getSendMailDefaultPreviewOwnerKeyP501_(model);
+  return !!(ownerKey && sendMailDefaultPreviewP501 && sendMailDefaultPreviewP501.ownerKey === ownerKey && !sendMailDefaultPreviewP501.error);
+}
+
+function stripPortalEditableHtmlForTextP501_(html) {
+  const div = document.createElement('div');
+  div.innerHTML = String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/div>/gi, '\n');
+  const text = (div.innerText || div.textContent || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return text;
+}
+
 function buildDefaultPortalMailSubjectP493_(model) {
   model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
-  const company = String(model.company || '').trim() || '고객사';
-  const labels = Array.isArray(model.labels) ? model.labels.slice(0, 3) : [];
-  const suffix = labels.length ? labels.join(', ') : '견적자료';
-  return '[에스원] ' + company + ' ' + suffix + ' 송부드립니다';
+  if (isSendMailDefaultPreviewCurrentP501_(model)) return String(sendMailDefaultPreviewP501.subject || '');
+  return '';
 }
 
 function buildDefaultPortalMailBodyP493_(model) {
   model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
-  const company = String(model.company || '').trim() || '고객사';
-  const labels = Array.isArray(model.labels) && model.labels.length ? model.labels.join(', ') : '선택 발송자료';
-  const contractText = String(model.contractText || '').trim();
-  const salesRep = String(model.salesRep || '').trim();
-  const lines = [];
-  lines.push(company + ' 담당자님, 안녕하세요.');
-  lines.push('');
-  lines.push('에스원 건축물관리 영업담당자입니다.');
-  lines.push('요청하신 자료를 첨부하여 송부드립니다.');
-  lines.push('');
-  if (contractText && contractText !== '-') {
-    lines.push('[계약조건]');
-    lines.push(contractText);
-    lines.push('');
+  if (isSendMailDefaultPreviewCurrentP501_(model)) {
+    return String(sendMailDefaultPreviewP501.bodyText || '') || stripPortalEditableHtmlForTextP501_(sendMailDefaultPreviewP501.bodyHtml || '');
   }
-  lines.push('[첨부자료]');
-  lines.push(labels);
-  lines.push('');
-  lines.push('확인 후 궁금하신 사항이 있으시면 편하게 회신 부탁드립니다.');
-  lines.push('감사합니다.');
-  if (salesRep && salesRep !== '-') {
-    lines.push('');
-    lines.push(salesRep + ' 드림');
-  }
-  return lines.join('\n');
+  return '';
+}
+
+function buildDefaultPortalMailBodyHtmlP501_(model) {
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  if (isSendMailDefaultPreviewCurrentP501_(model)) return String(sendMailDefaultPreviewP501.bodyHtml || '');
+  return '';
 }
 
 function syncSendMailContentDraftP493_(model, options) {
@@ -600,19 +619,26 @@ function syncSendMailContentDraftP493_(model, options) {
     sendMailContentTouchedP493 = { subject: false, body: false };
     sendMailSubjectDraftP493 = '';
     sendMailBodyDraftP493 = '';
+    sendMailBodyHtmlDraftP501 = '';
   } else if (ownerChanged) {
     sendMailContentOwnerKeyP493 = ownerKey;
   }
   const defaultSubject = buildDefaultPortalMailSubjectP493_(model);
   const defaultBody = buildDefaultPortalMailBodyP493_(model);
+  const defaultBodyHtmlP501 = buildDefaultPortalMailBodyHtmlP501_(model);
   const subjectFieldP494D = getSendMailDraftFieldP494D_('subject', false);
   const bodyFieldP494D = getSendMailDraftFieldP494D_('body', false);
   const subjectEditedP494D = !!(sendMailContentTouchedP493.subject || (subjectFieldP494D && (subjectFieldP494D.dirty || subjectFieldP494D.userTouched || subjectFieldP494D.pending || subjectFieldP494D.conflict || subjectFieldP494D.focused)));
   const bodyEditedP494D = !!(sendMailContentTouchedP493.body || (bodyFieldP494D && (bodyFieldP494D.dirty || bodyFieldP494D.userTouched || bodyFieldP494D.pending || bodyFieldP494D.conflict || bodyFieldP494D.focused)));
   if (!subjectEditedP494D) sendMailSubjectDraftP493 = defaultSubject;
   else if (subjectFieldP494D) sendMailSubjectDraftP493 = String(subjectFieldP494D.draftValue == null ? sendMailSubjectDraftP493 || '' : subjectFieldP494D.draftValue);
-  if (!bodyEditedP494D) sendMailBodyDraftP493 = defaultBody;
-  else if (bodyFieldP494D) sendMailBodyDraftP493 = String(bodyFieldP494D.draftValue == null ? sendMailBodyDraftP493 || '' : bodyFieldP494D.draftValue);
+  if (!bodyEditedP494D) {
+    sendMailBodyDraftP493 = defaultBody;
+    sendMailBodyHtmlDraftP501 = defaultBodyHtmlP501 || '';
+  } else if (bodyFieldP494D) {
+    sendMailBodyDraftP493 = String(bodyFieldP494D.draftValue == null ? sendMailBodyDraftP493 || '' : bodyFieldP494D.draftValue);
+    if (!sendMailBodyHtmlDraftP501 && sendMailBodyDraftP493) sendMailBodyHtmlDraftP501 = esc(sendMailBodyDraftP493).replace(/\n/g, '<br>');
+  }
 }
 
 function renderSendMailContentEditorP493_(model) {
@@ -655,6 +681,7 @@ function handleSendMailContentInputP493_(type, value) {
     sendMailContentTouchedP493.subject = true;
   } else if (type === 'body') {
     sendMailBodyDraftP493 = String(value == null ? '' : value);
+    sendMailBodyHtmlDraftP501 = getSendMailBodyHtmlFromTextP501_(sendMailBodyDraftP493);
     sendMailContentTouchedP493.body = true;
   }
   try { registerSendMailDraftFieldsP494D_(); } catch (err) {}
@@ -693,11 +720,11 @@ function ensureSendMailBodyEditorModalP493_() {
           '<span style="display:block;margin-bottom:6px;color:#344054;font-size:12px;font-weight:900;">메일 제목</span>' +
           '<input id="sendMailSubjectModalInputP493" style="width:100%;box-sizing:border-box;border:1px solid #d0d5dd;border-radius:10px;background:#fff;color:#101828;font-size:14px;line-height:1.55;padding:10px 12px;" placeholder="메일 제목을 입력하세요.">' +
         '</label>' +
-        '<label style="display:block;">' +
-          '<span style="display:block;margin-bottom:6px;color:#344054;font-size:12px;font-weight:900;">메일 본문</span>' +
-          '<textarea id="sendMailBodyModalInputP493" rows="16" style="width:100%;min-height:340px;box-sizing:border-box;border:1px solid #d0d5dd;border-radius:10px;background:#fff;color:#101828;font-size:14px;line-height:1.65;padding:12px;font-family:inherit;white-space:pre-wrap;resize:vertical;" placeholder="메일 본문을 입력하세요."></textarea>' +
-        '</label>' +
-        '<div style="margin-top:8px;color:#667085;font-size:12px;line-height:1.45;font-weight:700;">수정내용 적용을 누른 경우에만 나에게 테스트 발송과 고객 발송 payload에 수정본을 넘깁니다.</div>' +
+        '<div style="display:block;">' +
+          '<div style="display:block;margin-bottom:6px;color:#344054;font-size:12px;font-weight:900;">메일 본문</div>' +
+          '<div id="sendMailBodyModalInputP493" contenteditable="true" style="width:100%;min-height:340px;max-height:46vh;overflow:auto;box-sizing:border-box;border:1px solid #d0d5dd;border-radius:10px;background:#fff;color:#101828;font-size:15px;line-height:1.75;padding:14px 16px;font-family:\'Malgun Gothic\',\'맑은 고딕\',Arial,sans-serif;outline:none;"></div>' +
+        '</div>' +
+        '<div style="margin-top:8px;color:#667085;font-size:12px;line-height:1.45;font-weight:700;">Worker의 실제 기본 제목/본문을 불러옵니다. 명함/안내문 이미지는 편집창에 표시하지 않고 실제 발송 시 Worker가 기존 방식대로 자동 삽입합니다.</div>' +
       '</div>' +
       '<div class="support-modal-footer">' +
         '<button type="button" class="secondary" onclick="resetSendMailBodyEditorToDefaultP493_()">기본값으로 초기화</button>' +
@@ -709,13 +736,135 @@ function ensureSendMailBodyEditorModalP493_() {
   return backdrop;
 }
 
+function getSendMailBodyModalHtmlP501_() {
+  const el = document.getElementById('sendMailBodyModalInputP493');
+  return el ? String(el.innerHTML || '').trim() : '';
+}
+
+function getSendMailBodyModalTextP501_() {
+  return stripPortalEditableHtmlForTextP501_(getSendMailBodyModalHtmlP501_());
+}
+
+function setSendMailBodyEditorInputsP501_(subject, bodyHtml) {
+  const subjectEl = document.getElementById('sendMailSubjectModalInputP493');
+  const bodyEl = document.getElementById('sendMailBodyModalInputP493');
+  if (subjectEl) subjectEl.value = String(subject || '');
+  if (bodyEl) bodyEl.innerHTML = String(bodyHtml || '');
+}
+
+function getSendMailBodyHtmlFromTextP501_(text) {
+  return esc(String(text || '')).replace(/\n/g, '<br>');
+}
+
 function updateSendMailBodyEditorStatusP493_() {
   const statusEl = document.getElementById('sendMailBodyEditorStatusP493');
   if (!statusEl) return;
   const edited = getSendMailContentTouchedP493_() || getSendMailDraftHasUserEditP494D_();
+  if (sendMailDefaultPreviewP501 && sendMailDefaultPreviewP501.loading) {
+    statusEl.innerHTML = '현재 상태: <b>Worker 기본 제목/본문 불러오는 중</b><br>실제 발송 엔진의 기본값을 조회하고 있습니다.';
+    return;
+  }
+  if (sendMailDefaultPreviewP501 && sendMailDefaultPreviewP501.error) {
+    statusEl.innerHTML = '현재 상태: <b style="color:#b42318;">Worker 기본값 조회 실패</b><br>' + esc(sendMailDefaultPreviewP501.error);
+    return;
+  }
   statusEl.innerHTML = edited
     ? '현재 상태: <b style="color:#1d4ed8;">수정본 적용 예정</b><br>아래 제목/본문으로 테스트 발송과 고객 발송이 진행됩니다.'
-    : '현재 상태: <b>기본 자동 문구 사용</b><br>제목/본문은 현재 선택 고객과 선택 자료 기준으로 자동 생성된 기본값입니다.';
+    : '현재 상태: <b>기본 자동 문구 사용</b><br>제목/본문은 Worker 코드의 실제 기본값입니다.';
+}
+
+function buildSendMailPreviewPayloadP501_(model) {
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  const keys = normalizePortalSendSelectedKeysP478_(model.keys || sendSelectedFileKeysV50 || [], 'mailPreviewPayload');
+  return {
+    rowNo: sendSelectedDetail && sendSelectedDetail.rowNo || sendSelectedRowNoV50,
+    customerNo: normalizeCustomerNoForKey_(sendSelectedDetail && sendSelectedDetail.customerNo || sendSelectedCustomerNoV50),
+    selectedKeys: keys.slice(),
+    filePreset: sendSelectedFilePresetP501 || '',
+    workspaceId: (getActiveSendWorkspaceP211_() || {}).id || ''
+  };
+}
+
+function requestSendMailDefaultPreviewFromWorkerP501_(model, options) {
+  options = options || {};
+  model = model || buildCurrentSendPreviewModel_('PREVIEW') || {};
+  const ownerKey = getSendMailDefaultPreviewOwnerKeyP501_(model);
+  if (!ownerKey) return;
+  if (!options.force && isSendMailDefaultPreviewCurrentP501_(model)) {
+    if (options.applyToModal) {
+      sendMailSubjectDraftP493 = sendMailDefaultPreviewP501.subject || '';
+      sendMailBodyDraftP493 = sendMailDefaultPreviewP501.bodyText || stripPortalEditableHtmlForTextP501_(sendMailDefaultPreviewP501.bodyHtml || '');
+      sendMailBodyHtmlDraftP501 = sendMailDefaultPreviewP501.bodyHtml || getSendMailBodyHtmlFromTextP501_(sendMailBodyDraftP493);
+      setSendMailBodyEditorInputsP501_(sendMailSubjectDraftP493, sendMailBodyHtmlDraftP501);
+      const subjectEl0 = document.getElementById('sendMailSubjectModalInputP493');
+      const bodyEl0 = document.getElementById('sendMailBodyModalInputP493');
+      if (subjectEl0) subjectEl0.disabled = false;
+      if (bodyEl0) bodyEl0.contentEditable = 'true';
+    }
+    updateSendMailBodyEditorStatusP493_();
+    return;
+  }
+
+  sendMailDefaultPreviewP501 = { ownerKey: ownerKey, subject: '', bodyText: '', bodyHtml: '', loading: true, error: '' };
+  updateSendMailBodyEditorStatusP493_();
+  const subjectEl = document.getElementById('sendMailSubjectModalInputP493');
+  const bodyEl = document.getElementById('sendMailBodyModalInputP493');
+  if (options.applyToModal) {
+    if (subjectEl) {
+      subjectEl.value = 'Worker 기본값 불러오는 중...';
+      subjectEl.disabled = true;
+    }
+    if (bodyEl) {
+      bodyEl.innerHTML = '<div style="color:#667085;font-weight:700;">Worker 기본 본문을 불러오는 중입니다...</div>';
+      bodyEl.contentEditable = 'false';
+    }
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      const currentModel = buildCurrentSendPreviewModel_('PREVIEW');
+      const currentOwnerKey = getSendMailDefaultPreviewOwnerKeyP501_(currentModel);
+      if (currentOwnerKey !== ownerKey) return;
+      const data = res && res.result ? res.result : (res || {});
+      const bodyHtml = String(data.bodyHtml || '');
+      const bodyText = String(data.bodyText || '') || stripPortalEditableHtmlForTextP501_(bodyHtml);
+      sendMailDefaultPreviewP501 = {
+        ownerKey: ownerKey,
+        subject: String(data.subject || ''),
+        bodyText: bodyText,
+        bodyHtml: bodyHtml || getSendMailBodyHtmlFromTextP501_(bodyText),
+        loading: false,
+        error: ''
+      };
+      if (options.applyToModal && !getSendMailContentTouchedP493_() && !getSendMailDraftHasUserEditP494D_()) {
+        sendMailSubjectDraftP493 = sendMailDefaultPreviewP501.subject || '';
+        sendMailBodyDraftP493 = sendMailDefaultPreviewP501.bodyText || '';
+        sendMailBodyHtmlDraftP501 = sendMailDefaultPreviewP501.bodyHtml || '';
+        sendMailContentOwnerKeyP493 = ownerKey;
+        setSendMailBodyEditorInputsP501_(sendMailSubjectDraftP493, sendMailBodyHtmlDraftP501);
+        const subjectEl2 = document.getElementById('sendMailSubjectModalInputP493');
+        const bodyEl2 = document.getElementById('sendMailBodyModalInputP493');
+        if (subjectEl2) subjectEl2.disabled = false;
+        if (bodyEl2) bodyEl2.contentEditable = 'true';
+        const ws = getActiveSendWorkspaceP211_ && getActiveSendWorkspaceP211_();
+        if (ws) captureSendGlobalsToWorkspaceP211_(ws);
+      }
+      updateSendMailBodyEditorStatusP493_();
+    })
+    .withFailureHandler(function(err) {
+      const msg = err && err.message ? err.message : String(err || 'Worker 기본값 조회 실패');
+      sendMailDefaultPreviewP501 = { ownerKey: ownerKey, subject: '', bodyText: '', bodyHtml: '', loading: false, error: msg };
+      updateSendMailBodyEditorStatusP493_();
+      if (options.applyToModal) {
+        setSendMailBodyEditorInputsP501_('', '<div style="color:#b42318;font-weight:800;">Worker 기본값을 불러오지 못했습니다.<br>' + esc(msg) + '</div>');
+        const subjectEl3 = document.getElementById('sendMailSubjectModalInputP493');
+        const bodyEl3 = document.getElementById('sendMailBodyModalInputP493');
+        if (subjectEl3) subjectEl3.disabled = false;
+        if (bodyEl3) bodyEl3.contentEditable = 'true';
+      }
+      setSendMessage('메일 기본 본문을 Worker에서 불러오지 못했습니다: ' + msg, true);
+    })
+    .getPortalMailContentPreview(buildSendMailPreviewPayloadP501_(model));
 }
 
 function openSendMailBodyEditorP493_() {
@@ -732,21 +881,25 @@ function openSendMailBodyEditorP493_() {
     setSendMessage('메일 본문을 수정할 발송자료를 하나 이상 선택하세요.', true);
     return;
   }
+
   const model = buildCurrentSendPreviewModel_('PREVIEW');
   syncSendMailContentDraftP493_(model);
-  const subjectValue = getSendMailDraftValueP494D_('subject', sendMailSubjectDraftP493 || buildDefaultPortalMailSubjectP493_(model));
-  const bodyValue = getSendMailDraftValueP494D_('body', sendMailBodyDraftP493 || buildDefaultPortalMailBodyP493_(model));
-  sendMailSubjectDraftP493 = subjectValue || '';
-  sendMailBodyDraftP493 = bodyValue || '';
-
+  const edited = getSendMailContentTouchedP493_() || getSendMailDraftHasUserEditP494D_();
   const backdrop = ensureSendMailBodyEditorModalP493_();
-  const subjectEl = document.getElementById('sendMailSubjectModalInputP493');
-  const bodyEl = document.getElementById('sendMailBodyModalInputP493');
-  if (subjectEl) subjectEl.value = sendMailSubjectDraftP493 || '';
-  if (bodyEl) bodyEl.value = sendMailBodyDraftP493 || '';
-  updateSendMailBodyEditorStatusP493_();
   backdrop.style.display = 'flex';
-  setTimeout(function(){ if (subjectEl) subjectEl.focus(); }, 50);
+
+  if (edited) {
+    const html = sendMailBodyHtmlDraftP501 || getSendMailBodyHtmlFromTextP501_(sendMailBodyDraftP493 || '');
+    setSendMailBodyEditorInputsP501_(sendMailSubjectDraftP493 || '', html);
+    const subjectElEdited = document.getElementById('sendMailSubjectModalInputP493');
+    const bodyElEdited = document.getElementById('sendMailBodyModalInputP493');
+    if (subjectElEdited) subjectElEdited.disabled = false;
+    if (bodyElEdited) bodyElEdited.contentEditable = 'true';
+    updateSendMailBodyEditorStatusP493_();
+  } else {
+    requestSendMailDefaultPreviewFromWorkerP501_(model, { force: !isSendMailDefaultPreviewCurrentP501_(model), applyToModal: true });
+  }
+  setTimeout(function(){ const subjectEl = document.getElementById('sendMailSubjectModalInputP493'); if (subjectEl) subjectEl.focus(); }, 50);
 }
 
 function closeSendMailBodyEditorP493_() {
@@ -760,16 +913,14 @@ function resetSendMailBodyEditorToDefaultP493_() {
   const model = buildCurrentSendPreviewModel_('PREVIEW');
   try { releaseSendMailDraftContextP494D_(); } catch (err) {}
   sendMailContentTouchedP493 = { subject: false, body: false };
-  sendMailContentOwnerKeyP493 = '';
-  syncSendMailContentDraftP493_(model, { forceReset: true });
-  const subjectEl = document.getElementById('sendMailSubjectModalInputP493');
-  const bodyEl = document.getElementById('sendMailBodyModalInputP493');
-  if (subjectEl) subjectEl.value = sendMailSubjectDraftP493 || '';
-  if (bodyEl) bodyEl.value = sendMailBodyDraftP493 || '';
-  updateSendMailBodyEditorStatusP493_();
+  sendMailContentOwnerKeyP493 = getSendMailDefaultPreviewOwnerKeyP501_(model);
+  sendMailSubjectDraftP493 = '';
+  sendMailBodyDraftP493 = '';
+  sendMailBodyHtmlDraftP501 = '';
+  requestSendMailDefaultPreviewFromWorkerP501_(model, { force: true, applyToModal: true });
   captureSendGlobalsToWorkspaceP211_(ws);
   renderSendPreview();
-  setSendMessage('메일 본문 수정내용을 초기화했습니다. 기본 자동 문구를 사용합니다.', false);
+  setSendMessage('메일 본문 수정내용을 초기화했습니다. Worker 기본 자동 문구를 다시 불러옵니다.', false);
 }
 
 function applySendMailBodyEditorP493_() {
@@ -785,9 +936,9 @@ function applySendMailBodyEditorP493_() {
     return;
   }
   const subjectEl = document.getElementById('sendMailSubjectModalInputP493');
-  const bodyEl = document.getElementById('sendMailBodyModalInputP493');
   const subject = String(subjectEl && subjectEl.value || '').trim();
-  const bodyText = String(bodyEl && bodyEl.value || '').replace(/\r\n/g, '\n').trim();
+  const bodyHtml = getSendMailBodyModalHtmlP501_();
+  const bodyText = getSendMailBodyModalTextP501_();
   if (!subject) {
     setSendMessage('메일 제목이 비어 있습니다. 제목을 입력하세요.', true);
     if (subjectEl) subjectEl.focus();
@@ -795,6 +946,7 @@ function applySendMailBodyEditorP493_() {
   }
   if (!bodyText) {
     setSendMessage('메일 본문이 비어 있습니다. 본문을 입력하세요.', true);
+    const bodyEl = document.getElementById('sendMailBodyModalInputP493');
     if (bodyEl) bodyEl.focus();
     return;
   }
@@ -805,12 +957,14 @@ function applySendMailBodyEditorP493_() {
   }
   if (bodyText.length > 30000) {
     setSendMessage('메일 본문이 너무 깁니다. 30,000자 이하로 줄여 주세요.', true);
+    const bodyEl = document.getElementById('sendMailBodyModalInputP493');
     if (bodyEl) bodyEl.focus();
     return;
   }
   const model = buildCurrentSendPreviewModel_('PREVIEW');
   sendMailSubjectDraftP493 = subject;
   sendMailBodyDraftP493 = bodyText;
+  sendMailBodyHtmlDraftP501 = bodyHtml;
   sendMailContentTouchedP493 = { subject: true, body: true };
   sendMailContentOwnerKeyP493 = getSendMailContentOwnerKeyP493_(sendSelectedDetail, model.keys || sendSelectedFileKeysV50);
   try { releaseSendMailDraftContextP494D_(); } catch (err) {}
@@ -826,20 +980,34 @@ function collectPortalMailContentOverrideP493_(model) {
   const subjectEl = document.getElementById('sendMailSubjectInputP493');
   const bodyEl = document.getElementById('sendMailBodyInputP493');
   const subjectRawP494D = subjectEl ? subjectEl.value : getSendMailDraftValueP494D_('subject', sendMailSubjectDraftP493 || '');
-  const bodyRawP494D = bodyEl ? bodyEl.value : getSendMailDraftValueP494D_('body', sendMailBodyDraftP493 || '');
+  let bodyTextRawP494D = bodyEl ? bodyEl.value : getSendMailDraftValueP494D_('body', sendMailBodyDraftP493 || '');
+  let bodyHtmlRawP501 = '';
+
+  if (bodyEl) {
+    bodyHtmlRawP501 = esc(String(bodyEl.value || '')).replace(/\n/g, '<br>');
+  } else {
+    bodyHtmlRawP501 = String(sendMailBodyHtmlDraftP501 || '').trim();
+  }
+  if (!String(bodyTextRawP494D || '').trim() && bodyHtmlRawP501) {
+    bodyTextRawP494D = stripPortalEditableHtmlForTextP501_(bodyHtmlRawP501);
+  }
+
   const subject = String(subjectRawP494D || '').trim();
-  const bodyText = String(bodyRawP494D || '').replace(/\r\n/g, '\n').trim();
+  const bodyText = String(bodyTextRawP494D || '').replace(/\r\n/g, '\n').trim();
+  const bodyHtml = String(bodyHtmlRawP501 || '').trim() || getSendMailBodyHtmlFromTextP501_(bodyText);
   if (subjectEl) sendMailSubjectDraftP493 = subjectEl.value || '';
-  if (bodyEl) sendMailBodyDraftP493 = bodyEl.value || '';
+  if (bodyEl) {
+    sendMailBodyDraftP493 = bodyEl.value || '';
+    sendMailBodyHtmlDraftP501 = bodyHtml;
+  }
 
   const edited = getSendMailContentTouchedP493_() || getSendMailDraftHasUserEditP494D_();
   if (!edited) return null;
-  if (!subject) throw new Error('메일 제목이 비어 있습니다. 메일 내용 확인/수정 영역에서 제목을 입력하세요.');
-  if (!bodyText) throw new Error('메일 본문이 비어 있습니다. 메일 내용 확인/수정 영역에서 본문을 입력하세요.');
-  const bodyHtml = esc(bodyText).replace(/\n/g, '<br>');
+  if (!subject) throw new Error('메일 제목이 비어 있습니다. 메일 본문 수정 창에서 제목을 입력하세요.');
+  if (!bodyText || !stripPortalEditableHtmlForTextP501_(bodyHtml)) throw new Error('메일 본문이 비어 있습니다. 메일 본문 수정 창에서 본문을 입력하세요.');
   return {
     edited: true,
-    source: 'portalSendMailEditorP493',
+    source: 'portalSendMailEditorP501',
     subject: subject,
     bodyText: bodyText,
     bodyHtml: bodyHtml,
@@ -876,6 +1044,7 @@ function resetSendFilesAndProgressForCustomerChangeV50_() {
   clearSendReviewSessionV75_('customer changed');
   resetSendMailContentDraftP493_('customer changed');
   sendSelectedFileKeysV50 = [];
+  sendSelectedFilePresetP501 = '';
   document.querySelectorAll('.send-file-check').forEach(function(el){ el.checked = false; });
   setSendMessage('', false);
   const preview = document.getElementById('sendPreviewArea');
@@ -959,20 +1128,9 @@ function normalizePortalSendSelectedKeysP478_(keys, context) {
     out.push(key);
   });
 
-  const set = {};
-  out.forEach(function(k) { set[k] = true; });
-
-  // #최초 프리셋의 본질: 견적서+용역신청서+선임신고서+약관/안내문/법령요약+수행사정보.
-  // sampleReport/compareQuote/serviceStandardContract가 없고 최초 기본 4종이 있으면 수행사정보 누락을 복구합니다.
-  const looksLikeFirstPreset =
-    set.quote && set.serviceApplication && set.appointmentDoc && set.termsGuide &&
-    !set.sampleReport && !set.compareQuote && !set.serviceStandardContract;
-
-  if (looksLikeFirstPreset && !set.contractorInfo) {
-    out.push('contractorInfo');
-    set.contractorInfo = true;
-    try { console.warn('[P478] 최초 발송 selectedKeys에서 수행사정보 누락을 복구했습니다.', context || ''); } catch (err) {}
-  }
+  // P501: 정규화 함수는 사용자가 체크한 key만 보존합니다.
+  // 이전처럼 quote/serviceApplication/appointmentDoc/termsGuide 조합만 보고 contractorInfo를 자동 추가하면
+  // 수동 체크 중 사용자가 누르지 않은 자료가 체크되는 버그가 발생합니다.
 
   return out;
 }
@@ -992,6 +1150,7 @@ function applySendFileQuickPreset_(preset) {
     el.checked = !!keySet[el.value];
   });
   sendSelectedFileKeysV50 = selected.slice();
+  sendSelectedFilePresetP501 = String(preset || '');
   clearSendReviewSessionV75_('file quick preset changed: ' + preset);
   captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
   renderSendPreview();
@@ -1005,6 +1164,7 @@ function clearAllSendFileChecksP250_() {
     el.checked = false;
   });
   sendSelectedFileKeysV50 = [];
+  sendSelectedFilePresetP501 = '';
   clearSendReviewSessionV75_('all file checks cleared');
   captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
   renderSendPreview();
@@ -1594,6 +1754,7 @@ function buildSendWorkspaceP211_(order) {
     selectedRowNo: 0,
     selectedCustomerNo: '',
     selectedFileKeys: [],
+    selectedFilePreset: '',
     toList: [],
     ccList: [],
     defaultCcList: [],
@@ -1604,6 +1765,7 @@ function buildSendWorkspaceP211_(order) {
     reviewRequestNo: '',
     mailSubjectDraft: '',
     mailBodyDraft: '',
+    mailBodyHtmlDraft: '',
     mailContentTouched: { subject: false, body: false },
     mailContentOwnerKey: '',
     mailRunId: '',
@@ -1668,6 +1830,7 @@ function captureSendGlobalsToWorkspaceP211_(ws) {
   ws.selectedRowNo = Number(sendSelectedRowNoV50 || 0) || 0;
   ws.selectedCustomerNo = sendSelectedCustomerNoV50 || '';
   ws.selectedFileKeys = (sendSelectedFileKeysV50 || []).slice();
+  ws.selectedFilePreset = sendSelectedFilePresetP501 || '';
   ws.toList = (sendToList || []).slice();
   ws.ccList = (sendCcList || []).slice();
   ws.defaultCcList = (sendDefaultCcList || []).slice();
@@ -1678,6 +1841,7 @@ function captureSendGlobalsToWorkspaceP211_(ws) {
   ws.reviewRequestNo = sendReviewRequestNoV75 || '';
   ws.mailSubjectDraft = sendMailSubjectDraftP493 || '';
   ws.mailBodyDraft = sendMailBodyDraftP493 || '';
+  ws.mailBodyHtmlDraft = sendMailBodyHtmlDraftP501 || '';
   ws.mailContentTouched = Object.assign({ subject: false, body: false }, sendMailContentTouchedP493 || {});
   ws.mailContentOwnerKey = sendMailContentOwnerKeyP493 || '';
   ws.mailRunId = currentMailRunId || '';
@@ -1700,6 +1864,7 @@ function applySendWorkspaceToGlobalsP211_(ws) {
   sendSelectedRowNoV50 = Number(ws.selectedRowNo || 0) || 0;
   sendSelectedCustomerNoV50 = ws.selectedCustomerNo || '';
   sendSelectedFileKeysV50 = (ws.selectedFileKeys || []).slice();
+  sendSelectedFilePresetP501 = ws.selectedFilePreset || '';
   sendToList = (ws.toList || []).slice();
   sendCcList = (ws.ccList || []).slice();
   sendDefaultCcList = (ws.defaultCcList || []).slice();
@@ -1710,6 +1875,7 @@ function applySendWorkspaceToGlobalsP211_(ws) {
   sendReviewRequestNoV75 = ws.reviewRequestNo || '';
   sendMailSubjectDraftP493 = ws.mailSubjectDraft || '';
   sendMailBodyDraftP493 = ws.mailBodyDraft || '';
+  sendMailBodyHtmlDraftP501 = ws.mailBodyHtmlDraft || '';
   sendMailContentTouchedP493 = Object.assign({ subject: false, body: false }, ws.mailContentTouched || {});
   sendMailContentOwnerKeyP493 = ws.mailContentOwnerKey || '';
   currentMailRunId = ws.mailRunId || '';
@@ -1963,6 +2129,7 @@ function renderSendWorkspaceBodyP211_() {
         return;
       }
       sendSelectedFileKeysV50 = normalizePortalSendSelectedKeysP478_(syncSendSelectedFileKeysV50_(), 'manualCheckboxChange');
+      sendSelectedFilePresetP501 = '';
       restoreSendFileChecksV50_();
       captureSendGlobalsToWorkspaceP211_(getActiveSendWorkspaceP211_());
       clearSendReviewSessionV75_('file selection changed');
@@ -2038,6 +2205,7 @@ function resetSendPageAllV50() {
     sendCcList = [];
     sendDefaultCcList = [];
     sendSelectedFileKeysV50 = [];
+    sendSelectedFilePresetP501 = '';
     sendSearchState = { keyword: '', page: 0, pageSize: SEND_CUSTOMER_PAGE_SIZE };
     resetSendProgressV50_(true);
     ws.lastSearchResponse = null;
@@ -2557,7 +2725,7 @@ function preparePortalMailFilesForReviewFromUi() {
     rowNo: sendSelectedDetail.rowNo,
     customerNo: normalizeCustomerNoForKey_(sendSelectedDetail.customerNo || sendSelectedCustomerNoV50),
     selectedKeys: selectedKeys.slice(),
-    filePreset: (selectedKeys.indexOf('quote') >= 0 && selectedKeys.indexOf('serviceApplication') >= 0 && selectedKeys.indexOf('appointmentDoc') >= 0 && selectedKeys.indexOf('termsGuide') >= 0 && selectedKeys.indexOf('sampleReport') < 0 && selectedKeys.indexOf('compareQuote') < 0 && selectedKeys.indexOf('serviceStandardContract') < 0) ? 'first' : '',
+    filePreset: sendSelectedFilePresetP501 || '',
     runId: runId,
     clientRequestId: runId,
     workspaceId: ws.id
@@ -2623,7 +2791,7 @@ function sendPortalMailFromUi(mode) {
     customerNo: normalizeCustomerNoForKey_(sendSelectedDetail.customerNo || sendSelectedCustomerNoV50),
     mode: mode,
     selectedKeys: selectedKeys.slice(),
-    filePreset: (selectedKeys.indexOf('quote') >= 0 && selectedKeys.indexOf('serviceApplication') >= 0 && selectedKeys.indexOf('appointmentDoc') >= 0 && selectedKeys.indexOf('termsGuide') >= 0 && selectedKeys.indexOf('sampleReport') < 0 && selectedKeys.indexOf('compareQuote') < 0 && selectedKeys.indexOf('serviceStandardContract') < 0) ? 'first' : '',
+    filePreset: sendSelectedFilePresetP501 || '',
     testInput: testInput,
     manualTo: sendToList.slice(),
     manualCc: sendCcList.slice(),
