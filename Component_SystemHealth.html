@@ -1,15 +1,17 @@
 <script>
 let portalSystemHealthLastP208 = null;
 let portalSystemHealthLoadingP208 = false;
+let portalSystemHealthTimersP503 = {};
+let portalSystemHealthActionLogP503 = [];
 
 function renderSystemHealthPerfToolbarP460_() {
-  return '<div class="system-health-toolbar-p208">' +
+  return '<div class="system-health-toolbar-p208 system-health-perf-toolbar-p503">' +
     '<div><div class="system-health-title-p208">성능/저장 진단</div><div class="system-health-sub-p208">저장·로딩 속도 로그를 성능로그_DB 시트에 남깁니다. 입력 중인 화면을 방해하지 않습니다.</div></div>' +
     '<div class="system-health-actions-p208">' +
     '<button class="secondary" onclick="flushPortalPerfLogsP460_({silent:false})">성능로그 시트 저장</button>' +
     '<button class="secondary" onclick="copyPortalPerfLogsP460_()">브라우저 로그 복사</button>' +
     '<button class="secondary" onclick="loadPortalPerfLogSummaryP460_()">시트 로그 요약</button>' +
-    '<button class="secondary" onclick="clearPortalPerfLogsP460_()">브라우저 로그 비우기</button>' +
+    '<button class="secondary" onclick="clearPortalPerfLogsP460_(); pushSystemHealthActionP503_(\'브라우저 성능로그를 비웠습니다.\', \'ok\')">브라우저 로그 비우기</button>' +
     '</div></div>';
 }
 
@@ -17,79 +19,354 @@ function loadSystemHealthPageP208(force) {
   const area = document.getElementById('systemHealthAreaP208');
   if (!area) return;
   const p = getPortalPermission_ ? getPortalPermission_() : null;
-  if (!(p && p.canUseAdminHome)) {
-    area.innerHTML = renderSystemHealthPerfToolbarP460_() + '<div class="system-health-denied-p208">시스템 점검 상세는 관리자/서무 권한에서만 사용할 수 있습니다. 성능로그 저장/복사는 사용할 수 있습니다.</div>';
-    return;
+  const canAdmin = !!(p && p.active !== false && p.canUseAdminHome);
+  renderSystemHealthShellP503_(canAdmin);
+  renderSystemHealthBrowserCacheCardP503_();
+  loadSystemHealthPermissionCardP503_(true);
+  if (canAdmin) {
+    loadSystemHealthConnectionCardP503_(true);
+  } else {
+    setSystemHealthCardP503_('systemHealthConnectionCardP503', '권한 제한', '시스템 연결 상세 점검은 관리자/서무 권한에서만 사용할 수 있습니다.', 'warn');
+    setSystemHealthCardP503_('systemHealthFullCardP503', '권한 제한', '전체 점검은 관리자/서무 권한에서만 사용할 수 있습니다.', 'warn');
   }
-  if (portalSystemHealthLoadingP208 && !force) return;
-  portalSystemHealthLoadingP208 = true;
-  area.innerHTML = renderSystemHealthPerfToolbarP460_() + '<div class="loading">시스템 상태를 점검하는 중입니다...</div>';
+}
+
+function renderSystemHealthShellP503_(canAdmin) {
+  const area = document.getElementById('systemHealthAreaP208');
+  if (!area) return;
+  let html = '';
+  html += '<div class="system-health-main-p503">';
+  html += '<div class="system-health-hero-p503">';
+  html += '<div>';
+  html += '<div class="system-health-title-p208">시스템 점검</div>';
+  html += '<div class="system-health-sub-p208">권한·캐시·DB 연결 상태를 항목별로 확인합니다. 한 항목이 느려도 화면 전체가 멈추지 않습니다.</div>';
+  html += '</div>';
+  html += '<div class="system-health-actions-p208 system-health-hero-actions-p503">';
+  html += '<button class="primary" onclick="forcePermissionUpdateP503_()">권한 강제 업데이트</button>';
+  html += '<button class="secondary" onclick="clearCustomerSearchCachesP503_()">고객검색 캐시 초기화</button>';
+  html += '<button class="secondary" onclick="clearMyCustomerFolderCachesP503_()">나의 고객 폴더 캐시 초기화</button>';
+  html += '<button class="secondary" onclick="clearPortalScreenCachesP503_()">전체 화면 캐시 초기화</button>';
+  html += '<button class="secondary" onclick="loadSystemHealthPageP208(true)">새로고침</button>';
+  html += '</div>';
+  html += '</div>';
+
+  html += '<div id="systemHealthNoticeP503" class="system-health-notice-p503" style="display:none"></div>';
+
+  html += '<div class="system-health-grid-p503">';
+  html += renderSystemHealthCardShellP503_('systemHealthPermissionCardP503', '권한/사용자 상태', '권한_DB 반영 여부와 현재 담당자 필터를 확인합니다.');
+  html += renderSystemHealthCardShellP503_('systemHealthCacheCardP503', '브라우저 캐시', '현재 브라우저에 남아 있는 포털 캐시를 확인하고 정리합니다.');
+  html += renderSystemHealthCardShellP503_('systemHealthConnectionCardP503', '시스템 연결 상태', '마스터시트, 웹앱 DB, 주요 DB 시트 연결을 가볍게 확인합니다.');
+  html += renderSystemHealthCardShellP503_('systemHealthFullCardP503', '전체 점검', '필요할 때만 기존 전체 점검을 실행합니다.');
+  html += '</div>';
+
+  html += '<div class="system-health-quick-actions-p503">';
+  html += '<div class="system-health-quick-title-p503">관리자 조치</div>';
+  html += '<div class="system-health-quick-buttons-p503">';
+  html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="installPermissionCacheTriggerP350_()">권한 트리거 설치</button>';
+  html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="installSystemHealthTriggerP208_()">마스터 트리거 설치/재설치</button>';
+  html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="processChangeQueueP209_()">변경큐 재처리</button>';
+  html += '<button class="danger-light-p208" ' + (canAdmin ? '' : 'disabled') + ' onclick="repairBlankMasterMetaP208_()">빈 행 수정메타 정리</button>';
+  html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="runFullSystemHealthCheckP503_()">전체 점검 실행</button>';
+  html += '</div>';
+  html += '<div id="systemHealthActionLogP503" class="system-health-action-log-p503"></div>';
+  html += '</div>';
+
+  html += renderSystemHealthPerfToolbarP460_();
+  html += '</div>';
+  area.innerHTML = html;
+  renderSystemHealthActionLogP503_();
+}
+
+function renderSystemHealthCardShellP503_(id, title, sub) {
+  return '<div class="system-health-card-p503" id="' + escapeHtml_(id) + '">' +
+    '<div class="system-health-card-head-p503"><div><div class="system-health-card-title-p503">' + escapeHtml_(title) + '</div><div class="system-health-card-sub-p503">' + escapeHtml_(sub) + '</div></div><span class="system-health-pill-p503 is-info">대기</span></div>' +
+    '<div class="system-health-card-body-p503"><div class="system-health-skeleton-p503">대기 중입니다.</div></div>' +
+    '</div>';
+}
+
+function setSystemHealthCardLoadingP503_(id, message) {
+  const card = document.getElementById(id);
+  if (!card) return;
+  const pill = card.querySelector('.system-health-pill-p503');
+  const body = card.querySelector('.system-health-card-body-p503');
+  if (pill) pill.className = 'system-health-pill-p503 is-info', pill.textContent = '점검중';
+  if (body) body.innerHTML = '<div class="system-health-skeleton-p503">' + escapeHtml_(message || '확인 중입니다...') + '</div>';
+}
+
+function setSystemHealthCardP503_(id, title, bodyHtml, status) {
+  const card = document.getElementById(id);
+  if (!card) return;
+  status = String(status || 'info').toLowerCase();
+  const pill = card.querySelector('.system-health-pill-p503');
+  const body = card.querySelector('.system-health-card-body-p503');
+  if (pill) {
+    pill.className = 'system-health-pill-p503 is-' + status;
+    pill.textContent = renderSystemHealthStatusTextP208_(status);
+  }
+  if (body) {
+    body.innerHTML = '<div class="system-health-card-message-p503">' + escapeHtml_(title || '') + '</div>' + (bodyHtml || '');
+  }
+}
+
+function beginSystemHealthTimedLoadP503_(key, cardId, message) {
+  clearSystemHealthTimerP503_(key);
+  setSystemHealthCardLoadingP503_(cardId, message);
+  portalSystemHealthTimersP503[key] = setTimeout(function() {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    const pill = card.querySelector('.system-health-pill-p503');
+    const body = card.querySelector('.system-health-card-body-p503');
+    if (pill && pill.textContent === '점검중') pill.className = 'system-health-pill-p503 is-warn', pill.textContent = '지연';
+    if (body && /확인 중|점검/.test(body.textContent || '')) {
+      body.innerHTML = '<div class="system-health-timeout-p503">응답이 지연되고 있습니다. 화면은 계속 사용할 수 있습니다. 필요하면 새로고침하거나 해당 버튼만 다시 눌러 주세요.</div>';
+    }
+  }, 7000);
+}
+
+function clearSystemHealthTimerP503_(key) {
+  if (portalSystemHealthTimersP503[key]) clearTimeout(portalSystemHealthTimersP503[key]);
+  delete portalSystemHealthTimersP503[key];
+}
+
+function loadSystemHealthPermissionCardP503_(force) {
+  beginSystemHealthTimedLoadP503_('permission', 'systemHealthPermissionCardP503', '현재 권한을 확인하는 중입니다...');
   google.script.run
     .withSuccessHandler(function(res) {
-      portalSystemHealthLoadingP208 = false;
-      portalSystemHealthLastP208 = res || null;
-      renderSystemHealthP208_(res);
+      clearSystemHealthTimerP503_('permission');
+      renderSystemHealthPermissionCardP503_(res);
     })
     .withFailureHandler(function(err) {
-      portalSystemHealthLoadingP208 = false;
-      area.innerHTML = renderSystemHealthPerfToolbarP460_() + '<div class="system-health-denied-p208">점검 정보를 불러오지 못했습니다.<br>' + escapeHtml_(getSystemHealthErrorP208_(err, '시스템 점검 정보를 불러오지 못했습니다.')) + '</div>';
+      clearSystemHealthTimerP503_('permission');
+      setSystemHealthCardP503_('systemHealthPermissionCardP503', '권한 상태 확인 실패', '<pre class="system-health-detail-p208">' + escapeHtml_(getSystemHealthErrorP208_(err, '권한 상태를 확인하지 못했습니다.')) + '</pre>', 'warn');
+    })
+    .getPortalSystemHealthPermissionDebugP503();
+}
+
+function renderSystemHealthPermissionCardP503_(res) {
+  if (!res || !res.ok) {
+    setSystemHealthCardP503_('systemHealthPermissionCardP503', '권한 상태 확인 실패', '<pre class="system-health-detail-p208">' + escapeHtml_((res && res.message) || '결과 없음') + '</pre>', 'warn');
+    return;
+  }
+  const p = res.permission || {};
+  const cache = res.cache || {};
+  let html = '<div class="system-health-kv-p503">';
+  html += renderSystemHealthKvP503_('이메일', p.email || res.activeEmail || '-');
+  html += renderSystemHealthKvP503_('표시명', p.displayName || p.name || '-');
+  html += renderSystemHealthKvP503_('권한', (p.level || '-') + (p.role ? ' / ' + p.role : ''));
+  html += renderSystemHealthKvP503_('담당자 필터', p.salesRepName || p.name || '-');
+  html += renderSystemHealthKvP503_('전체고객 조회', (p.canViewAllCustomers || p.canUseAdminHome) ? '가능' : '본인 담당만');
+  html += renderSystemHealthKvP503_('권한 캐시', 'hit=' + (cache.cacheHit ? 'Y' : 'N') + ' / bust=' + (cache.cacheBust || '-'));
+  html += '</div>';
+  html += '<div class="system-health-inline-actions-p503"><button class="primary" onclick="forcePermissionUpdateP503_()">권한 강제 업데이트</button><button class="secondary" onclick="loadSystemHealthPermissionCardP503_(true)">권한 다시 확인</button></div>';
+  setSystemHealthCardP503_('systemHealthPermissionCardP503', '현재 권한 상태', html, p.active === false ? 'danger' : 'ok');
+}
+
+function loadSystemHealthConnectionCardP503_(force) {
+  beginSystemHealthTimedLoadP503_('connection', 'systemHealthConnectionCardP503', '시트 연결을 확인하는 중입니다...');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      clearSystemHealthTimerP503_('connection');
+      renderSystemHealthConnectionCardP503_(res);
+    })
+    .withFailureHandler(function(err) {
+      clearSystemHealthTimerP503_('connection');
+      setSystemHealthCardP503_('systemHealthConnectionCardP503', '연결 상태 확인 실패', '<pre class="system-health-detail-p208">' + escapeHtml_(getSystemHealthErrorP208_(err, '연결 상태를 확인하지 못했습니다.')) + '</pre>', 'warn');
+    })
+    .getPortalSystemHealthConnectionChecksP503();
+}
+
+function renderSystemHealthConnectionCardP503_(res) {
+  const checks = res && Array.isArray(res.checks) ? res.checks : [];
+  let status = 'ok';
+  if (checks.some(function(c) { return c.status === 'danger'; })) status = 'danger';
+  else if (checks.some(function(c) { return c.status === 'warn'; })) status = 'warn';
+  let html = '<div class="system-health-mini-checks-p503">';
+  checks.forEach(function(c) {
+    html += '<div class="system-health-mini-check-p503 is-' + escapeHtml_(c.status || 'info') + '"><span>' + renderSystemHealthStatusTextP208_(c.status) + '</span><div><b>' + escapeHtml_(c.name || '') + '</b><small>' + escapeHtml_(c.message || '') + '</small></div></div>';
+  });
+  if (!checks.length) html += '<div class="system-health-skeleton-p503">점검 결과가 없습니다.</div>';
+  html += '</div>';
+  html += '<div class="system-health-inline-actions-p503"><button class="secondary" onclick="loadSystemHealthConnectionCardP503_(true)">연결 다시 확인</button></div>';
+  setSystemHealthCardP503_('systemHealthConnectionCardP503', '연결 점검 결과', html, status);
+}
+
+function renderSystemHealthBrowserCacheCardP503_() {
+  const counts = getPortalBrowserCacheCountsP503_();
+  let html = '<div class="system-health-kv-p503">';
+  html += renderSystemHealthKvP503_('localStorage', counts.localTotal + '개');
+  html += renderSystemHealthKvP503_('sessionStorage', counts.sessionTotal + '개');
+  html += renderSystemHealthKvP503_('고객검색/상세 캐시', counts.customer + '개');
+  html += renderSystemHealthKvP503_('나의 고객 폴더 관련', counts.folder + '개');
+  html += '</div>';
+  html += '<div class="system-health-inline-actions-p503"><button class="secondary" onclick="clearCustomerSearchCachesP503_()">고객검색 캐시 초기화</button><button class="secondary" onclick="clearMyCustomerFolderCachesP503_()">폴더 캐시 초기화</button><button class="danger-light-p208" onclick="clearPortalScreenCachesP503_()">전체 화면 캐시 초기화</button></div>';
+  setSystemHealthCardP503_('systemHealthCacheCardP503', '브라우저 캐시 상태', html, counts.localTotal || counts.sessionTotal ? 'info' : 'ok');
+}
+
+function getPortalBrowserCacheCountsP503_() {
+  const localKeys = [];
+  const sessionKeys = [];
+  try { for (let i = 0; i < localStorage.length; i++) localKeys.push(localStorage.key(i)); } catch (err) {}
+  try { for (let i = 0; i < sessionStorage.length; i++) sessionKeys.push(sessionStorage.key(i)); } catch (err2) {}
+  const customerRe = /salesPortal\.customer|portalCustomerPage:|customerSearch|customerDetail|customerPage/i;
+  const folderRe = /myCustomerFolder|MY_CUSTOMER_FOLDER|customerFolder|salesPortal\.myCustomer/i;
+  return {
+    localTotal: localKeys.length,
+    sessionTotal: sessionKeys.length,
+    customer: localKeys.concat(sessionKeys).filter(function(k) { return customerRe.test(String(k || '')); }).length,
+    folder: localKeys.concat(sessionKeys).filter(function(k) { return folderRe.test(String(k || '')); }).length
+  };
+}
+
+function renderSystemHealthKvP503_(label, value) {
+  return '<div class="system-health-kv-row-p503"><span>' + escapeHtml_(label) + '</span><strong>' + escapeHtml_(String(value == null ? '' : value)) + '</strong></div>';
+}
+
+function forcePermissionUpdateP503_() {
+  pushSystemHealthActionP503_('권한 캐시 무효화 요청 중...', 'info');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      clearPortalPermissionClientStateP503_();
+      clearCustomerSearchCachesP503_({ silent: true });
+      clearMyCustomerFolderClientStateP503_();
+      pushSystemHealthActionP503_('권한 캐시 무효화 완료: cacheBust=' + ((res && res.cacheBust) || ''), 'ok');
+      try {
+        loadPortalCurrentPermission_({ silent: true }, function() {
+          try { applyPortalPermissionToUi_(); } catch (err) {}
+          loadSystemHealthPermissionCardP503_(true);
+          renderSystemHealthBrowserCacheCardP503_();
+          toast('권한 강제 업데이트 완료. 화면이 이상하면 Ctrl+F5 해주세요.');
+        });
+      } catch (err2) {
+        loadSystemHealthPermissionCardP503_(true);
+      }
+    })
+    .withFailureHandler(function(err) {
+      pushSystemHealthActionP503_('권한 캐시 무효화 실패: ' + getSystemHealthErrorP208_(err, '권한 캐시를 무효화하지 못했습니다.'), 'danger');
+    })
+    .clearPortalPermissionCacheFromHealthP350();
+}
+
+function clearPortalPermissionClientStateP503_() {
+  try { portalCurrentPermissionV63 = null; } catch (err) {}
+  try { portalPermissionLoadedV63 = false; } catch (err2) {}
+  try { portalPermissionLoadingV63 = false; } catch (err3) {}
+}
+
+function clearCustomerSearchCachesP503_(options) {
+  options = options || {};
+  let removed = 0;
+  try { if (typeof clearCustomerPageCachesP230_ === 'function') clearCustomerPageCachesP230_(); } catch (err) {}
+  try { if (typeof clearCustomerDetailCachesP230_ === 'function') clearCustomerDetailCachesP230_(); } catch (err2) {}
+  try {
+    Object.keys(localStorage).forEach(function(k) {
+      if (/salesPortal\.customer|customerSearch|customerDetail|customerPage/i.test(k)) {
+        localStorage.removeItem(k);
+        removed++;
+      }
+    });
+  } catch (err3) {}
+  try {
+    Object.keys(sessionStorage).forEach(function(k) {
+      if (/portalCustomerPage:|salesPortal\.customer|customerSearch|customerDetail|customerPage/i.test(k)) {
+        sessionStorage.removeItem(k);
+        removed++;
+      }
+    });
+  } catch (err4) {}
+  try { if (typeof clearFocusCustomerClientCacheP300_ === 'function') clearFocusCustomerClientCacheP300_(); } catch (err5) {}
+  renderSystemHealthBrowserCacheCardP503_();
+  if (!options.silent) {
+    pushSystemHealthActionP503_('고객검색/상세 브라우저 캐시 초기화 완료' + (removed ? ' (' + removed + '개)' : ''), 'ok');
+    toast('고객검색 캐시를 초기화했습니다.');
+  }
+}
+
+function clearMyCustomerFolderCachesP503_() {
+  clearMyCustomerFolderClientStateP503_();
+  pushSystemHealthActionP503_('나의 고객 폴더 캐시 초기화 요청 중...', 'info');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      pushSystemHealthActionP503_('나의 고객 폴더 캐시 초기화 완료', 'ok');
+      renderSystemHealthBrowserCacheCardP503_();
+      toast('나의 고객 폴더 캐시를 초기화했습니다.');
+    })
+    .withFailureHandler(function(err) {
+      pushSystemHealthActionP503_('나의 고객 폴더 서버 캐시 초기화 실패: ' + getSystemHealthErrorP208_(err, '실패'), 'warn');
+      renderSystemHealthBrowserCacheCardP503_();
+    })
+    .clearMyCustomerFolderCacheFromHealthP503();
+}
+
+function clearMyCustomerFolderClientStateP503_() {
+  try { myCustomerFolderBundleP497 = null; } catch (err) {}
+  try { myCustomerFolderItemsByFolderCacheP499 = null; } catch (err2) {}
+  try { myCustomerFolderIndexMapCacheP499 = null; } catch (err3) {}
+  try { myCustomerFolderPickerStateP499 = null; } catch (err4) {}
+  try { myCustomerFolderTransferStateP499 = null; } catch (err5) {}
+  try { myCustomerFolderSelectedRowsP500 = {}; } catch (err6) {}
+  try {
+    Object.keys(localStorage).forEach(function(k) {
+      if (/myCustomerFolder|MY_CUSTOMER_FOLDER|customerFolder|salesPortal\.myCustomer/i.test(k)) localStorage.removeItem(k);
+    });
+  } catch (err7) {}
+  try {
+    Object.keys(sessionStorage).forEach(function(k) {
+      if (/myCustomerFolder|MY_CUSTOMER_FOLDER|customerFolder|salesPortal\.myCustomer/i.test(k)) sessionStorage.removeItem(k);
+    });
+  } catch (err8) {}
+}
+
+function clearPortalScreenCachesP503_() {
+  clearCustomerSearchCachesP503_({ silent: true });
+  clearMyCustomerFolderClientStateP503_();
+  try { if (typeof clearFocusCustomerClientCacheP300_ === 'function') clearFocusCustomerClientCacheP300_(); } catch (err) {}
+  try {
+    Object.keys(sessionStorage).forEach(function(k) {
+      if (/portal|salesPortal|customer/i.test(k)) sessionStorage.removeItem(k);
+    });
+  } catch (err2) {}
+  renderSystemHealthBrowserCacheCardP503_();
+  pushSystemHealthActionP503_('전체 화면 캐시를 초기화했습니다. 필요하면 Ctrl+F5 하세요.', 'ok');
+  toast('전체 화면 캐시를 초기화했습니다.');
+}
+
+function runFullSystemHealthCheckP503_() {
+  beginSystemHealthTimedLoadP503_('full', 'systemHealthFullCardP503', '전체 점검을 실행하는 중입니다. 오래 걸리면 이 카드만 지연 표시됩니다...');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      clearSystemHealthTimerP503_('full');
+      portalSystemHealthLastP208 = res || null;
+      renderSystemHealthFullResultP503_(res);
+    })
+    .withFailureHandler(function(err) {
+      clearSystemHealthTimerP503_('full');
+      setSystemHealthCardP503_('systemHealthFullCardP503', '전체 점검 실패', '<pre class="system-health-detail-p208">' + escapeHtml_(getSystemHealthErrorP208_(err, '전체 점검 정보를 불러오지 못했습니다.')) + '</pre>', 'danger');
     })
     .getPortalSystemHealthP208();
 }
 
-function renderSystemHealthP208_(res) {
-  const area = document.getElementById('systemHealthAreaP208');
-  if (!area) return;
+function renderSystemHealthFullResultP503_(res) {
   if (!res || !res.ok) {
-    area.innerHTML = '<div class="system-health-denied-p208">점검 결과가 없습니다.</div>';
+    setSystemHealthCardP503_('systemHealthFullCardP503', '전체 점검 결과 없음', '', 'warn');
     return;
   }
   const summary = res.summary || {};
   const checks = Array.isArray(res.checks) ? res.checks : [];
-  const groups = {};
-  checks.forEach(function(c) {
-    const g = c.group || '기타';
-    if (!groups[g]) groups[g] = [];
-    groups[g].push(c);
-  });
-
-  let html = '';
-  html += renderSystemHealthPerfToolbarP460_();
-  html += '<div class="system-health-toolbar-p208">';
-  html += '<div><div class="system-health-title-p208">시스템 점검</div><div class="system-health-sub-p208">동시작업, 마스터 동기화, 검색인덱스, DB 상태를 한 번에 확인합니다.</div></div>';
-  html += '<div class="system-health-actions-p208">';
-  html += '<button class="secondary" onclick="loadSystemHealthPageP208(true)">새로고침</button>';
-  html += '<button class="secondary" onclick="installSystemHealthTriggerP208_()">마스터 트리거 설치/재설치</button>';
-  html += '<button class="secondary" onclick="installPermissionCacheTriggerP350_()">권한 트리거 설치</button>';
-  html += '<button class="secondary" onclick="clearPermissionCacheP350_()">권한 캐시 무효화</button>';
-  html += '<button class="danger-light-p208" onclick="repairBlankMasterMetaP208_()">빈 행 수정메타 정리</button>';
-  html += '<button class="secondary" onclick="processChangeQueueP209_()">변경큐 재처리</button>';
-  html += '</div></div>';
-
-  html += '<div class="system-health-summary-p208">';
+  let status = summary.danger ? 'danger' : (summary.warn ? 'warn' : 'ok');
+  let html = '<div class="system-health-summary-p208 compact-p503">';
   html += renderSystemHealthSummaryCardP208_('정상', summary.ok || 0, 'ok');
   html += renderSystemHealthSummaryCardP208_('주의', summary.warn || 0, 'warn');
   html += renderSystemHealthSummaryCardP208_('위험', summary.danger || 0, 'danger');
   html += renderSystemHealthSummaryCardP208_('정보', summary.info || 0, 'info');
   html += '</div>';
-
-  html += '<div class="system-health-meta-p208">점검시각: ' + escapeHtml_(res.checkedAt || '-') + ' · 소요 ' + escapeHtml_(String(res.elapsedMs || 0)) + 'ms</div>';
-
-  Object.keys(groups).forEach(function(group) {
-    html += '<div class="system-health-group-p208">';
-    html += '<div class="system-health-group-title-p208">' + escapeHtml_(group) + '</div>';
-    html += '<div class="system-health-checks-p208">';
-    groups[group].forEach(function(c) {
-      html += '<div class="system-health-check-p208 is-' + escapeHtml_(c.status || 'info') + '">';
-      html += '<div class="system-health-check-status-p208">' + renderSystemHealthStatusTextP208_(c.status) + '</div>';
-      html += '<div class="system-health-check-main-p208"><div class="system-health-check-name-p208">' + escapeHtml_(c.name || '') + '</div><div class="system-health-check-message-p208">' + escapeHtml_(c.message || '') + '</div>';
-      if (c.detail) html += '<pre class="system-health-detail-p208">' + escapeHtml_(String(c.detail || '')) + '</pre>';
-      html += '</div></div>';
-    });
-    html += '</div></div>';
+  html += '<div class="system-health-meta-p208 compact-p503">점검시각: ' + escapeHtml_(res.checkedAt || '-') + ' · 소요 ' + escapeHtml_(String(res.elapsedMs || 0)) + 'ms</div>';
+  html += '<div class="system-health-full-list-p503">';
+  checks.slice(0, 30).forEach(function(c) {
+    html += '<div class="system-health-mini-check-p503 is-' + escapeHtml_(c.status || 'info') + '"><span>' + renderSystemHealthStatusTextP208_(c.status) + '</span><div><b>' + escapeHtml_((c.group ? '[' + c.group + '] ' : '') + (c.name || '')) + '</b><small>' + escapeHtml_(c.message || '') + '</small></div></div>';
   });
-
-  area.innerHTML = html;
+  if (checks.length > 30) html += '<div class="system-health-more-p503">외 ' + (checks.length - 30) + '건은 기존 상세 점검 결과에 포함되어 있습니다.</div>';
+  html += '</div>';
+  setSystemHealthCardP503_('systemHealthFullCardP503', '전체 점검 완료', html, status);
 }
 
 function renderSystemHealthSummaryCardP208_(label, value, type) {
@@ -101,7 +378,41 @@ function renderSystemHealthStatusTextP208_(status) {
   if (status === 'ok') return '정상';
   if (status === 'warn') return '주의';
   if (status === 'danger') return '위험';
+  if (status === 'running') return '점검중';
   return '정보';
+}
+
+function pushSystemHealthActionP503_(message, type) {
+  portalSystemHealthActionLogP503.unshift({ message: String(message || ''), type: type || 'info', at: new Date() });
+  portalSystemHealthActionLogP503 = portalSystemHealthActionLogP503.slice(0, 8);
+  renderSystemHealthActionLogP503_();
+}
+
+function renderSystemHealthActionLogP503_() {
+  const el = document.getElementById('systemHealthActionLogP503');
+  if (!el) return;
+  if (!portalSystemHealthActionLogP503.length) {
+    el.innerHTML = '<div class="system-health-empty-log-p503">아직 실행한 조치가 없습니다.</div>';
+    return;
+  }
+  el.innerHTML = portalSystemHealthActionLogP503.map(function(item) {
+    return '<div class="system-health-action-row-p503 is-' + escapeHtml_(item.type || 'info') + '"><span>' + escapeHtml_(formatSystemHealthActionTimeP503_(item.at)) + '</span><strong>' + escapeHtml_(item.message) + '</strong></div>';
+  }).join('');
+}
+
+function formatSystemHealthActionTimeP503_(date) {
+  try {
+    const d = date instanceof Date ? date : new Date(date);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0');
+  } catch (err) { return ''; }
+}
+
+function showSystemHealthNoticeP503_(message, type) {
+  const el = document.getElementById('systemHealthNoticeP503');
+  if (!el) return;
+  el.className = 'system-health-notice-p503 is-' + (type || 'info');
+  el.textContent = String(message || '');
+  el.style.display = message ? '' : 'none';
 }
 
 function repairBlankMasterMetaP208_() {
@@ -111,11 +422,13 @@ function repairBlankMasterMetaP208_() {
   google.script.run
     .withSuccessHandler(function(res) {
       if (area) area.classList.remove('is-saving-p208');
+      pushSystemHealthActionP503_('빈 행 수정메타 정리 완료: ' + ((res && res.cleared) || 0) + '행', 'ok');
       toast('빈 행 수정메타 정리 완료: ' + ((res && res.cleared) || 0) + '행');
-      loadSystemHealthPageP208(true);
+      loadSystemHealthConnectionCardP503_(true);
     })
     .withFailureHandler(function(err) {
       if (area) area.classList.remove('is-saving-p208');
+      pushSystemHealthActionP503_('빈 행 수정메타 정리 실패: ' + getSystemHealthErrorP208_(err, '실패'), 'danger');
       toast(getSystemHealthErrorP208_(err, '빈 행 수정메타를 정리하지 못했습니다.'));
     })
     .repairPortalBlankMasterMetaP208();
@@ -125,10 +438,12 @@ function installSystemHealthTriggerP208_() {
   if (!confirm('마스터시트 수정 감지 트리거를 설치/재설치합니다. 실행할까요?')) return;
   google.script.run
     .withSuccessHandler(function(res) {
+      pushSystemHealthActionP503_((res && res.message) || '마스터 트리거를 설치했습니다.', 'ok');
       toast((res && res.message) || '마스터 트리거를 설치했습니다.');
-      loadSystemHealthPageP208(true);
+      loadSystemHealthConnectionCardP503_(true);
     })
     .withFailureHandler(function(err) {
+      pushSystemHealthActionP503_('마스터 트리거 설치 실패: ' + getSystemHealthErrorP208_(err, '실패'), 'danger');
       toast(getSystemHealthErrorP208_(err, '마스터 트리거를 설치하지 못했습니다.'));
     })
     .installPortalMasterSyncTriggerFromHealthP208();
@@ -142,11 +457,13 @@ function processChangeQueueP209_() {
     .withSuccessHandler(function(res) {
       if (area) area.classList.remove('is-saving-p208');
       const msg = '변경큐 재처리 완료: 성공 ' + ((res && res.success) || 0) + '건, 오류 ' + ((res && res.failed) || 0) + '건, 건너뜀 ' + ((res && res.skipped) || 0) + '건';
+      pushSystemHealthActionP503_(msg, 'ok');
       toast(msg);
-      loadSystemHealthPageP208(true);
+      loadSystemHealthConnectionCardP503_(true);
     })
     .withFailureHandler(function(err) {
       if (area) area.classList.remove('is-saving-p208');
+      pushSystemHealthActionP503_('변경큐 재처리 실패: ' + getSystemHealthErrorP208_(err, '실패'), 'danger');
       toast(getSystemHealthErrorP208_(err, '변경큐를 재처리하지 못했습니다.'));
     })
     .processPortalChangeQueueFromHealthP209();
@@ -156,26 +473,19 @@ function installPermissionCacheTriggerP350_() {
   if (!confirm('권한_DB 수정 시 권한 캐시를 자동 무효화하는 트리거를 설치/재설치합니다. 실행할까요?')) return;
   google.script.run
     .withSuccessHandler(function(res) {
+      pushSystemHealthActionP503_((res && res.message) || '권한 캐시 무효화 트리거를 설치했습니다.', 'ok');
       toast((res && res.message) || '권한 캐시 무효화 트리거를 설치했습니다.');
-      loadSystemHealthPageP208(true);
+      loadSystemHealthPermissionCardP503_(true);
     })
     .withFailureHandler(function(err) {
+      pushSystemHealthActionP503_('권한 트리거 설치 실패: ' + getSystemHealthErrorP208_(err, '실패'), 'danger');
       toast(getSystemHealthErrorP208_(err, '권한 트리거를 설치하지 못했습니다.'));
     })
     .installPortalPermissionCacheBusterFromHealthP350();
 }
 
 function clearPermissionCacheP350_() {
-  if (!confirm('현재 권한 캐시를 즉시 무효화합니다. 권한_DB를 수정했는데 화면에 반영되지 않을 때 사용합니다. 실행할까요?')) return;
-  google.script.run
-    .withSuccessHandler(function(res) {
-      toast('권한 캐시 무효화 완료: cacheBust=' + ((res && res.cacheBust) || ''));
-      loadSystemHealthPageP208(true);
-    })
-    .withFailureHandler(function(err) {
-      toast(getSystemHealthErrorP208_(err, '권한 캐시를 무효화하지 못했습니다.'));
-    })
-    .clearPortalPermissionCacheFromHealthP350();
+  forcePermissionUpdateP503_();
 }
 
 function getSystemHealthErrorP208_(err, fallback) {

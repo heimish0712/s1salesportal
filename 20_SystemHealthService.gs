@@ -558,3 +558,146 @@ function checkPortalTodayRowsP208_(webSs) {
   });
   return { badRows: bad };
 }
+
+/***************************************
+ * P503: 시스템 점검 화면 보수공사용 경량 API
+ * - 화면 진입 시 전체 점검을 한 번에 실행하지 않고, 카드별로 가볍게 조회합니다.
+ ***************************************/
+function getPortalSystemHealthPermissionDebugP503() {
+  const started = new Date();
+  const userInfo = getPortalSystemHealthUserP208_();
+  // 권한 디버그 카드는 시스템 점검 화면을 열 수 있는 계정만 상세 반환합니다.
+  assertPortalSystemHealthAllowedP208_(userInfo);
+
+  let session = {};
+  try {
+    if (typeof debugPortalCurrentSessionUser === 'function') session = debugPortalCurrentSessionUser() || {};
+  } catch (err) {
+    session = { ok: false, message: err && err.message ? err.message : String(err) };
+  }
+
+  let cache = {};
+  try {
+    if (typeof getPortalPermissionCacheStatus === 'function') cache = getPortalPermissionCacheStatus() || {};
+  } catch (err2) {
+    cache = { ok: false, message: err2 && err2.message ? err2.message : String(err2) };
+  }
+
+  let permission = null;
+  try {
+    const p = getPortalCurrentPermission();
+    permission = p && p.permission ? p.permission : p;
+  } catch (err3) {
+    permission = { active: false, message: err3 && err3.message ? err3.message : String(err3) };
+  }
+
+  return {
+    ok: true,
+    checkedAt: getPortalSystemNowP208_(new Date()),
+    elapsedMs: new Date().getTime() - started.getTime(),
+    activeEmail: session.activeEmail || userInfo.email || '',
+    effectiveEmail: session.effectiveEmail || '',
+    permission: permission || {},
+    cache: cache || {},
+    session: session || {}
+  };
+}
+
+function getPortalSystemHealthConnectionChecksP503() {
+  const started = new Date();
+  const userInfo = getPortalSystemHealthUserP208_();
+  assertPortalSystemHealthAllowedP208_(userInfo);
+
+  const checks = [];
+  function add(name, status, message, detail) {
+    checks.push({ name: name, status: status || 'info', message: message || '', detail: detail || '' });
+  }
+
+  let masterSs = null;
+  let webSs = null;
+
+  try {
+    masterSs = SpreadsheetApp.openById(PORTAL_CONFIG.MASTER_SPREADSHEET_ID);
+    add('마스터 스프레드시트', 'ok', '연결됨: ' + masterSs.getName(), PORTAL_CONFIG.MASTER_SPREADSHEET_ID);
+  } catch (err) {
+    add('마스터 스프레드시트', 'danger', '연결 실패: ' + getPortalSystemHealthErrorTextP503_(err), PORTAL_CONFIG.MASTER_SPREADSHEET_ID);
+  }
+
+  try {
+    webSs = getPortalSystemHealthWebDbSpreadsheetP208_();
+    add('웹앱 DB 스프레드시트', 'ok', '연결됨: ' + webSs.getName(), webSs.getId());
+  } catch (err2) {
+    add('웹앱 DB 스프레드시트', 'danger', '연결 실패: ' + getPortalSystemHealthErrorTextP503_(err2), '');
+  }
+
+  try {
+    if (masterSs) {
+      const sheet = masterSs.getSheetByName(PORTAL_CONFIG.MASTER_SHEET_NAME);
+      add('마스터시트', sheet ? 'ok' : 'danger', sheet ? ('데이터 ' + Math.max(0, sheet.getLastRow() - PORTAL_CONFIG.DATA_START_ROW + 1) + '행') : '시트 없음', PORTAL_CONFIG.MASTER_SHEET_NAME);
+    }
+  } catch (err3) {
+    add('마스터시트', 'warn', '확인 지연/실패: ' + getPortalSystemHealthErrorTextP503_(err3), '');
+  }
+
+  if (webSs) {
+    ['권한_DB', '검색인덱스_DB', '고객분류_폴더_DB', '고객분류_고객_DB', '저장큐_DB', '변경큐_DB', '성능로그_DB'].forEach(function(name) {
+      try {
+        const sheet = webSs.getSheetByName(name);
+        add(name, sheet ? 'ok' : (name === '성능로그_DB' || name === '저장큐_DB' ? 'warn' : 'danger'), sheet ? (Math.max(0, sheet.getLastRow() - 1) + '행') : '시트 없음', sheet ? ('lastCol=' + sheet.getLastColumn()) : '');
+      } catch (err4) {
+        add(name, 'warn', '확인 실패: ' + getPortalSystemHealthErrorTextP503_(err4), '');
+      }
+    });
+  }
+
+  try {
+    const version = getPortalSystemVersionInfoP208_();
+    add('검색인덱스 상태', version.customerIndexDirty === 'Y' ? 'warn' : 'ok', version.customerIndexDirty === 'Y' ? ('재생성 필요: ' + (version.customerIndexDirtyReason || '사유 미기록')) : '정상', 'version=' + (version.customerIndexVersion || '') + ', builtAt=' + (version.customerIndexBuiltAt || ''));
+  } catch (err5) {
+    add('검색인덱스 상태', 'warn', '확인 실패: ' + getPortalSystemHealthErrorTextP503_(err5), '');
+  }
+
+  return {
+    ok: true,
+    checkedAt: getPortalSystemNowP208_(new Date()),
+    elapsedMs: new Date().getTime() - started.getTime(),
+    checks: checks
+  };
+}
+
+function clearMyCustomerFolderCacheFromHealthP503() {
+  const userInfo = getPortalSystemHealthUserP208_();
+  assertPortalSystemHealthAllowedP208_(userInfo);
+
+  const cleared = [];
+  let permission = null;
+  try {
+    const p = getPortalCurrentPermission();
+    permission = p && p.permission ? p.permission : p;
+  } catch (err) {}
+
+  const emailKey = String((permission && permission.email) || userInfo.email || '').trim().toLowerCase();
+  try {
+    if (typeof invalidateMyCustomerFolderCacheP497_ === 'function' && emailKey) {
+      invalidateMyCustomerFolderCacheP497_(emailKey);
+      cleared.push(emailKey);
+    }
+  } catch (err2) {}
+
+  try {
+    if (typeof invalidateMyCustomerFolderCacheP497_ === 'function' && typeof PORTAL_MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500 !== 'undefined') {
+      invalidateMyCustomerFolderCacheP497_(PORTAL_MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500);
+      cleared.push(PORTAL_MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500);
+    }
+  } catch (err3) {}
+
+  return {
+    ok: true,
+    cleared: cleared,
+    message: '나의 고객 폴더 서버 캐시를 초기화했습니다.'
+  };
+}
+
+function getPortalSystemHealthErrorTextP503_(err) {
+  return String(err && err.message ? err.message : err || '').replace(/Exception:|ScriptError/gi, '').trim() || '알 수 없는 오류';
+}
