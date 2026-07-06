@@ -37,6 +37,7 @@ const PORTAL_SAVE_QUEUE_P473 = {
   },
   MAX_JOBS_PER_RUN: 5,
   STALE_RUNNING_MINUTES: 3,
+  MAX_CONFLICT_REBASE_ATTEMPTS: 3,
   TRIGGER_HANDLER: 'processSaveQueueP473'
 };
 
@@ -325,7 +326,9 @@ function processSaveQueueP473(options) {
         const ageMin = (now.getTime() - runningAt.getTime()) / 60000;
         if (ageMin >= PORTAL_SAVE_QUEUE_P473.STALE_RUNNING_MINUTES) status = PORTAL_SAVE_QUEUE_P473.STATUS.RETRY;
       }
-      if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY].indexOf(status) < 0) continue;
+      const previousAttemptsP513 = Number(obj['시도횟수'] || 0) || 0;
+      const conflictRebaseEligibleP513 = status === PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT && previousAttemptsP513 < (PORTAL_SAVE_QUEUE_P473.MAX_CONFLICT_REBASE_ATTEMPTS || 3);
+      if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY].indexOf(status) < 0 && !conflictRebaseEligibleP513) continue;
 
       processed++;
       if (idx['상태']) sheet.getRange(rowNo, idx['상태']).setValue(PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING);
@@ -345,9 +348,11 @@ function processSaveQueueP473(options) {
         if (idx['적용일시']) sheet.getRange(rowNo, idx['적용일시']).setValue(new Date());
         done++;
       } catch (err) {
-        const nextStatus = isPortalServerStaleErrorP473_(err)
+        const staleP513 = isPortalServerStaleErrorP473_(err);
+        const transientP513 = !staleP513 && isPortalServerTransientWriteErrorP473_(err);
+        const nextStatus = staleP513
           ? PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT
-          : (isPortalServerTransientWriteErrorP473_(err) ? PORTAL_SAVE_QUEUE_P473.STATUS.RETRY : PORTAL_SAVE_QUEUE_P473.STATUS.FAIL);
+          : (transientP513 ? PORTAL_SAVE_QUEUE_P473.STATUS.RETRY : PORTAL_SAVE_QUEUE_P473.STATUS.FAIL);
         if (idx['상태']) sheet.getRange(rowNo, idx['상태']).setValue(nextStatus);
         if (idx['수정일시']) sheet.getRange(rowNo, idx['수정일시']).setValue(new Date());
         if (idx['시도횟수']) sheet.getRange(rowNo, idx['시도횟수']).setValue(attempt);
@@ -473,16 +478,23 @@ function flushCustomerPendingOpsP473(customerNo, timeoutMs) {
   let last = null;
   while (new Date().getTime() - started < limit) {
     const before = getCustomerSaveQueueStatusCountsP489_(customerNo);
-    if (before.conflict || before.fail) {
-      return { ok: false, pending: before.pending, conflict: before.conflict, fail: before.fail, result: last, message: '저장 충돌/실패 작업이 남아 있어 진행할 수 없습니다.' };
+    if (before.fail) {
+      return { ok: false, pending: before.pending, conflict: before.conflict, fail: before.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.' };
     }
-    if (!before.pending) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
+    if (!before.pending && !before.conflict) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
     last = processSaveQueueP473({ maxJobs: 8, lockWaitMs: 800 });
     const after = getCustomerSaveQueueStatusCountsP489_(customerNo);
-    if (after.conflict || after.fail) {
-      return { ok: false, pending: after.pending, conflict: after.conflict, fail: after.fail, result: last, message: '저장 충돌/실패 작업이 남아 있어 진행할 수 없습니다.' };
+    if (after.fail) {
+      return { ok: false, pending: after.pending, conflict: after.conflict, fail: after.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.' };
     }
-    if (!after.pending) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
+    if (!after.pending && !after.conflict) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
+    if (after.conflict && !after.pending) {
+      if (last && Number(last.processed || 0) > 0) {
+        Utilities.sleep(300);
+        continue;
+      }
+      return { ok: false, pending: 0, conflict: after.conflict, fail: 0, result: last, message: '자동 재기준 저장으로 해결되지 않은 충돌이 남아 있습니다.' };
+    }
     Utilities.sleep(300);
   }
   const finalCounts = getCustomerSaveQueueStatusCountsP489_(customerNo);

@@ -1700,6 +1700,81 @@ function getPortalThinSaveDetailDefMapP462_() {
   return map;
 }
 
+
+// P513: 저장 충돌 자동 rebase/merge 정책 --------------------------------------
+// 목적: 화면의 base/expected 값이 오래되었더라도 사용자가 명시적으로 저장한 최신 입력값은
+//       가능한 한 마스터 최신값 위에 재기준 적용합니다. 진짜 충돌만 사용자 확인으로 보냅니다.
+function normalizePortalMemoTextForMergeP513_(value) {
+  return String(value == null ? '' : value).replace(/\r\n?/g, '\n');
+}
+
+function normalizePortalMemoTokenP513_(value) {
+  return normalizePortalMemoTextForMergeP513_(value).replace(/[ \t]+$/gm, '').trim();
+}
+
+function concatPortalMemoAppendP513_(currentMemo, appendText) {
+  currentMemo = normalizePortalMemoTextForMergeP513_(currentMemo);
+  appendText = normalizePortalMemoTextForMergeP513_(appendText);
+  if (!normalizePortalMemoTokenP513_(appendText)) return currentMemo;
+  if (!currentMemo) return appendText.replace(/^\n+/, '');
+  if (/^\n/.test(appendText)) return currentMemo + appendText;
+  return currentMemo + '\n' + appendText;
+}
+
+function resolvePortalMemoSaveValueP513_(currentMemo, nextMemo, expectedMemo, expectedProvided) {
+  currentMemo = normalizePortalMemoTextForMergeP513_(currentMemo);
+  nextMemo = normalizePortalMemoTextForMergeP513_(nextMemo);
+  expectedMemo = normalizePortalMemoTextForMergeP513_(expectedMemo);
+  expectedProvided = expectedProvided === true;
+
+  if (currentMemo === nextMemo) return { ok: true, memo: currentMemo, changed: false, reason: 'ALREADY_MATCHES_NEXT_P513', appendText: '' };
+  if (!expectedProvided) return { ok: true, memo: nextMemo, changed: currentMemo !== nextMemo, reason: 'NO_EXPECTED_DIRECT_P513', appendText: '' };
+  if (currentMemo === expectedMemo) return { ok: true, memo: nextMemo, changed: currentMemo !== nextMemo, reason: 'EXPECTED_MATCH_DIRECT_P513', appendText: '' };
+
+  // 현재 마스터 최신값이 내가 저장하려던 값의 앞부분이면, 최신값 뒤에 추가한 정상 append입니다.
+  if (nextMemo.indexOf(currentMemo) === 0) {
+    return { ok: true, memo: nextMemo, changed: true, reason: 'NEXT_EXTENDS_CURRENT_P513', appendText: nextMemo.slice(currentMemo.length) };
+  }
+
+  // 내가 편집 시작 당시 base 뒤에 새로 붙인 텍스트만 추출해 최신 마스터 뒤에 병합합니다.
+  if (nextMemo.indexOf(expectedMemo) === 0) {
+    const appendText = nextMemo.slice(expectedMemo.length);
+    const appendToken = normalizePortalMemoTokenP513_(appendText);
+    if (!appendToken) return { ok: true, memo: currentMemo, changed: false, reason: 'NO_APPEND_AFTER_EXPECTED_P513', appendText: '' };
+    if (normalizePortalMemoTokenP513_(currentMemo).indexOf(appendToken) >= 0) {
+      return { ok: true, memo: currentMemo, changed: false, reason: 'APPEND_ALREADY_IN_CURRENT_P513', appendText: appendText };
+    }
+    return { ok: true, memo: concatPortalMemoAppendP513_(currentMemo, appendText), changed: true, reason: 'MERGED_APPEND_ON_CURRENT_P513', appendText: appendText };
+  }
+
+  return { ok: false, memo: nextMemo, changed: false, reason: 'REAL_MEMO_CONFLICT_P513', appendText: '' };
+}
+
+function isPortalStrictConflictFieldP513_(key) {
+  key = String(key || '').trim();
+  // 사용자 입력으로 바꾸면 안 되는 식별자만 엄격 충돌 대상으로 둡니다.
+  // 현재 상세 저장 UI에서 customerNo/orderNo는 쓰기 대상이 아니지만, 안전장치로 남깁니다.
+  return key === 'customerNo' || key === 'orderNo';
+}
+
+function shouldPortalAutoRebaseDetailFieldP513_(key, payload, values) {
+  key = String(key || '').trim();
+  if (!key || isPortalStrictConflictFieldP513_(key)) return false;
+  if (key === 'memo') return false; // memo는 전용 merge 정책 사용
+  return true;
+}
+
+function makePortalRebaseInfoP513_(key, label, expectedValue, currentValue, attemptedValue) {
+  return {
+    field: String(key || ''),
+    label: String(label || key || ''),
+    expectedValue: String(expectedValue == null ? '' : expectedValue),
+    currentValue: String(currentValue == null ? '' : currentValue),
+    attemptedValue: String(attemptedValue == null ? '' : attemptedValue),
+    resolvedBy: 'AUTO_REBASE_LATEST_MASTER_P513'
+  };
+}
+
 function saveCustomerDetailThinCoreP462_(payload) {
   payload = payload || {};
   const started = new Date().getTime();
@@ -1726,6 +1801,7 @@ function saveCustomerDetailThinCoreP462_(payload) {
   const changedKeys = [];
   const changedValues = {};
   const appliedValues = {};
+  const rebaseConflictsP513 = [];
 
   keys.forEach(function(key) {
     const def = defMap[key];
@@ -1741,17 +1817,27 @@ function saveCustomerDetailThinCoreP462_(payload) {
     if (Object.prototype.hasOwnProperty.call(expected, key)) {
       const expectedText = getPortalMasterConflictCompareTextP489_(key, expected[key]);
       if (currentCompare !== expectedText && currentCompare !== nextCompare) {
-        throw makePortalFieldConflictErrorP474_({
-          rowNo: rowNo,
-          customerNo: customerNo,
-          key: key,
-          label: def.label || key,
-          currentValue: currentText,
-          expectedValue: getPortalFieldDisplayTextForResponseP489_(key, expected[key]),
-          attemptedValue: nextValue,
-          payload: payload,
-          source: 'customer.detailThin'
-        });
+        if (shouldPortalAutoRebaseDetailFieldP513_(key, payload, values)) {
+          rebaseConflictsP513.push(makePortalRebaseInfoP513_(
+            key,
+            def.label || key,
+            getPortalFieldDisplayTextForResponseP489_(key, expected[key]),
+            currentText,
+            nextValue
+          ));
+        } else {
+          throw makePortalFieldConflictErrorP474_({
+            rowNo: rowNo,
+            customerNo: customerNo,
+            key: key,
+            label: def.label || key,
+            currentValue: currentText,
+            expectedValue: getPortalFieldDisplayTextForResponseP489_(key, expected[key]),
+            attemptedValue: nextValue,
+            payload: payload,
+            source: 'customer.detailThin'
+          });
+        }
       }
     }
     appliedValues[key] = nextValue;
@@ -1831,6 +1917,9 @@ function saveCustomerDetailThinCoreP462_(payload) {
     clientOperationId: payload.clientOperationId || '',
     noSynchronousRefresh: true,
     timingInnerP462: { totalMs: new Date().getTime() - started, keyCount: keys.length, changedCount: changedKeys.length },
+    rebaseConflictsP513: rebaseConflictsP513,
+    rebasedP513: rebaseConflictsP513.length > 0,
+    resolvedByP513: rebaseConflictsP513.length ? 'AUTO_REBASE_LATEST_MASTER_P513' : '',
     message: changed.length ? ('저장 완료: ' + changed.join(', ')) : '변경된 값이 없습니다.'
   };
 }
@@ -1845,43 +1934,46 @@ function saveCustomerMemoThinCoreP462_(rowNoOrPayload, memo) {
   const sheet = target.sheet;
   const headerMap = getHeaderMap_(sheet);
   const memoCol = findMasterFieldCol_(headerMap, 'memo') || ensureMasterFieldColumn_(sheet, headerMap, 'memo');
-  const nextMemo = String(payload.memo == null ? '' : payload.memo).replace(/\r?\n/g, '\n');
+  const nextMemo = normalizePortalMemoTextForMergeP513_(payload.memo);
   const memoRangeP489 = sheet.getRange(rowNo, memoCol);
-  const currentMemo = String(memoRangeP489.getValue() == null ? '' : memoRangeP489.getValue()).replace(/\r?\n/g, '\n');
-  if (payload.expectedValues && Object.prototype.hasOwnProperty.call(payload.expectedValues, 'memo')) {
-    const expectedMemo = String(payload.expectedValues.memo == null ? '' : payload.expectedValues.memo).replace(/\r?\n/g, '\n');
-    if (currentMemo !== expectedMemo && currentMemo !== nextMemo) {
-      throw makePortalFieldConflictErrorP474_({
-        rowNo: rowNo,
-        customerNo: customerNo,
-        key: 'memo',
-        label: '마스터시트 메모',
-        currentValue: currentMemo,
-        expectedValue: expectedMemo,
-        attemptedValue: nextMemo,
-        payload: payload,
-        source: 'customer.memoThin'
-      });
-    }
+  const currentMemo = normalizePortalMemoTextForMergeP513_(memoRangeP489.getValue());
+  const expectedProvidedP513 = !!(payload.expectedValues && Object.prototype.hasOwnProperty.call(payload.expectedValues, 'memo')) || Object.prototype.hasOwnProperty.call(payload, 'expectedMemo');
+  const expectedMemoP513 = payload.expectedValues && Object.prototype.hasOwnProperty.call(payload.expectedValues, 'memo')
+    ? normalizePortalMemoTextForMergeP513_(payload.expectedValues.memo)
+    : normalizePortalMemoTextForMergeP513_(payload.expectedMemo);
+  const memoResolutionP513 = resolvePortalMemoSaveValueP513_(currentMemo, nextMemo, expectedMemoP513, expectedProvidedP513);
+  if (!memoResolutionP513.ok) {
+    throw makePortalFieldConflictErrorP474_({
+      rowNo: rowNo,
+      customerNo: customerNo,
+      key: 'memo',
+      label: '마스터시트 메모',
+      currentValue: currentMemo,
+      expectedValue: expectedMemoP513,
+      attemptedValue: nextMemo,
+      payload: payload,
+      source: 'customer.memoThin'
+    });
   }
-  if (currentMemo !== nextMemo) sheet.getRange(rowNo, memoCol).setValue(nextMemo);
+  const finalMemoP513 = normalizePortalMemoTextForMergeP513_(memoResolutionP513.memo);
+  if (currentMemo !== finalMemoP513) sheet.getRange(rowNo, memoCol).setValue(finalMemoP513);
   let masterMeta = null;
   let indexUpdate = null;
   let fieldChangeLogP474 = null;
-  if (currentMemo !== nextMemo) {
+  if (currentMemo !== finalMemoP513) {
     if (payload.skipMasterMeta !== true) masterMeta = bumpPortalCustomerMasterMetaP202_(sheet, rowNo, 'webapp-customer-memo-thin-save');
-    fieldChangeLogP474 = recordPortalFieldChangesP474_([{ key: 'memo', label: '마스터시트 메모', oldValue: currentMemo, newValue: nextMemo }], Object.assign({}, payload, { rowNo: rowNo, customerNo: customerNo, source: normalizePortalSaveSourceP474_(payload, 'customer.memoThin') }));
+    fieldChangeLogP474 = recordPortalFieldChangesP474_([{ key: 'memo', label: '마스터시트 메모', oldValue: currentMemo, newValue: finalMemoP513 }], Object.assign({}, payload, { rowNo: rowNo, customerNo: customerNo, source: normalizePortalSaveSourceP474_(payload, 'customer.memoThin') }));
     if (payload.skipIndexQueue !== true) indexUpdate = queueCustomerSearchIndexRefreshAfterSaveP400_(rowNo, customerNo, ['memo'], masterMeta, 'WEBAPP_CUSTOMER_MEMO_THIN_SAVE');
   }
   return {
     ok: true,
     rowNo: rowNo,
     customerNo: customerNo,
-    memo: nextMemo,
-    changedFields: currentMemo !== nextMemo ? ['메모'] : [],
-    changedKeys: currentMemo !== nextMemo ? ['memo'] : [],
-    values: { memo: nextMemo },
-    changedValues: currentMemo !== nextMemo ? { memo: nextMemo } : {},
+    memo: finalMemoP513,
+    changedFields: currentMemo !== finalMemoP513 ? ['메모'] : [],
+    changedKeys: currentMemo !== finalMemoP513 ? ['memo'] : [],
+    values: { memo: finalMemoP513 },
+    changedValues: currentMemo !== finalMemoP513 ? { memo: finalMemoP513 } : {},
     indexUpdate: indexUpdate,
     fieldChangeLogP474: fieldChangeLogP474,
     masterVersion: masterMeta && masterMeta.version || '',
@@ -1889,8 +1981,11 @@ function saveCustomerMemoThinCoreP462_(rowNoOrPayload, memo) {
     masterEditor: masterMeta && masterMeta.editor || '',
     savedAt: new Date().toISOString(),
     thinSaveP462: true,
-    timingInnerP462: { totalMs: new Date().getTime() - started, changed: currentMemo !== nextMemo },
-    message: '메모 저장 완료'
+    timingInnerP462: { totalMs: new Date().getTime() - started, changed: currentMemo !== finalMemoP513 },
+    memoMergeP513: { reason: memoResolutionP513.reason || '', appendTextLength: String(memoResolutionP513.appendText || '').length },
+    rebasedP513: expectedProvidedP513 && currentMemo !== expectedMemoP513 && currentMemo !== nextMemo,
+    resolvedByP513: memoResolutionP513.reason || '',
+    message: (memoResolutionP513.reason && memoResolutionP513.reason.indexOf('MERGED') >= 0) ? '메모 병합 저장 완료' : '메모 저장 완료'
   };
 }
 
@@ -2177,6 +2272,7 @@ function saveCustomerMemoFast(rowNoOrPayload, memo) {
   try {
     const res = saveCustomerMemoThinCoreP462_(payloadP462);
     res.directSaveP473 = true;
+    res.applied = true;
     putPortalCachedOperationResultP458_(payloadP462, res);
     return res;
   } catch (err) {

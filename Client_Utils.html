@@ -493,7 +493,7 @@ function loadPortalPerfLogSummaryP460_() {
 
 function isPortalTransientWriteErrorP460_(err) {
   const msg = (typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : (err && err.message ? err.message : String(err || ''));
-  return /LOCK|잠금|다른 작업 처리 중|Service invoked too many times|Exceeded maximum execution|timed out|timeout|일시|서버 사용량/i.test(String(msg || ''));
+  return /LOCK|잠금|다른 작업 처리 중|Service invoked too many times|Exceeded maximum execution|timed out|timeout|일시|잠시|서버 오류|서버 사용량/i.test(String(msg || ''));
 }
 
 function getPortalSaveRetryDelayP460_(attempt) {

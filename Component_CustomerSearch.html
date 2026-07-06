@@ -266,7 +266,62 @@ function enforceCustomerScopeOnPagedResponseP205_(response) {
   return next;
 }
 
-function renderResults(response, fromCache) {
+
+// P513: 편집 중 DOM 생존 가드 -----------------------------------------------------
+// 메모/인라인 수정 중 검색결과 전체를 갈아엎으면 textarea/input 포커스와 draft가 튑니다.
+// 데이터 응답은 last response에 보관하되, 편집 중인 DOM은 저장/blur 후 1회만 갱신합니다.
+let customerSearchPendingRenderP513 = null;
+let customerSearchPendingRenderTimerP513 = null;
+
+function isCustomerSearchEditDomProtectedP513_() {
+  try {
+    const active = document.activeElement;
+    if (active) {
+      const tag = String(active.tagName || '').toLowerCase();
+      if (active.classList && active.classList.contains('customer-expand-memo')) return true;
+      if (window.customerInlineEditActive && window.customerInlineEditActive.inputId && document.getElementById(window.customerInlineEditActive.inputId)) return true;
+      if ((tag === 'input' || tag === 'textarea' || tag === 'select') && active.closest && active.closest('#customerResultsArea, #customerResultArea, .customer-result-table')) return true;
+    }
+  } catch(e) {}
+  try {
+    const keys = Object.keys(expandedMemoDraftMapP473 || {});
+    for (let i = 0; i < keys.length; i++) {
+      const entry = expandedMemoDraftMapP473[keys[i]] || {};
+      if (entry.focused || entry.dirty || entry.pending || entry.pendingOperationId || entry.conflict) return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+function scheduleCustomerSearchPendingRenderFlushP513_() {
+  try { if (customerSearchPendingRenderTimerP513) clearTimeout(customerSearchPendingRenderTimerP513); } catch(e) {}
+  customerSearchPendingRenderTimerP513 = setTimeout(function(){
+    try { flushCustomerSearchPendingRenderP513_(); } catch(e) {}
+  }, 350);
+}
+
+function flushCustomerSearchPendingRenderP513_() {
+  if (!customerSearchPendingRenderP513) return false;
+  if (isCustomerSearchEditDomProtectedP513_()) {
+    scheduleCustomerSearchPendingRenderFlushP513_();
+    return false;
+  }
+  const pending = customerSearchPendingRenderP513;
+  customerSearchPendingRenderP513 = null;
+  renderResults(pending.response, pending.fromCache, { forceP513: true });
+  return true;
+}
+
+function renderResults(response, fromCache, options) {
+  options = options || {};
+  if (!options.forceP513 && isCustomerSearchEditDomProtectedP513_()) {
+    const deferredResP513 = enforceCustomerScopeOnPagedResponseP205_(response);
+    lastCustomerResultResponse = deferredResP513;
+    lastCustomerResultFromCache = !!fromCache;
+    customerSearchPendingRenderP513 = { response: deferredResP513, fromCache: !!fromCache, queuedAt: Date.now() };
+    scheduleCustomerSearchPendingRenderFlushP513_();
+    return;
+  }
   const p494cSnapshot = (typeof captureCustomerSearchContinuitySnapshotP494C_ === 'function') ? captureCustomerSearchContinuitySnapshotP494C_(resultArea || document) : null;
   const res = enforceCustomerScopeOnPagedResponseP205_(response);
   lastCustomerResultResponse = res;
@@ -1000,6 +1055,9 @@ function runCustomerSaveRequestOnceP468_(methodName, payload) {
 }
 
 function applyCustomerSaveDurableSuccessP468_(op, res) {
+  if (res && res.applied === false && (res.queuedFallbackP473 || res.conflictP473 || res.conflictP474)) {
+    return;
+  }
   try { applyCustomerMasterMetaFromSaveP202_(op.rowNo, op.customerNo, res); } catch(e) {}
   try {
     if (op.methodName === 'saveCustomerMemoFast') {
@@ -1121,6 +1179,7 @@ function onExpandedMemoBlurP473_(rowNo, customerNo) {
   const entry = findExpandedMemoDraftEntryP473_(rowNo, cno);
   if (entry) entry.focused = false;
   try { if (typeof syncExpandedMemoDraftGuardP494C_ === 'function') syncExpandedMemoDraftGuardP494C_(rowNo, cno, el ? (el.value || '') : (entry && entry.value || ''), { focused: false, baseLoaded: true }); } catch (err) {}
+  try { scheduleCustomerSearchPendingRenderFlushP513_(); } catch(e) {}
 }
 
 function getProtectedExpandedMemoValueP473_(rowNo, customerNo, fallbackValue) {
@@ -1146,6 +1205,7 @@ function markExpandedMemoSaveDoneP473_(rowNo, customerNo, operationId, value) {
     if (el && el.setAttribute) el.setAttribute('data-original', String(value == null ? '' : value));
     if (typeof clearExpandedMemoSyncNoticeP494C_ === 'function') clearExpandedMemoSyncNoticeP494C_(rowNo);
   } catch(e) {}
+  try { scheduleCustomerSearchPendingRenderFlushP513_(); } catch(e) {}
   return entry;
 }
 
@@ -1871,6 +1931,7 @@ function commitCustomerInlineEdit_(inputId, options) {
       // 입력 중인 다른 칸을 끊지 않기 위해 저장 성공 토스트와 전체 리스트 재렌더링은 하지 않습니다.
       // 화면/캐시는 위 optimistic patch와 아래 targeted refresh로만 조용히 반영합니다.
       refreshCustomerInlineCellDisplay_(rowNo, key);
+      try { scheduleCustomerSearchPendingRenderFlushP513_(); } catch(e) {}
       return res;
     }, function(err) {
       if (isCustomerStaleSaveErrorP202_(err)) {
@@ -3325,9 +3386,9 @@ function saveExpandedCustomerMemo(rowNo) {
           } catch(e) {}
           showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: targetCustomerNo, key: 'memo', label: '마스터시트 메모' });
         } else if (res && res.queuedFallbackP473) {
-          markExpandedMemoSaveDoneP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
+          markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
           try { persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'customer.expandedMemo', key: 'memo', lastError: 'serverQueuedP473' }); } catch(e) {}
-          toast('저장완료');
+          toast('메모 저장 대기 중입니다. 완료 전 발송은 자동으로 차단됩니다.');
         } else {
           markExpandedMemoSaveDoneP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
           toast('저장완료');

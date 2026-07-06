@@ -2445,9 +2445,9 @@ function saveDetailFields() {
   try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch(e) {}
   try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
 
-  // P492: 고객상세 모달 저장은 Optimistic Direct Save 구조입니다.
-  // 저장 버튼 클릭 즉시 완료 토스트를 보여주고, 서버 응답은 충돌/큐 fallback/실패만 후속 안내합니다.
-  try { toast('저장이 완료되었습니다.'); } catch(e) {}
+  // P513: 저장 완료는 서버 적용 완료 기준으로 안내합니다.
+  // 저장 클릭 직후에는 입력값을 화면에 유지하고 반영 중 상태만 표시합니다.
+  try { toast('저장 반영 중입니다. 완료 전 발송은 자동으로 차단됩니다.'); } catch(e) {}
 
   enqueueCustomerSaveP220_(rowNo, targetCustomerNo, function() {
     try { if (opP457 && typeof markDetailOperationQueuedP457_ === 'function') markDetailOperationQueuedP457_(opP457); } catch(e) {}
@@ -2506,7 +2506,7 @@ function saveDetailFields() {
         repaintCustomerResultsIfVisible_();
         try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
         markCustomerDetailServerSaveFinishedP430_(detailSaveGuardIdP430, res || { message: '마스터시트 저장 완료' });
-        notifyCustomerDetailSaveResultP488_(res || {}, { suppressSuccessToast: true });
+        notifyCustomerDetailSaveResultP488_(res || {}, { suppressSuccessToast: false });
         if (profilePayloadP484) saveContactProfilesAfterDetailSaveP484_(profilePayloadP484);
         if (detailModalStillActiveP456) {
           try { renderDetailSyncStatusP457_(); } catch(e) {}
