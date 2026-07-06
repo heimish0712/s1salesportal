@@ -29,57 +29,63 @@ let myCustomerFolderListRenderTimerP506 = null;
 let myCustomerFolderListComposingP506 = false;
 let myCustomerFolderAddComposingP506 = false;
 let myCustomerFolderDeferredRenderP506 = false;
+let myCustomerFolderCandidateSearchSeqP511 = 0;
 
 const MY_CUSTOMER_FOLDER_SYSTEM_MY_ALL_P500 = 'SYS_MY_ALL';
 const MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500 = '__PORTAL_ADMIN_REQUEST__';
 
-// P509: 고객폴더 한글 IME 조합 보호. 입력창 DOM을 삭제하는 전체 렌더는 조합 완료 후로 지연한다.
+// P511: 고객폴더 검색 입력창 안정화. 검색 중에는 input DOM을 살리고 결과 영역만 부분 갱신한다.
 function isMyCustomerFolderImeComposingP506_() {
   return !!(myCustomerFolderListComposingP506 || myCustomerFolderAddComposingP506);
 }
 
+function isMyCustomerFolderSearchInputActiveP511_() {
+  const el = document.activeElement;
+  const id = el && el.id ? String(el.id) : '';
+  return id === 'myCustomerFolderListKeywordP506' || id === 'myCustomerFolderAddKeywordP497';
+}
+
+function shouldDeferMyCustomerFolderFullRenderP511_() {
+  return isMyCustomerFolderImeComposingP506_() || isMyCustomerFolderSearchInputActiveP511_();
+}
+
 function renderMyCustomerFolderPageSafeDuringImeP506_(options) {
-  if (isMyCustomerFolderImeComposingP506_()) {
+  if (shouldDeferMyCustomerFolderFullRenderP511_()) {
     myCustomerFolderDeferredRenderP506 = true;
+    refreshMyCustomerFolderVisibleSearchPartsP511_();
     return;
   }
   renderMyCustomerFolderPageP497_(options || { keepFocus: true });
 }
 
-function flushMyCustomerFolderDeferredRenderP506_() {
-  if (isMyCustomerFolderImeComposingP506_()) return;
+function flushMyCustomerFolderDeferredRenderP506_(force) {
   if (!myCustomerFolderDeferredRenderP506) return;
+  if (!force && shouldDeferMyCustomerFolderFullRenderP511_()) return;
   myCustomerFolderDeferredRenderP506 = false;
   renderMyCustomerFolderPageP497_({ keepFocus: true });
 }
 
+function flushMyCustomerFolderDeferredRenderAfterBlurP511_() {
+  setTimeout(function() { flushMyCustomerFolderDeferredRenderP506_(true); }, 180);
+}
+
 function beginMyCustomerFolderListCompositionP506_() {
   myCustomerFolderListComposingP506 = true;
-  if (myCustomerFolderListRenderTimerP506) {
-    clearTimeout(myCustomerFolderListRenderTimerP506);
-    myCustomerFolderListRenderTimerP506 = null;
-  }
 }
 
 function endMyCustomerFolderListCompositionP506_(inputEl) {
   myCustomerFolderListComposingP506 = false;
   myCustomerFolderListKeywordP506 = String(inputEl && inputEl.value || '');
   clearMyCustomerFolderBulkSelectionP500_();
-  if (myCustomerFolderDeferredRenderP506) flushMyCustomerFolderDeferredRenderP506_();
-  else scheduleMyCustomerFolderListRenderP506_();
+  scheduleMyCustomerFolderListRenderP506_();
 }
 
 function beginMyCustomerFolderAddCompositionP506_() {
   myCustomerFolderAddComposingP506 = true;
-  if (myCustomerFolderSearchTimerP497) {
-    clearTimeout(myCustomerFolderSearchTimerP497);
-    myCustomerFolderSearchTimerP497 = null;
-  }
 }
 
 function endMyCustomerFolderAddCompositionP506_() {
   myCustomerFolderAddComposingP506 = false;
-  if (myCustomerFolderDeferredRenderP506) flushMyCustomerFolderDeferredRenderP506_();
   scheduleMyCustomerFolderCandidateSearchP497_();
 }
 
@@ -475,7 +481,7 @@ function renderMyCustomerFolderPageP497_(options) {
       html += '<div class="my-folder-add-panel-p497">';
       html += '<div class="my-folder-add-title-p497">고객 추가</div>';
       html += '<div class="my-folder-add-controls-p497">';
-      html += '<input id="myCustomerFolderAddKeywordP497" value="' + escAttr(keywordBefore) + '" placeholder="고객번호 또는 고객명 검색" oncompositionstart="beginMyCustomerFolderAddCompositionP506_()" oncompositionend="endMyCustomerFolderAddCompositionP506_()" oninput="scheduleMyCustomerFolderCandidateSearchP497_()" onkeydown="if(event.key===\'Enter\' && !myCustomerFolderAddComposingP506) searchMyCustomerFolderCandidatesP497_(true)">';
+      html += '<input id="myCustomerFolderAddKeywordP497" value="' + escAttr(keywordBefore) + '" placeholder="고객번호 또는 고객명 검색" oncompositionstart="beginMyCustomerFolderAddCompositionP506_()" oncompositionend="endMyCustomerFolderAddCompositionP506_()" oninput="scheduleMyCustomerFolderCandidateSearchP497_()" onkeydown="if(event.key===\'Enter\' && !myCustomerFolderAddComposingP506) searchMyCustomerFolderCandidatesP497_(true)" onblur="flushMyCustomerFolderDeferredRenderAfterBlurP511_()">';
       html += '<button type="button" onclick="searchMyCustomerFolderCandidatesP497_(true)">검색</button>';
       html += '<button type="button" class="secondary" onclick="clearMyCustomerFolderCandidatesP497_()">초기화</button>';
       html += '</div>';
@@ -891,18 +897,16 @@ function applyMyCustomerFolderListViewP506_(rows) {
 }
 
 function scheduleMyCustomerFolderListRenderP506_() {
-  if (myCustomerFolderListComposingP506) return;
   if (myCustomerFolderListRenderTimerP506) clearTimeout(myCustomerFolderListRenderTimerP506);
   myCustomerFolderListRenderTimerP506 = setTimeout(function() {
     myCustomerFolderListRenderTimerP506 = null;
-    renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
+    if (!refreshMyCustomerFolderListResultOnlyP511_()) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
   }, 120);
 }
 
 function updateMyCustomerFolderListKeywordP506_(value) {
   myCustomerFolderListKeywordP506 = String(value || '');
   clearMyCustomerFolderBulkSelectionP500_();
-  if (myCustomerFolderListComposingP506) return;
   scheduleMyCustomerFolderListRenderP506_();
 }
 
@@ -957,31 +961,60 @@ function renderMyCustomerFolderListControlsP506_(baseRows, viewRows) {
     : '<span class="my-folder-current-sort-p506 muted">헤더 클릭 정렬 가능</span>';
   return '<div class="my-folder-list-filter-p506">' +
     '<div class="my-folder-list-filter-row-p506">' +
-      '<input id="myCustomerFolderListKeywordP506" value="' + escAttr(myCustomerFolderListKeywordP506) + '" placeholder="폴더 내 검색: 고객번호, 회사명, 메모 등" oncompositionstart="beginMyCustomerFolderListCompositionP506_()" oncompositionend="endMyCustomerFolderListCompositionP506_(this)" oninput="updateMyCustomerFolderListKeywordP506_(this.value)">' +
+      '<input id="myCustomerFolderListKeywordP506" value="' + escAttr(myCustomerFolderListKeywordP506) + '" placeholder="폴더 내 검색: 고객번호, 회사명, 메모 등" oncompositionstart="beginMyCustomerFolderListCompositionP506_()" oncompositionend="endMyCustomerFolderListCompositionP506_(this)" oninput="updateMyCustomerFolderListKeywordP506_(this.value)" onblur="flushMyCustomerFolderDeferredRenderAfterBlurP511_()">' +
       '<select onchange="updateMyCustomerFolderListFilterP506_(\'status\', this.value)">' + opts(statuses, myCustomerFolderListStatusFilterP506, '진행현황 전체') + '</select>' +
       '<select onchange="updateMyCustomerFolderListFilterP506_(\'salesRep\', this.value)">' + opts(reps, myCustomerFolderListSalesRepFilterP506, '영업담당자 전체') + '</select>' +
       '<select onchange="updateMyCustomerFolderListFilterP506_(\'vendor\', this.value)">' + opts(vendors, myCustomerFolderListVendorFilterP506, '수행사 전체') + '</select>' +
       '<button type="button" class="secondary" onclick="resetMyCustomerFolderListViewP506_()">정렬/필터 초기화</button>' +
     '</div>' +
-    '<div class="my-folder-list-filter-meta-p506"><span>표시 ' + esc(String((viewRows || []).length)) + '건 / 전체 ' + esc(String((baseRows || []).length)) + '건</span>' + sort + '</div>' +
+    '<div class="my-folder-list-filter-meta-p506"><span id="myCustomerFolderListMetaCountP511">표시 ' + esc(String((viewRows || []).length)) + '건 / 전체 ' + esc(String((baseRows || []).length)) + '건</span>' + sort + '</div>' +
   '</div>';
 }
 
 function renderMyCustomerFolderCustomerListP497_(folderId) {
   const baseRows = getMyCustomerFolderDisplayRowsP497_(folderId);
   const rows = applyMyCustomerFolderListViewP506_(baseRows);
+  const listControls = renderMyCustomerFolderListControlsP506_(baseRows, rows);
+  return listControls + '<div id="myCustomerFolderListBodyP511">' + renderMyCustomerFolderListBodyP511_(folderId) + '</div>';
+}
+
+function refreshMyCustomerFolderVisibleSearchPartsP511_() {
+  refreshMyCustomerFolderListResultOnlyP511_();
+  refreshMyCustomerFolderCandidateAreaP511_();
+}
+
+function refreshMyCustomerFolderListResultOnlyP511_() {
+  const body = document.getElementById('myCustomerFolderListBodyP511');
+  if (!body || !myCustomerFolderSelectedIdP497) return false;
+  body.innerHTML = renderMyCustomerFolderListBodyP511_(myCustomerFolderSelectedIdP497);
+  refreshMyCustomerFolderListMetaP511_();
+  return true;
+}
+
+function refreshMyCustomerFolderListMetaP511_() {
+  const meta = document.getElementById('myCustomerFolderListMetaCountP511');
+  const folderId = myCustomerFolderSelectedIdP497;
+  if (!meta || !folderId) return;
+  const baseRows = getMyCustomerFolderDisplayRowsP497_(folderId);
+  const rows = applyMyCustomerFolderListViewP506_(baseRows);
+  meta.textContent = '표시 ' + String(rows.length) + '건 / 전체 ' + String(baseRows.length) + '건';
+}
+
+function renderMyCustomerFolderListBodyP511_(folderId) {
+  const baseRows = getMyCustomerFolderDisplayRowsP497_(folderId);
+  const rows = applyMyCustomerFolderListViewP506_(baseRows);
   const folder = getMyCustomerFolderFolderByIdP500_(folderId);
   const folderScope = getMyCustomerFolderScopeP500_(folder);
   const indexReady = !!(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length);
   const selectedCount = getSelectedMyCustomerFolderRecordsP500_().length;
-  const listControls = renderMyCustomerFolderListControlsP506_(baseRows, rows);
+
   if (!baseRows.length) {
     const loadingIndex = folderScope === 'SYSTEM' && (isMyCustomerFolderIndexLoadingP501_() || myCustomerFolderIndexEnsureRequestedP501);
     const emptyHelp = folderScope === 'SYSTEM'
       ? (loadingIndex ? '고객검색 인덱스를 불러오는 중입니다. 잠시 후 자동 표시됩니다.' : '담당 고객이 없거나 검색인덱스를 아직 불러오지 못했습니다. 새로고침을 눌러 주세요.')
       : '위 검색창에서 고객을 찾아 추가하세요.';
     return '<div class="my-folder-list-head-p497"><div>고객 목록 <b>0</b>건</div>' + (folderScope === 'SYSTEM' ? '<span>자동 폴더</span>' : '<button type="button" class="secondary" onclick="toggleMyCustomerFolderBulkModeP500_()">일괄 이동/복사</button>') + '</div>' +
-      listControls + '<div class="my-folder-empty-p497">이 폴더에 표시할 고객이 없습니다.<br><span>' + esc(emptyHelp) + '</span></div>';
+      '<div class="my-folder-empty-p497">이 폴더에 표시할 고객이 없습니다.<br><span>' + esc(emptyHelp) + '</span></div>';
   }
 
   let html = '<div class="my-folder-list-head-p497 my-folder-list-head-p500"><div>고객 목록 <b>' + rows.length + '</b>건' + (rows.length !== baseRows.length ? ' <span class="my-folder-filtered-count-p506">/ 전체 ' + baseRows.length + '건</span>' : '') + '</div><div id="myFolderBulkToolbarP502" class="my-folder-bulk-tools-p500">';
@@ -997,7 +1030,6 @@ function renderMyCustomerFolderCustomerListP497_(folderId) {
     html += '<button type="button" class="my-folder-bulk-btn-p506" onclick="toggleMyCustomerFolderBulkModeP500_()">취소</button>';
   }
   html += '</div></div>';
-  html += listControls;
 
   if (!rows.length) {
     return html + '<div class="my-folder-empty-p497">검색/필터 조건에 맞는 고객이 없습니다.<br><span>검색어 또는 필터를 초기화해 주세요.</span></div>';
@@ -1168,8 +1200,14 @@ function getMyCustomerFolderAddKeywordP497_() {
   return String(input && input.value || '').trim();
 }
 
+function refreshMyCustomerFolderCandidateAreaP511_() {
+  const area = document.getElementById('myCustomerFolderCandidateAreaP497');
+  if (!area) return false;
+  area.innerHTML = renderMyCustomerFolderCandidateAreaP497_();
+  return true;
+}
+
 function scheduleMyCustomerFolderCandidateSearchP497_() {
-  if (myCustomerFolderAddComposingP506) return;
   if (myCustomerFolderSearchTimerP497) clearTimeout(myCustomerFolderSearchTimerP497);
   myCustomerFolderSearchTimerP497 = setTimeout(function() { searchMyCustomerFolderCandidatesP497_(false); }, 250);
 }
@@ -1178,32 +1216,38 @@ function clearMyCustomerFolderCandidatesP497_() {
   const input = document.getElementById('myCustomerFolderAddKeywordP497');
   if (input) input.value = '';
   myCustomerFolderCandidateRowsP497 = [];
-  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
+  myCustomerFolderCandidateLoadingP497 = false;
+  myCustomerFolderCandidateSearchSeqP511 += 1;
+  if (!refreshMyCustomerFolderCandidateAreaP511_()) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
 function searchMyCustomerFolderCandidatesP497_(manual) {
-  if (myCustomerFolderAddComposingP506) return;
   const keyword = getMyCustomerFolderAddKeywordP497_();
+  const seq = ++myCustomerFolderCandidateSearchSeqP511;
   if (!keyword) {
     myCustomerFolderCandidateRowsP497 = [];
-    renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
+    myCustomerFolderCandidateLoadingP497 = false;
+    if (!refreshMyCustomerFolderCandidateAreaP511_()) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
     return;
   }
   const localRows = searchMyCustomerFolderCandidatesLocalP497_(keyword, 20);
   if (localRows.length || (customerSearchIndexState && customerSearchIndexState.ready)) {
     myCustomerFolderCandidateRowsP497 = localRows;
-    renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
+    myCustomerFolderCandidateLoadingP497 = false;
+    if (!refreshMyCustomerFolderCandidateAreaP511_()) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
     return;
   }
   myCustomerFolderCandidateLoadingP497 = true;
-  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
+  if (!refreshMyCustomerFolderCandidateAreaP511_()) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
   google.script.run
     .withSuccessHandler(function(res) {
+      if (seq !== myCustomerFolderCandidateSearchSeqP511 || getMyCustomerFolderAddKeywordP497_() !== keyword) return;
       myCustomerFolderCandidateLoadingP497 = false;
       myCustomerFolderCandidateRowsP497 = res && Array.isArray(res.rows) ? res.rows : [];
-      renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
+      if (!refreshMyCustomerFolderCandidateAreaP511_()) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
     })
     .withFailureHandler(function(err) {
+      if (seq !== myCustomerFolderCandidateSearchSeqP511) return;
       myCustomerFolderCandidateLoadingP497 = false;
       const area = document.getElementById('myCustomerFolderCandidateAreaP497');
       if (area) area.innerHTML = '<div class="my-folder-candidate-empty-p497">고객 검색 실패: ' + esc(getErrorMessage_(err)) + '</div>';
