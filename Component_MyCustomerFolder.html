@@ -26,9 +26,62 @@ let myCustomerFolderListSalesRepFilterP506 = '';
 let myCustomerFolderListVendorFilterP506 = '';
 let myCustomerFolderListSortP506 = { key: '', dir: '' };
 let myCustomerFolderListRenderTimerP506 = null;
+let myCustomerFolderListComposingP506 = false;
+let myCustomerFolderAddComposingP506 = false;
+let myCustomerFolderDeferredRenderP506 = false;
 
 const MY_CUSTOMER_FOLDER_SYSTEM_MY_ALL_P500 = 'SYS_MY_ALL';
 const MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500 = '__PORTAL_ADMIN_REQUEST__';
+
+// P509: 고객폴더 한글 IME 조합 보호. 입력창 DOM을 삭제하는 전체 렌더는 조합 완료 후로 지연한다.
+function isMyCustomerFolderImeComposingP506_() {
+  return !!(myCustomerFolderListComposingP506 || myCustomerFolderAddComposingP506);
+}
+
+function renderMyCustomerFolderPageSafeDuringImeP506_(options) {
+  if (isMyCustomerFolderImeComposingP506_()) {
+    myCustomerFolderDeferredRenderP506 = true;
+    return;
+  }
+  renderMyCustomerFolderPageP497_(options || { keepFocus: true });
+}
+
+function flushMyCustomerFolderDeferredRenderP506_() {
+  if (isMyCustomerFolderImeComposingP506_()) return;
+  if (!myCustomerFolderDeferredRenderP506) return;
+  myCustomerFolderDeferredRenderP506 = false;
+  renderMyCustomerFolderPageP497_({ keepFocus: true });
+}
+
+function beginMyCustomerFolderListCompositionP506_() {
+  myCustomerFolderListComposingP506 = true;
+  if (myCustomerFolderListRenderTimerP506) {
+    clearTimeout(myCustomerFolderListRenderTimerP506);
+    myCustomerFolderListRenderTimerP506 = null;
+  }
+}
+
+function endMyCustomerFolderListCompositionP506_(inputEl) {
+  myCustomerFolderListComposingP506 = false;
+  myCustomerFolderListKeywordP506 = String(inputEl && inputEl.value || '');
+  clearMyCustomerFolderBulkSelectionP500_();
+  if (myCustomerFolderDeferredRenderP506) flushMyCustomerFolderDeferredRenderP506_();
+  else scheduleMyCustomerFolderListRenderP506_();
+}
+
+function beginMyCustomerFolderAddCompositionP506_() {
+  myCustomerFolderAddComposingP506 = true;
+  if (myCustomerFolderSearchTimerP497) {
+    clearTimeout(myCustomerFolderSearchTimerP497);
+    myCustomerFolderSearchTimerP497 = null;
+  }
+}
+
+function endMyCustomerFolderAddCompositionP506_() {
+  myCustomerFolderAddComposingP506 = false;
+  if (myCustomerFolderDeferredRenderP506) flushMyCustomerFolderDeferredRenderP506_();
+  scheduleMyCustomerFolderCandidateSearchP497_();
+}
 
 function loadMyCustomerFolderPageP497(force) {
   force = !!force;
@@ -127,13 +180,13 @@ function ensureMyCustomerFolderSearchIndexP501_(force) {
       onLoaded: function() {
         myCustomerFolderIndexEnsureRequestedP501 = false;
         invalidateMyCustomerFolderClientIndexesP499_();
-        renderMyCustomerFolderPageP497_({ keepFocus: true });
+        renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
       }
     });
     setTimeout(function() {
       if (!isMyCustomerFolderIndexLoadingP501_()) {
         myCustomerFolderIndexEnsureRequestedP501 = false;
-        renderMyCustomerFolderPageP497_({ keepFocus: true });
+        renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
       }
     }, 7000);
   } catch (err) {
@@ -167,14 +220,14 @@ function showMyCustomerFolderNoticeP501_(message, type) {
   } catch (err) {}
   try {
     const section = document.getElementById('myCustomerFolderSectionP497');
-    if (section && section.classList.contains('active')) renderMyCustomerFolderPageP497_({ keepFocus: true });
+    if (section && section.classList.contains('active')) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
   } catch (err) {}
   return false;
 }
 
 function clearMyCustomerFolderNoticeP501_() {
   myCustomerFolderNoticeP501 = null;
-  renderMyCustomerFolderPageP497_({ keepFocus: true });
+  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
 function renderMyCustomerFolderNoticeP501_() {
@@ -219,7 +272,7 @@ function startMyCustomerFolderRenderPollP497_() {
       myCustomerFolderRenderPollP497 = null;
       return;
     }
-    renderMyCustomerFolderPageP497_({ keepFocus: true });
+    renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
     if ((customerSearchIndexState && customerSearchIndexState.ready) || count >= 5) {
       clearInterval(myCustomerFolderRenderPollP497);
       myCustomerFolderRenderPollP497 = null;
@@ -422,7 +475,7 @@ function renderMyCustomerFolderPageP497_(options) {
       html += '<div class="my-folder-add-panel-p497">';
       html += '<div class="my-folder-add-title-p497">고객 추가</div>';
       html += '<div class="my-folder-add-controls-p497">';
-      html += '<input id="myCustomerFolderAddKeywordP497" value="' + escAttr(keywordBefore) + '" placeholder="고객번호 또는 고객명 검색" oninput="scheduleMyCustomerFolderCandidateSearchP497_()" onkeydown="if(event.key===\'Enter\') searchMyCustomerFolderCandidatesP497_(true)">';
+      html += '<input id="myCustomerFolderAddKeywordP497" value="' + escAttr(keywordBefore) + '" placeholder="고객번호 또는 고객명 검색" oncompositionstart="beginMyCustomerFolderAddCompositionP506_()" oncompositionend="endMyCustomerFolderAddCompositionP506_()" oninput="scheduleMyCustomerFolderCandidateSearchP497_()" onkeydown="if(event.key===\'Enter\' && !myCustomerFolderAddComposingP506) searchMyCustomerFolderCandidatesP497_(true)">';
       html += '<button type="button" onclick="searchMyCustomerFolderCandidatesP497_(true)">검색</button>';
       html += '<button type="button" class="secondary" onclick="clearMyCustomerFolderCandidatesP497_()">초기화</button>';
       html += '</div>';
@@ -510,7 +563,7 @@ function toggleMyCustomerFolderTreeCollapseP502_(folderId) {
   if (!folderId) return;
   if (myCustomerFolderCollapsedFoldersP502[folderId]) delete myCustomerFolderCollapsedFoldersP502[folderId];
   else myCustomerFolderCollapsedFoldersP502[folderId] = true;
-  renderMyCustomerFolderPageP497_({ keepFocus: true });
+  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
 
@@ -838,16 +891,18 @@ function applyMyCustomerFolderListViewP506_(rows) {
 }
 
 function scheduleMyCustomerFolderListRenderP506_() {
+  if (myCustomerFolderListComposingP506) return;
   if (myCustomerFolderListRenderTimerP506) clearTimeout(myCustomerFolderListRenderTimerP506);
   myCustomerFolderListRenderTimerP506 = setTimeout(function() {
     myCustomerFolderListRenderTimerP506 = null;
-    renderMyCustomerFolderPageP497_({ keepFocus: true });
+    renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
   }, 120);
 }
 
 function updateMyCustomerFolderListKeywordP506_(value) {
   myCustomerFolderListKeywordP506 = String(value || '');
   clearMyCustomerFolderBulkSelectionP500_();
+  if (myCustomerFolderListComposingP506) return;
   scheduleMyCustomerFolderListRenderP506_();
 }
 
@@ -857,7 +912,7 @@ function updateMyCustomerFolderListFilterP506_(key, value) {
   if (key === 'salesRep') myCustomerFolderListSalesRepFilterP506 = value;
   if (key === 'vendor') myCustomerFolderListVendorFilterP506 = value;
   clearMyCustomerFolderBulkSelectionP500_();
-  renderMyCustomerFolderPageP497_({ keepFocus: true });
+  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
 function resetMyCustomerFolderListViewP506_() {
@@ -867,7 +922,7 @@ function resetMyCustomerFolderListViewP506_() {
   myCustomerFolderListVendorFilterP506 = '';
   myCustomerFolderListSortP506 = { key: '', dir: '' };
   clearMyCustomerFolderBulkSelectionP500_();
-  renderMyCustomerFolderPageP497_({ keepFocus: true });
+  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
 function toggleMyCustomerFolderHeaderSortP506_(key) {
@@ -877,7 +932,7 @@ function toggleMyCustomerFolderHeaderSortP506_(key) {
   if (cur.key !== key) myCustomerFolderListSortP506 = { key: key, dir: 'asc' };
   else if (cur.dir === 'asc') myCustomerFolderListSortP506 = { key: key, dir: 'desc' };
   else myCustomerFolderListSortP506 = { key: '', dir: '' };
-  renderMyCustomerFolderPageP497_({ keepFocus: true });
+  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
 function renderMyCustomerFolderSortableThP506_(col) {
@@ -902,7 +957,7 @@ function renderMyCustomerFolderListControlsP506_(baseRows, viewRows) {
     : '<span class="my-folder-current-sort-p506 muted">헤더 클릭 정렬 가능</span>';
   return '<div class="my-folder-list-filter-p506">' +
     '<div class="my-folder-list-filter-row-p506">' +
-      '<input id="myCustomerFolderListKeywordP506" value="' + escAttr(myCustomerFolderListKeywordP506) + '" placeholder="폴더 내 검색: 고객번호, 회사명, 메모 등" oninput="updateMyCustomerFolderListKeywordP506_(this.value)">' +
+      '<input id="myCustomerFolderListKeywordP506" value="' + escAttr(myCustomerFolderListKeywordP506) + '" placeholder="폴더 내 검색: 고객번호, 회사명, 메모 등" oncompositionstart="beginMyCustomerFolderListCompositionP506_()" oncompositionend="endMyCustomerFolderListCompositionP506_(this)" oninput="updateMyCustomerFolderListKeywordP506_(this.value)">' +
       '<select onchange="updateMyCustomerFolderListFilterP506_(\'status\', this.value)">' + opts(statuses, myCustomerFolderListStatusFilterP506, '진행현황 전체') + '</select>' +
       '<select onchange="updateMyCustomerFolderListFilterP506_(\'salesRep\', this.value)">' + opts(reps, myCustomerFolderListSalesRepFilterP506, '영업담당자 전체') + '</select>' +
       '<select onchange="updateMyCustomerFolderListFilterP506_(\'vendor\', this.value)">' + opts(vendors, myCustomerFolderListVendorFilterP506, '수행사 전체') + '</select>' +
@@ -1114,6 +1169,7 @@ function getMyCustomerFolderAddKeywordP497_() {
 }
 
 function scheduleMyCustomerFolderCandidateSearchP497_() {
+  if (myCustomerFolderAddComposingP506) return;
   if (myCustomerFolderSearchTimerP497) clearTimeout(myCustomerFolderSearchTimerP497);
   myCustomerFolderSearchTimerP497 = setTimeout(function() { searchMyCustomerFolderCandidatesP497_(false); }, 250);
 }
@@ -1122,29 +1178,30 @@ function clearMyCustomerFolderCandidatesP497_() {
   const input = document.getElementById('myCustomerFolderAddKeywordP497');
   if (input) input.value = '';
   myCustomerFolderCandidateRowsP497 = [];
-  renderMyCustomerFolderPageP497_({ keepFocus: true });
+  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
 function searchMyCustomerFolderCandidatesP497_(manual) {
+  if (myCustomerFolderAddComposingP506) return;
   const keyword = getMyCustomerFolderAddKeywordP497_();
   if (!keyword) {
     myCustomerFolderCandidateRowsP497 = [];
-    renderMyCustomerFolderPageP497_({ keepFocus: true });
+    renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
     return;
   }
   const localRows = searchMyCustomerFolderCandidatesLocalP497_(keyword, 20);
   if (localRows.length || (customerSearchIndexState && customerSearchIndexState.ready)) {
     myCustomerFolderCandidateRowsP497 = localRows;
-    renderMyCustomerFolderPageP497_({ keepFocus: true });
+    renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
     return;
   }
   myCustomerFolderCandidateLoadingP497 = true;
-  renderMyCustomerFolderPageP497_({ keepFocus: true });
+  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
   google.script.run
     .withSuccessHandler(function(res) {
       myCustomerFolderCandidateLoadingP497 = false;
       myCustomerFolderCandidateRowsP497 = res && Array.isArray(res.rows) ? res.rows : [];
-      renderMyCustomerFolderPageP497_({ keepFocus: true });
+      renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
     })
     .withFailureHandler(function(err) {
       myCustomerFolderCandidateLoadingP497 = false;
@@ -1237,7 +1294,7 @@ function addMyCustomerToFolderP497_(customerNo, rowNo, company) {
         applyMyCustomerFolderDeltaP499_(res);
         myCustomerFolderSelectedIdP497 = folder.folderId;
         myCustomerFolderCandidateRowsP497 = searchMyCustomerFolderCandidatesLocalP497_(getMyCustomerFolderAddKeywordP497_(), 20);
-        renderMyCustomerFolderPageP497_({ keepFocus: true });
+        renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
         const added = Number(res.added || 0) + Number(res.restored || 0);
         if (added) toast('고객을 폴더에 추가했습니다.');
         else if (res.skipped) toast('이미 같은 폴더에 있는 고객입니다.');
@@ -1293,7 +1350,7 @@ function setMyCustomerFolderBusyP497_(on, message) {
 function toggleMyCustomerFolderBulkModeP500_() {
   myCustomerFolderBulkModeP500 = !myCustomerFolderBulkModeP500;
   clearMyCustomerFolderBulkSelectionP500_();
-  renderMyCustomerFolderPageP497_({ keepFocus: true });
+  renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
 function clearMyCustomerFolderBulkSelectionP500_() {
@@ -1541,7 +1598,7 @@ function addCustomerToFolderFromPickerP499_(folderId) {
       if (res && res.ok) {
         applyMyCustomerFolderDeltaP499_(res);
         renderMyCustomerFolderPickerP499_();
-        if (document.getElementById('myCustomerFolderSectionP497') && document.getElementById('myCustomerFolderSectionP497').classList.contains('active')) renderMyCustomerFolderPageP497_({ keepFocus: true });
+        if (document.getElementById('myCustomerFolderSectionP497') && document.getElementById('myCustomerFolderSectionP497').classList.contains('active')) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
         const added = Number(res.added || 0) + Number(res.restored || 0);
         if (added) toast('나의 고객 폴더에 추가했습니다.');
         else if (res.skipped) toast('이미 해당 폴더에 추가된 고객입니다.');
@@ -1840,7 +1897,7 @@ function moveMyCustomerFolderTreeFolderP507_(folderId, newParentFolderId) {
       if (res && res.ok) {
         setMyCustomerFolderBundleP499_(res);
         myCustomerFolderSelectedIdP497 = res.movedFolderId || selectedBefore || myCustomerFolderSelectedIdP497;
-        renderMyCustomerFolderPageP497_({ keepFocus: true });
+        renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
         toast('폴더 위치를 이동했습니다.');
       }
     })
