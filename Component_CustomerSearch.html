@@ -445,7 +445,7 @@ function renderCustomerResultCell_(row, col) {
   if (col.align === 'right') className += ' customer-cell-right';
 
   const rowNo = Number(row && row.rowNo) || 0;
-  const editableKeys = { status: true, phone: true, memo: true };
+  const editableKeys = { status: true, directPhone: true, memo: true };
   const expandKeys = { customerNo: true, salesRep: true, company: true };
 
   if (editableKeys[key]) className += ' customer-inline-editable customer-inline-editable-' + key;
@@ -506,7 +506,7 @@ function handleCustomerResultCellDblClick_(event, rowNo, key, context) {
   const cell = target && target.closest ? target.closest('td[data-row-no][data-key]') : document.querySelector('td[data-row-no="' + rowNo + '"][data-key="' + key + '"]');
   if (!cell) return;
 
-  if (['status','phone','memo'].indexOf(key) >= 0) {
+  if (['status','directPhone','memo'].indexOf(key) >= 0) {
     const clickedText = !!(target && target.closest && target.closest('.customer-inline-text-trigger'));
     if (clickedText) {
       event.__customerInlineCell = cell;
@@ -659,7 +659,7 @@ function startCustomerInlineEdit_(event, rowNo, key) {
   }
   rowNo = Number(rowNo) || 0;
   key = String(key || '').trim();
-  if (!rowNo || ['status','phone','memo'].indexOf(key) < 0) return;
+  if (!rowNo || ['status','directPhone','memo'].indexOf(key) < 0) return;
 
   const cell = event && (event.__customerInlineCell || event.currentTarget) ? (event.__customerInlineCell || event.currentTarget) : document.querySelector('td[data-row-no="' + rowNo + '"][data-key="' + key + '"]');
   if (!cell) return;
@@ -726,7 +726,7 @@ function startCustomerInlineEdit_(event, rowNo, key) {
       renderCustomerMemoTagPopover_(inputId, 'customer-inline-memo-tag-popover') +
     '</div>';
   } else {
-    cell.innerHTML = '<input id="' + inputId + '" class="customer-inline-editor customer-inline-phone-editor" type="text" data-row-no="' + rowNo + '" data-key="phone" data-original="' + escAttr(currentValue) + '" value="' + escAttr(currentValue) + '">';
+    cell.innerHTML = '<input id="' + inputId + '" class="customer-inline-editor customer-inline-phone-editor" type="text" data-row-no="' + rowNo + '" data-key="' + escAttr(key) + '" data-original="' + escAttr(currentValue) + '" value="' + escAttr(currentValue) + '">';
   }
 
   const editor = document.getElementById(inputId);
@@ -772,7 +772,7 @@ function startCustomerInlineEdit_(event, rowNo, key) {
 
   setTimeout(function() {
     try { editor.focus({ preventScroll: true }); } catch (err) { editor.focus(); }
-    if (key === 'phone' && editor.select) {
+    if (key === 'directPhone' && editor.select) {
       editor.select();
     } else if (key === 'memo' && editor.setSelectionRange) {
       const endPos = String(editor.value || '').length;
@@ -808,7 +808,7 @@ function renderCustomerInlineDisplayHtml_(key, rawValue) {
 function finishCustomerInlineEditCell_(cell, rowNo, key, value) {
   if (!cell) return;
   const displayHtml = renderCustomerInlineDisplayHtml_(key, value);
-  if (['status','phone','memo'].indexOf(String(key || '')) >= 0) {
+  if (['status','directPhone','memo'].indexOf(String(key || '')) >= 0) {
     cell.innerHTML = '<span class="customer-inline-text-trigger">' + displayHtml + '</span>';
   } else {
     cell.innerHTML = displayHtml;
@@ -824,7 +824,7 @@ function finishCustomerInlineEditCell_(cell, rowNo, key, value) {
 function refreshCustomerInlineCellDisplay_(rowNo, key) {
   rowNo = Number(rowNo) || 0;
   key = String(key || '').trim();
-  if (!rowNo || ['status','phone','memo'].indexOf(key) < 0) return;
+  if (!rowNo || ['status','directPhone','memo'].indexOf(key) < 0) return;
   const cells = Array.from(document.querySelectorAll('td[data-row-no="' + rowNo + '"][data-key="' + key + '"]'));
   if (!cells.length) return;
 
@@ -1822,7 +1822,7 @@ function commitCustomerInlineEdit_(inputId, options) {
   const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
   const customerNo = rowSummary.customerNo || '';
   const cell = editor.closest('td');
-  if (!rowNo || ['status','phone','memo'].indexOf(key) < 0) {
+  if (!rowNo || ['status','directPhone','memo'].indexOf(key) < 0) {
     cancelCustomerInlineEdit_(inputId);
     return;
   }

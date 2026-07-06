@@ -389,7 +389,7 @@ function renderFocusRowP290_(row, isExpanded) {
     '<td><b>' + esc(row.company || '-') + '</b><div class="focus-sub-p290">고객번호 ' + esc(row.customerNo || '-') + ' · ' + esc(row.salesRep || '-') + '</div><div class="focus-memo-preview-p290">' + esc(row.memoPreview || '') + '</div></td>' +
     '<td><span class="status-chip">' + esc(row.status || '-') + '</span></td>' +
     '<td>' + esc(formatFocusAreaP290_(row.area)) + '<div class="focus-sub-p290">' + esc(row.grade || '-') + ' · ' + esc(row.buildingType || '-') + '</div></td>' +
-    '<td>' + esc(row.contact || '-') + '<div class="focus-sub-p290">' + esc(row.phone || row.directPhone || '-') + '</div><div class="focus-sub-p290">' + esc(row.email || '-') + '</div></td>' +
+    '<td>' + esc(row.contact || '-') + '<div class="focus-sub-p290">' + esc(row.directPhone || row.phone || '-') + '</div><div class="focus-sub-p290">' + esc(row.email || '-') + '</div></td>' +
     '<td><b>' + esc(row.nextAction || '-') + '</b></td>' +
     '<td><div class="focus-reason-tags-p290">' + reasons + deductions + '</div></td>' +
     '<td><div class="focus-row-actions-p290">' +
