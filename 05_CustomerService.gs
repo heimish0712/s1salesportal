@@ -29,7 +29,19 @@ function getCustomerSearchIndexHeadersK2_() {
     '할인율',
     '용역신청서특약사항',
     '마지막발송',
+    '발송횟수',
+    '발송상태',
     '발송일시',
+    '메모상 추측 상태값',
+    '상태값 일치 여부',
+    'TM 진행 현황',
+    'TM 컨택 내용',
+    '장기미접촉 이관 여부',
+    '연면적확인필요',
+    '주소확인필요',
+    '주소정규화상태',
+    '주소정규화비고',
+    '수주실패폴더이동상태',
     '상세Lite여부',
     '마스터원본버전',
     '최종수정자'
@@ -81,7 +93,7 @@ function isCustomerSearchIndexK2Ready_() {
   const lastRow = sheet.getLastRow();
   const width = Math.max(sheet.getLastColumn(), getCustomerSearchIndexHeadersK2_().length);
   const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
-  const required = ['연면적', '계약단위', '관리자 선임 여부', '유지점검', '성능점검', '부가세', '상세Lite여부'];
+  const required = ['연면적', '계약단위', '관리자 선임 여부', '유지점검', '성능점검', '부가세', '메모상 추측 상태값', '상태값 일치 여부', 'TM 진행 현황', '상세Lite여부'];
   const missing = required.some(function(h) { return headers.indexOf(h) < 0; });
   if (missing) return false;
   if (lastRow < 2) return false;
@@ -164,7 +176,7 @@ function filterCustomerIndexRowsByPermissionAndScopeP04_(rows, scopeMode, perm, 
   return rows.filter(function(row) { return isCustomerIndexRowOwnedByPermissionP04_(row, perm); });
 }
 
-const CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION_P360 = 'P360_MEMO5000_PREWARM';
+const CUSTOMER_SEARCH_INDEX_SCHEMA_VERSION_P360 = 'P514_FOCUS_BUCKET_FIELDS';
 
 function getCustomerSearchIndexData(permForFilter) {
   const sheet = ensureCustomerSearchIndexSheet_();
@@ -182,7 +194,7 @@ function getCustomerSearchIndexData(permForFilter) {
   // v31 FIX 유지: 인덱스가 비어 있거나 구조가 맞지 않거나 dirty이면 첫 요청자가 짧게 rebuild합니다.
   // STEP36: 메모 보관 길이/프리워밍 정책 변경 시 기존 350자 인덱스가 계속 쓰이지 않도록 스키마 버전도 봅니다.
   if (needsK2Rebuild || !rows.length || indexDirtyBefore || schemaChangedP360) {
-    const reason = schemaChangedP360 ? 'P360_SCHEMA_MEMO_PREWARM' : (indexDirtyBefore ? 'DIRTY_MASTER_PRIORITY' : (needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX'));
+    const reason = schemaChangedP360 ? 'P514_SCHEMA_FOCUS_FIELDS' : (indexDirtyBefore ? 'DIRTY_MASTER_PRIORITY' : (needsK2Rebuild ? 'K2_DETAIL_LITE' : 'EMPTY_INDEX'));
     rebuildInfo = rebuildCustomerSearchIndex({ auto: true, maxWaitMs: 700, reason: reason, skipFormat: true });
     if (rebuildInfo && rebuildInfo.ok) {
       rows = getCustomerSearchIndexRows_();
@@ -559,7 +571,19 @@ function getCustomerSearchIndexRows_() {
       discountRate: cellByIndexHeader_(row, map, '할인율'),
       specialTerms: cellByIndexHeader_(row, map, '용역신청서특약사항'),
       lastSent: cellByIndexHeader_(row, map, '마지막발송'),
+      sendCount: cellByIndexHeader_(row, map, '발송횟수'),
+      sendStatus: cellByIndexHeader_(row, map, '발송상태'),
       sentAt: cellByIndexHeader_(row, map, '발송일시'),
+      memoInferredStatus: cellByIndexHeader_(row, map, '메모상 추측 상태값'),
+      statusMatch: cellByIndexHeader_(row, map, '상태값 일치 여부'),
+      tmProgressStatus: cellByIndexHeader_(row, map, 'TM 진행 현황'),
+      tmContactContent: cellByIndexHeader_(row, map, 'TM 컨택 내용'),
+      longNoContactTransferred: cellByIndexHeader_(row, map, '장기미접촉 이관 여부'),
+      areaCheckNeeded: cellByIndexHeader_(row, map, '연면적확인필요'),
+      addressCheckNeeded: cellByIndexHeader_(row, map, '주소확인필요'),
+      addressNormalizeStatus: cellByIndexHeader_(row, map, '주소정규화상태'),
+      addressNormalizeNote: cellByIndexHeader_(row, map, '주소정규화비고'),
+      failedFolderMoveStatus: cellByIndexHeader_(row, map, '수주실패폴더이동상태'),
       indexLite: cellByIndexHeader_(row, map, '상세Lite여부'),
       masterVersion: cellByIndexHeader_(row, map, '마스터원본버전'),
       masterUpdatedAt: cellByIndexHeader_(row, map, '원본수정시각'),
@@ -902,7 +926,19 @@ function buildCustomerSearchIndexRow_(obj, now) {
   const specialTerms = getCustomerIndexObjectValueK2_(obj, 'specialTerms');
   const s1Referrer = getCustomerIndexObjectValueK2_(obj, 's1Referrer');
   const lastSent = getCustomerIndexObjectValueK2_(obj, 'lastSent');
+  const sendCount = getCustomerIndexObjectValueK2_(obj, ['발송횟수', '발송 횟수']);
+  const sendStatus = getCustomerIndexObjectValueK2_(obj, ['발송상태', '발송 상태']);
   const sentAt = getCustomerIndexObjectValueK2_(obj, 'sentAt');
+  const memoInferredStatus = getCustomerIndexObjectValueK2_(obj, ['메모상 추측 상태값', '메모상추측상태값', '메모 추측 상태값']);
+  const statusMatch = getCustomerIndexObjectValueK2_(obj, ['상태값 일치 여부', '상태값일치여부']);
+  const tmProgressStatus = getCustomerIndexObjectValueK2_(obj, 'tmProgressStatus');
+  const tmContactContent = getCustomerIndexObjectValueK2_(obj, 'tmContactContent');
+  const longNoContactTransferred = getCustomerIndexObjectValueK2_(obj, 'longNoContactTransferred');
+  const areaCheckNeeded = getCustomerIndexObjectValueK2_(obj, 'areaCheckNeeded');
+  const addressCheckNeeded = getCustomerIndexObjectValueK2_(obj, 'addressCheckNeeded');
+  const addressNormalizeStatus = getCustomerIndexObjectValueK2_(obj, ['주소정규화상태', '주소 정규화 상태']);
+  const addressNormalizeNote = getCustomerIndexObjectValueK2_(obj, ['주소정규화비고', '주소 정규화 비고']);
+  const failedFolderMoveStatus = getCustomerIndexObjectValueK2_(obj, ['수주실패폴더이동상태', '수주실패 폴더 이동 상태']);
   const masterUpdatedAt = getCustomerIndexObjectValueK2_(obj, ['수정일시', '최종수정일시', '수정 시각']);
   const masterVersion = getCustomerIndexObjectValueK2_(obj, ['수정버전', '마스터수정버전']);
   const masterEditor = getCustomerIndexObjectValueK2_(obj, ['최종수정자', '수정자']);
@@ -911,7 +947,8 @@ function buildCustomerSearchIndexRow_(obj, now) {
   // PATCH K-2: 상세 lite 필드 중 검색에 실질적으로 필요한 값은 searchText에 포함합니다.
   const searchText = shortenTextForIndex_([
     customerNo, orderNo, company, salesRep, status, customerRank, contact, phone, directPhone, email, vendor, finalQuote, address,
-    region, area, grade, buildingType, contractUnit, contractStartDate, contractEndDate, s1Referrer, appointment, maintenance, performance, vat
+    region, area, grade, buildingType, contractUnit, contractStartDate, contractEndDate, s1Referrer, appointment, maintenance, performance, vat,
+    memoInferredStatus, statusMatch, tmProgressStatus, tmContactContent, longNoContactTransferred, areaCheckNeeded, addressCheckNeeded, addressNormalizeStatus, addressNormalizeNote, sendStatus
   ].join(' ').toLowerCase(), PORTAL_CONFIG.CUSTOMER_INDEX_SEARCH_TEXT_MAX_LENGTH || 1500);
   const ts = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
   const rowMap = {
@@ -949,7 +986,19 @@ function buildCustomerSearchIndexRow_(obj, now) {
     '할인율': discountRate,
     '용역신청서특약사항': specialTerms,
     '마지막발송': lastSent,
+    '발송횟수': sendCount,
+    '발송상태': sendStatus,
     '발송일시': sentAt,
+    '메모상 추측 상태값': memoInferredStatus,
+    '상태값 일치 여부': statusMatch,
+    'TM 진행 현황': tmProgressStatus,
+    'TM 컨택 내용': shortenTextForIndex_(tmContactContent, 1200),
+    '장기미접촉 이관 여부': longNoContactTransferred,
+    '연면적확인필요': areaCheckNeeded,
+    '주소확인필요': addressCheckNeeded,
+    '주소정규화상태': addressNormalizeStatus,
+    '주소정규화비고': addressNormalizeNote,
+    '수주실패폴더이동상태': failedFolderMoveStatus,
     '상세Lite여부': 'Y',
     '마스터원본버전': masterVersion || masterUpdatedAt || ts,
     '최종수정자': masterEditor || ''
@@ -1084,7 +1133,19 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
     specialTerms: '용역신청서특약사항',
     s1Referrer: '제보자',
     lastSent: '마지막발송',
-    sentAt: '발송일시'
+    sendCount: '발송횟수',
+    sendStatus: '발송상태',
+    sentAt: '발송일시',
+    memoInferredStatus: '메모상 추측 상태값',
+    statusMatch: '상태값 일치 여부',
+    tmProgressStatus: 'TM 진행 현황',
+    tmContactContent: 'TM 컨택 내용',
+    longNoContactTransferred: '장기미접촉 이관 여부',
+    areaCheckNeeded: '연면적확인필요',
+    addressCheckNeeded: '주소확인필요',
+    addressNormalizeStatus: '주소정규화상태',
+    addressNormalizeNote: '주소정규화비고',
+    failedFolderMoveStatus: '수주실패폴더이동상태'
   };
 
   Object.keys(keyToHeader).forEach(function(key) {
@@ -1108,7 +1169,8 @@ function updateCustomerSearchIndexRowFastByPatch_(rowNo, customerNo, values) {
     getH('고객번호'), getH('발주번호'), getH('회사명'), getH('영업담당자'), getH('진행현황'), getH('고객등급'), getH('담당자'),
     getH('전화번호'), getH('직통번호'), getH('담당자 이메일'), getH('수행사'), getH('최종 견적가'), getH('주소'),
     getH('지역구분'), getH('연면적'), getH('관리등급'), getH('건물 유형'), getH('계약단위'),
-    getH('계약시작일'), getH('계약종료일'), getH('제보자'), getH('관리자 선임 여부'), getH('유지점검'), getH('성능점검'), getH('부가세')
+    getH('계약시작일'), getH('계약종료일'), getH('제보자'), getH('관리자 선임 여부'), getH('유지점검'), getH('성능점검'), getH('부가세'),
+    getH('메모상 추측 상태값'), getH('상태값 일치 여부'), getH('TM 진행 현황'), getH('TM 컨택 내용'), getH('장기미접촉 이관 여부'), getH('연면적확인필요'), getH('주소확인필요'), getH('주소정규화상태'), getH('주소정규화비고'), getH('발송상태')
   ].join(' ').toLowerCase(), PORTAL_CONFIG.CUSTOMER_INDEX_SEARCH_TEXT_MAX_LENGTH || 1500);
   setByHeader('검색문자열', searchText);
 

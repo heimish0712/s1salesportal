@@ -182,13 +182,13 @@ function renderFocusCustomerShellP290_() {
   const area = document.getElementById('focusCustomerArea');
   if (!area) return;
   area.innerHTML = '<div class="focus-toolbar-p290">' +
-    '<input id="focusKeywordP290" placeholder="회사명, 고객번호, 담당자, 메모 검색" onkeydown="if(event.key===\'Enter\') searchFocusCustomersP290()">' +
+    '<input id="focusKeywordP290" placeholder="회사명, 고객번호, 담당자, 메모, TM 검색" onkeydown="if(event.key===\'Enter\') searchFocusCustomersP290()">' +
     '<select id="focusRankFilterP290" onchange="clearFocusMetricFilterP340_(); searchFocusCustomersP290()"><option value="ALL">전체등급</option><option value="A급">A급</option><option value="B급">B급</option><option value="C급">C급</option><option value="보류">보류</option><option value="제외">제외</option></select>' +
     '<select id="focusSalesRepFilterP290" onchange="searchFocusCustomersP290()"><option value="ALL">전체담당자</option></select>' +
     '<select id="focusStatusFilterP290" onchange="searchFocusCustomersP290()"><option value="ALL">전체진행현황</option></select>' +
-    '<select id="focusSortModeP290" onchange="searchFocusCustomersP290()"><option value="priority">우선순위순</option><option value="scoreDesc">점수높은순</option><option value="areaDesc">연면적큰순</option><option value="customerNoDesc">고객번호최신순</option><option value="companyAsc">회사명순</option></select>' +
+    '<select id="focusSortModeP290" onchange="searchFocusCustomersP290()"><option value="priority">업무분류/우선순위순</option><option value="scoreDesc">점수높은순</option><option value="areaDesc">연면적큰순</option><option value="customerNoDesc">고객번호최신순</option><option value="companyAsc">회사명순</option></select>' +
     '<div class="focus-check-row-p290">' +
-      '<label class="focus-check-p290"><input id="focusPriorityOnlyP290" type="checkbox" onchange="clearFocusMetricFilterP340_(); searchFocusCustomersP290()"><span>오늘 우선만</span></label>' +
+      '<label class="focus-check-p290"><input id="focusPriorityOnlyP290" type="checkbox" onchange="clearFocusMetricFilterP340_(); searchFocusCustomersP290()"><span>오늘 처리만</span></label>' +
       '<label class="focus-check-p290"><input id="focusIncludeExcludedP290" type="checkbox" onchange="searchFocusCustomersP290()"><span>제외 포함</span></label>' +
     '</div>' +
     '<button onclick="searchFocusCustomersP290()">조회</button>' +
@@ -241,18 +241,19 @@ function renderFocusStatsP290_(data) {
   if (!el) return;
   const s = data.stats || {};
   const fs = data.filterStats || {};
+  const b = s.byBucket || {};
   const resultTotal = (fs && typeof fs.total === 'number') ? fs.total : (Number(data.total || 0));
-  el.innerHTML = '<div class="focus-stat-grid-p290">' +
-    renderFocusMetricP290_('A급', s.a || 0, 'a', 'rank:A급') +
-    renderFocusMetricP290_('B급', s.b || 0, 'b', 'rank:B급') +
-    renderFocusMetricP290_('C급', s.c || 0, 'c', 'rank:C급') +
-    renderFocusMetricP290_('보류', s.pending || 0, 'pending', 'rank:보류') +
-    renderFocusMetricP290_('제외', s.excluded || 0, 'excluded', 'rank:제외') +
-    renderFocusMetricP290_('오늘 우선', s.today || 0, 'today', 'today') +
-    renderFocusMetricP290_('견적 후 무응답', s.quoteNoResponse || 0, 'quote', 'quoteNoResponse') +
+  el.innerHTML = '<div class="focus-stat-grid-p290 focus-stat-grid-workflow-p514">' +
+    renderFocusMetricP290_('오늘 처리', b.TODAY || 0, 'today', 'bucket:TODAY') +
+    renderFocusMetricP290_('견적 후 미확인', b.QUOTE_NO_RESPONSE || s.quoteNoResponse || 0, 'quote', 'bucket:QUOTE_NO_RESPONSE') +
+    renderFocusMetricP290_('TM 성공 후속', b.TM_SUCCESS_FOLLOWUP || s.tmSuccessFollowup || 0, 'tm', 'bucket:TM_SUCCESS_FOLLOWUP') +
+    renderFocusMetricP290_('상태값 정리 필요', b.STATUS_REVIEW || s.statusReview || 0, 'status', 'bucket:STATUS_REVIEW') +
+    renderFocusMetricP290_('데이터 보강 필요', b.DATA_FIX || s.dataFix || 0, 'data', 'bucket:DATA_FIX') +
+    renderFocusMetricP290_('장기추진 예약', b.LONG_TERM || s.longTerm || 0, 'long', 'bucket:LONG_TERM') +
+    renderFocusMetricP290_('종결/제외', b.CLOSED || s.closed || s.excluded || 0, 'closed', 'bucket:CLOSED') +
     renderFocusMetricP290_('조회 결과', resultTotal, 'result', 'result') +
     '</div>' +
-    '<div class="focus-meta-p290">기준: ' + esc(data.source || '검색인덱스_DB') + ' · 인덱스 ' + esc(data.indexBuiltAt || '-') + (data.fromCache ? ' · 캐시' : '') + '</div>';
+    '<div class="focus-meta-p290">기준: ' + esc(data.source || '검색인덱스_DB+상태판정') + ' · 인덱스 ' + esc(data.indexBuiltAt || '-') + (data.fromCache ? ' · 캐시' : '') + '</div>';
 }
 
 function renderFocusMetricP290_(label, value, type, filterKey) {
@@ -263,10 +264,12 @@ function renderFocusMetricP290_(label, value, type, filterKey) {
 
 function isFocusMetricActiveP340_(filterKey) {
   filterKey = String(filterKey || 'result');
-  if (filterKey.indexOf('rank:') === 0) return focusCustomerStateP290_.rank === filterKey.slice(5) && !focusCustomerStateP290_.priorityOnly && (focusCustomerStateP290_.metricFilter || 'ALL') === 'ALL';
-  if (filterKey === 'today') return !!focusCustomerStateP290_.priorityOnly && (focusCustomerStateP290_.metricFilter || 'ALL') !== 'quoteNoResponse';
-  if (filterKey === 'quoteNoResponse') return (focusCustomerStateP290_.metricFilter || 'ALL') === 'quoteNoResponse';
-  return false;
+  const metric = focusCustomerStateP290_.metricFilter || 'ALL';
+  if (filterKey.indexOf('bucket:') === 0) return metric === filterKey;
+  if (filterKey.indexOf('rank:') === 0) return focusCustomerStateP290_.rank === filterKey.slice(5) && !focusCustomerStateP290_.priorityOnly && metric === 'ALL';
+  if (filterKey === 'today') return !!focusCustomerStateP290_.priorityOnly && metric === 'ALL';
+  if (filterKey === 'quoteNoResponse') return metric === 'quoteNoResponse' || metric === 'bucket:QUOTE_NO_RESPONSE';
+  return filterKey === 'result' && metric === 'ALL' && !focusCustomerStateP290_.priorityOnly && (focusCustomerStateP290_.rank || 'ALL') === 'ALL';
 }
 
 function clearFocusMetricFilterP340_() {
@@ -277,7 +280,12 @@ function applyFocusMetricFilterP340_(filterKey) {
   filterKey = String(filterKey || 'result');
   focusCustomerStateP290_.page = 0;
   focusCustomerStateP290_.metricFilter = 'ALL';
-  if (filterKey.indexOf('rank:') === 0) {
+  if (filterKey.indexOf('bucket:') === 0) {
+    focusCustomerStateP290_.rank = 'ALL';
+    focusCustomerStateP290_.priorityOnly = false;
+    focusCustomerStateP290_.metricFilter = filterKey;
+    if (filterKey === 'bucket:CLOSED') focusCustomerStateP290_.includeExcluded = true;
+  } else if (filterKey.indexOf('rank:') === 0) {
     const rank = filterKey.slice(5);
     focusCustomerStateP290_.rank = rank;
     focusCustomerStateP290_.priorityOnly = false;
@@ -288,7 +296,7 @@ function applyFocusMetricFilterP340_(filterKey) {
   } else if (filterKey === 'quoteNoResponse') {
     focusCustomerStateP290_.rank = 'ALL';
     focusCustomerStateP290_.priorityOnly = false;
-    focusCustomerStateP290_.metricFilter = 'quoteNoResponse';
+    focusCustomerStateP290_.metricFilter = 'bucket:QUOTE_NO_RESPONSE';
   } else {
     focusCustomerStateP290_.rank = 'ALL';
     focusCustomerStateP290_.priorityOnly = false;
@@ -308,18 +316,18 @@ function openFocusHelpP340_() {
       '<div class="focus-help-card-p340" role="dialog" aria-modal="true" aria-label="중점고객관리 도움말">' +
         '<button type="button" class="focus-help-close-p340" onclick="closeFocusHelpP340_()">×</button>' +
         '<h2>중점고객관리 도움말</h2>' +
-        '<p class="focus-help-lead-p340">중점고객관리는 영업관리대장의 고객 중 먼저 챙겨야 할 고객을 자동점수와 추천등급으로 정리한 화면입니다.</p>' +
+        '<p class="focus-help-lead-p340">중점고객관리는 단순 점수표가 아니라 오늘 처리할 영업 액션 큐입니다. 현재상태, 메모상 추측 상태값, TM 진행현황, 데이터 확인 필요 여부를 함께 봅니다.</p>' +
         '<div class="focus-help-grid-p340">' +
-          '<section><h3>A급</h3><p>계약 가능성이 높거나 즉시 후속조치가 필요한 고객입니다. 견적 요청, 계약·발주·예산·일정 언급, 큰 연면적, 담당자/이메일 확보 등이 함께 잡히면 A급으로 올라갑니다.</p></section>' +
-          '<section><h3>B급</h3><p>관심은 있으나 일정, 예산, 담당자 확인이 더 필요한 고객입니다. 7~14일 내 재컨택 대상으로 봅니다.</p></section>' +
-          '<section><h3>C급</h3><p>당장 진행 가능성은 낮지만 장기관리 가치가 있는 고객입니다. 월 1회 또는 분기 단위 관리 대상으로 봅니다.</p></section>' +
-          '<section><h3>보류</h3><p>정보가 부족해서 등급 확정이 어려운 고객입니다. 담당자, 연락처, 이메일, 연면적, 판단근거 메모 등을 보강해야 합니다.</p></section>' +
-          '<section><h3>제외</h3><p>명시적 거절, 수주실패, 전화번호 오류, 대상 아님, 폐업, 중복, 제외대상 건물유형 등 일반 관리대상에서 제외할 고객입니다.</p></section>' +
-          '<section><h3>오늘 우선</h3><p>A급 고객, 10,000㎡ 이상 견적 발송 고객, 고객 설득 중 고객, B급 중 재연락 단서가 있는 고객, 보류 중 정보 보강이 필요한 고객입니다.</p></section>' +
-          '<section><h3>견적 후 무응답</h3><p>메모나 상태에 견적발송·견적제출 흔적은 있으나 확인, 검토, 회신, 재연락 같은 후속 반응이 아직 잡히지 않은 고객입니다.</p></section>' +
-          '<section><h3>조회 결과</h3><p>현재 검색어, 등급, 담당자, 진행현황, 체크 조건을 모두 적용한 뒤 실제 목록에 잡힌 고객 수입니다.</p></section>' +
+          '<section><h3>오늘 처리</h3><p>상태와 메모가 일치하고 즉시 후속콜·계약/발주 확인이 필요한 활성 고객입니다.</p></section>' +
+          '<section><h3>견적 후 미확인</h3><p>견적·자료 발송 흔적은 있으나 확인/검토/회신 단서가 부족한 고객입니다.</p></section>' +
+          '<section><h3>TM 성공 후속</h3><p>TM 진행 현황이 성공·검토중·견적요청으로 잡혀 영업자가 받아야 하는 고객입니다.</p></section>' +
+          '<section><h3>상태값 정리 필요</h3><p>현재 영업 진행 상황과 메모상 추측 상태값이 어긋난 고객입니다. 실제 영업보다 상태 정리가 먼저입니다.</p></section>' +
+          '<section><h3>데이터 보강 필요</h3><p>주소, 연면적, 담당자, 연락처, 이메일 등 영업/발송 전 필수 데이터가 부족한 고객입니다.</p></section>' +
+          '<section><h3>장기추진 예약</h3><p>내년, 하반기, 11월/12월, 자체선임 후 점검위탁 등 당장 영업보다 예약 관리가 맞는 고객입니다.</p></section>' +
+          '<section><h3>종결/제외</h3><p>수주실패, 계약완료, 타사계약, 대상아님, 중복 등 일반 후속관리에서 빼야 하는 고객입니다.</p></section>' +
+          '<section><h3>조회 결과</h3><p>현재 검색어, 등급, 담당자, 진행현황, 업무분류 필터를 적용한 실제 목록 수입니다.</p></section>' +
         '</div>' +
-        '<div class="focus-help-note-p340">통계 박스를 누르면 해당 조건의 고객만 아래 목록에 바로 표시됩니다.</div>' +
+        '<div class="focus-help-note-p340">상단 업무분류 카드를 누르면 해당 액션 큐만 바로 필터링됩니다. 상태값 자동수정은 하지 않고 먼저 검토 대상으로만 보여줍니다.</div>' +
       '</div>';
     document.body.appendChild(modal);
   }
@@ -336,16 +344,16 @@ function renderFocusTodayP290_(data) {
   if (!el) return;
   const rows = data.todayRows || [];
   if (!rows.length) {
-    el.innerHTML = '<div class="focus-today-box-p290"><div class="focus-section-title-p290">오늘 처리할 고객</div><div class="focus-empty-p290">현재 조건에서 우선 처리 고객이 없습니다.</div></div>';
+    el.innerHTML = '<div class="focus-today-box-p290"><div class="focus-section-title-p290">오늘 처리/후속 큐</div><div class="focus-empty-p290">현재 조건에서 바로 처리할 고객이 없습니다.</div></div>';
     return;
   }
-  el.innerHTML = '<div class="focus-today-box-p290"><div class="focus-section-title-p290">오늘 처리할 고객</div><div class="focus-today-list-p290">' + rows.map(renderFocusTodayCardP290_).join('') + '</div></div>';
+  el.innerHTML = '<div class="focus-today-box-p290"><div class="focus-section-title-p290">오늘 처리/후속 큐</div><div class="focus-today-list-p290">' + rows.map(renderFocusTodayCardP290_).join('') + '</div></div>';
 }
 
 function renderFocusTodayCardP290_(row) {
   return '<div class="focus-today-card-p290" onclick="openFocusCustomerDetailP290_(' + Number(row.rowNo || 0) + ',\'' + escJs(row.customerNo || '') + '\')">' +
-    '<div><span class="focus-rank-badge-p290 rank-' + escAttr(row.finalRank || '보류') + '">' + esc(row.finalRank || '-') + '</span> <b>' + esc(row.company || '-') + '</b></div>' +
-    '<div class="focus-today-sub-p290">' + esc(row.salesRep || '-') + ' · ' + esc(row.status || '-') + ' · ' + esc(row.nextAction || '-') + '</div>' +
+    '<div><span class="focus-bucket-badge-p514 bucket-' + escAttr(row.focusBucketTone || 'today') + '">' + esc(row.focusBucketLabel || '오늘 처리') + '</span> <b>' + esc(row.company || '-') + '</b></div>' +
+    '<div class="focus-today-sub-p290">' + esc(row.salesRep || '-') + ' · ' + esc(row.effectiveStatus || row.status || '-') + ' · ' + esc(row.nextAction || '-') + '</div>' +
     '</div>';
 }
 
@@ -366,7 +374,7 @@ function renderFocusRowsP290_(data) {
   const pager = renderFocusPagerP290_(data);
   const bodyHtml = rows.map(renderFocusRowBlockP380_).join('');
   el.innerHTML = pager + '<div class="focus-table-wrap-p290"><table class="focus-table-p290"><thead><tr>' +
-    '<th>등급/점수</th><th>고객</th><th>진행현황</th><th>연면적/등급</th><th>담당/연락처</th><th>추천 액션</th><th>산정 사유</th><th>작업</th>' +
+    '<th>분류/점수</th><th>고객</th><th>상태판정</th><th>TM/발송</th><th>담당/연락처</th><th>추천 액션</th><th>판정 근거</th><th>작업</th>' +
     '</tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' + pager;
 }
 
@@ -384,11 +392,19 @@ function renderFocusRowP290_(row, isExpanded) {
   const rowNo = Number(row && row.rowNo) || 0;
   const reasons = (row.reasons || []).slice(0, 4).map(function(v) { return '<span>' + esc(v) + '</span>'; }).join('');
   const deductions = (row.deductions || []).slice(0, 2).map(function(v) { return '<em>' + esc(v) + '</em>'; }).join('');
+  const statusMatchHtml = row.statusMatch ? '<span class="focus-status-match-p514 ' + (row.statusMatch === 'O' ? 'ok' : 'bad') + '">' + esc(row.statusMatch === 'O' ? '일치' : '불일치') + '</span>' : '';
+  const tmLine = row.tmProgressStatus || row.tmPreview || '-';
+  const sentLine = [row.sendStatus, row.sentAt || row.lastSent, row.sendCount ? ('발송 ' + row.sendCount + '회') : ''].filter(Boolean).join(' · ');
+  const areaLine = formatFocusAreaP290_(row.area) + ' · ' + (row.grade || '-') + ' · ' + (row.buildingType || '-');
+  const dataBadges = [];
+  if (row.areaCheckNeeded) dataBadges.push('연면적확인');
+  if (row.addressCheckNeeded || row.addressNormalizeStatus === '확인필요') dataBadges.push('주소확인');
+  if (row.dataIssueLevel) dataBadges.push('데이터보강');
   return '<tr class="focus-main-row-p380' + (isExpanded ? ' focus-expanded-p380' : '') + '" data-focus-row-no="' + rowNo + '" ondblclick="toggleFocusCustomerExpandP380_(' + rowNo + ')">' +
-    '<td><div class="focus-rank-line-p290"><span class="focus-rank-badge-p290 rank-' + escAttr(row.finalRank || '보류') + '">' + esc(row.finalRank || '-') + '</span><b>' + esc(row.score || 0) + '</b></div>' + (row.priorityTarget ? '<div class="focus-priority-pill-p290">오늘 우선</div>' : '') + '</td>' +
-    '<td><b>' + esc(row.company || '-') + '</b><div class="focus-sub-p290">고객번호 ' + esc(row.customerNo || '-') + ' · ' + esc(row.salesRep || '-') + '</div><div class="focus-memo-preview-p290">' + esc(row.memoPreview || '') + '</div></td>' +
-    '<td><span class="status-chip">' + esc(row.status || '-') + '</span></td>' +
-    '<td>' + esc(formatFocusAreaP290_(row.area)) + '<div class="focus-sub-p290">' + esc(row.grade || '-') + ' · ' + esc(row.buildingType || '-') + '</div></td>' +
+    '<td><div class="focus-bucket-line-p514"><span class="focus-bucket-badge-p514 bucket-' + escAttr(row.focusBucketTone || 'today') + '">' + esc(row.focusBucketLabel || '-') + '</span><b>' + esc(row.score || 0) + '</b></div><div class="focus-sub-p290">' + esc(row.finalRank || '-') + '</div>' + (row.priorityTarget ? '<div class="focus-priority-pill-p290">처리 대상</div>' : '') + '</td>' +
+    '<td><b>' + esc(row.company || '-') + '</b><div class="focus-sub-p290">고객번호 ' + esc(row.customerNo || '-') + ' · ' + esc(row.salesRep || '-') + '</div><div class="focus-sub-p290">' + esc(areaLine) + '</div><div class="focus-memo-preview-p290">' + esc(row.memoPreview || '') + '</div></td>' +
+    '<td><div class="focus-status-stack-p514"><div>현재 <span class="status-chip">' + esc(row.status || '-') + '</span></div><div>메모추측 <span class="focus-inferred-status-p514">' + esc(row.memoInferredStatus || '-') + '</span> ' + statusMatchHtml + '</div>' + (dataBadges.length ? '<div class="focus-data-badges-p514">' + dataBadges.map(function(v){ return '<span>' + esc(v) + '</span>'; }).join('') + '</div>' : '') + '</div></td>' +
+    '<td><b>' + esc(tmLine) + '</b><div class="focus-sub-p290">' + esc(sentLine || '-') + '</div><div class="focus-sub-p290">' + esc(row.latestSignal || '') + '</div></td>' +
     '<td>' + esc(row.contact || '-') + '<div class="focus-sub-p290">' + esc(row.directPhone || row.phone || '-') + '</div><div class="focus-sub-p290">' + esc(row.email || '-') + '</div></td>' +
     '<td><b>' + esc(row.nextAction || '-') + '</b></td>' +
     '<td><div class="focus-reason-tags-p290">' + reasons + deductions + '</div></td>' +
@@ -419,6 +435,10 @@ function buildFocusCustomerRowSummaryP380_(row) {
     customerNo: row.customerNo || '',
     salesRep: row.salesRep || '',
     status: row.status || '',
+    memoInferredStatus: row.memoInferredStatus || '',
+    statusMatch: row.statusMatch || '',
+    focusBucket: row.focusBucket || '',
+    focusBucketLabel: row.focusBucketLabel || '',
     contact: row.contact || '',
     phone: row.phone || '',
     directPhone: row.directPhone || '',

@@ -4613,6 +4613,11 @@ button[disabled], .portal-btn-pending {
 .focus-metric-c { border-color: #bfdbfe; background: #eff6ff; }
 .focus-metric-today { border-color: #abefc6; background: #ecfdf3; }
 .focus-metric-quote { border-color: #fcd34d; background: #fffbeb; }
+.focus-metric-tm { border-color: #99f6e4; background: #f0fdfa; }
+.focus-metric-status { border-color: #c4b5fd; background: #f5f3ff; }
+.focus-metric-data { border-color: #fecaca; background: #fff1f2; }
+.focus-metric-long { border-color: #bae6fd; background: #f0f9ff; }
+.focus-metric-closed { border-color: #d0d5dd; background: #f9fafb; }
 .focus-metric-excluded { border-color: #d0d5dd; background: #f9fafb; }
 .focus-metric-result { border-color: #dbeafe; background: #ffffff; }
 .focus-meta-p290 {
@@ -4774,6 +4779,72 @@ button[disabled], .portal-btn-pending {
   padding: 10px 0;
   font-size: 12px;
   color: #667085;
+}
+.focus-bucket-line-p514 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.focus-bucket-line-p514 b {
+  font-size: 18px;
+  color: #101828;
+}
+.focus-bucket-badge-p514 {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  background: #eef4ff;
+  color: #344054;
+  white-space: nowrap;
+}
+.focus-bucket-badge-p514.bucket-today { background:#ecfdf3; color:#067647; }
+.focus-bucket-badge-p514.bucket-quote { background:#fffbeb; color:#b45309; }
+.focus-bucket-badge-p514.bucket-tm { background:#f0fdfa; color:#0f766e; }
+.focus-bucket-badge-p514.bucket-status { background:#f5f3ff; color:#6d28d9; }
+.focus-bucket-badge-p514.bucket-data { background:#fff1f2; color:#b42318; }
+.focus-bucket-badge-p514.bucket-long { background:#f0f9ff; color:#0369a1; }
+.focus-bucket-badge-p514.bucket-closed { background:#f2f4f7; color:#475467; }
+.focus-status-stack-p514 {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+}
+.focus-inferred-status-p514 {
+  display: inline-flex;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #344054;
+  font-size: 11px;
+  font-weight: 800;
+}
+.focus-status-match-p514 {
+  display: inline-flex;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+}
+.focus-status-match-p514.ok { background:#ecfdf3; color:#067647; }
+.focus-status-match-p514.bad { background:#fff1f3; color:#b42318; }
+.focus-data-badges-p514 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.focus-data-badges-p514 span {
+  display: inline-flex;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 10px;
+  font-weight: 900;
 }
 @media (max-width: 1300px) {
   .focus-stat-grid-p290 { grid-template-columns: repeat(4, minmax(120px, 1fr)); }
@@ -8029,5 +8100,36 @@ body.my-folder-tree-dragging-p507 .my-folder-tree-root-drop-hint-p507 {
   border-radius: 999px !important;
   line-height: 1.15 !important;
   white-space: nowrap !important;
+}
+
+
+/* P515: 설정 - 이 PC 포털 캐시 초기화 */
+.portal-cache-reset-card-p515 {
+  border-color: #fed7aa;
+  background: linear-gradient(180deg, #fff, #fffaf5);
+}
+.portal-cache-reset-meta-p515 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px 0;
+  padding: 8px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 800;
+}
+.portal-cache-reset-note-p515 {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed #fdba74;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.55;
+  font-weight: 750;
 }
 </style>

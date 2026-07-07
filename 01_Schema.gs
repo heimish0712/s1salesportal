@@ -32,6 +32,13 @@ const PORTAL_MASTER_FIELD_SCHEMA = {
   longNoContactTransferred: { label: '장기미접촉 이관 여부', headers: ['장기미접촉 이관 여부', '장기미접촉이관여부', '장기 미접촉 이관 여부'], type: 'text' },
   tmProgressStatus: { label: 'TM 진행 현황', headers: ['TM 진행 현황', 'TM진행현황', 'TM 진행현황', 'TM진행 현황'], type: 'text' },
   tmContactContent: { label: 'TM 컨택 내용', headers: ['TM 컨택 내용', 'TM컨택내용', 'TM 컨택내용', 'TM컨택 내용'], type: 'textarea', wide: true },
+  memoInferredStatus: { label: '메모상 추측 상태값', headers: ['메모상 추측 상태값', '메모상추측상태값', '메모 추측 상태값'], type: 'text' },
+  statusMatch: { label: '상태값 일치 여부', headers: ['상태값 일치 여부', '상태값일치여부'], type: 'text' },
+  sendCount: { label: '발송횟수', headers: ['발송횟수', '발송 횟수'], type: 'text' },
+  sendStatus: { label: '발송상태', headers: ['발송상태', '발송 상태'], type: 'text' },
+  addressNormalizeStatus: { label: '주소정규화상태', headers: ['주소정규화상태', '주소 정규화 상태'], type: 'text' },
+  addressNormalizeNote: { label: '주소정규화비고', headers: ['주소정규화비고', '주소 정규화 비고'], type: 'text' },
+  failedFolderMoveStatus: { label: '수주실패폴더이동상태', headers: ['수주실패폴더이동상태', '수주실패 폴더 이동 상태'], type: 'text' },
 
   area: { label: '연면적', headers: ['연면적', '연면적(㎡)', '연면적㎡', '면적'], type: 'numberText' },
   areaCheckNeeded: { label: '연면적 확인 필요', headers: ['연면적확인필요', '연면적 확인 필요'], type: 'checkbox' },

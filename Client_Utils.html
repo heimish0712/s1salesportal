@@ -168,6 +168,7 @@ function showGlobalError(err){ toast(err&&err.message?err.message:String(err||'�
 function disp(value){ const text=String(value==null?'':value).trim(); return text?text:'-'; }
 function escAttr(value){ return esc(value).replace(/`/g,'&#096;'); }
 function esc(value){ return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
+function escapeHtml_(value){ return esc(value); }
 
 
 // P475: 장기미접촉 TM 이관 정보 읽기 전용 표시 헬퍼
