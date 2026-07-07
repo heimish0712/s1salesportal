@@ -30,6 +30,8 @@ let myCustomerFolderListComposingP506 = false;
 let myCustomerFolderAddComposingP506 = false;
 let myCustomerFolderDeferredRenderP506 = false;
 let myCustomerFolderCandidateSearchSeqP511 = 0;
+let myCustomerFolderListPageP516 = 0;
+let myCustomerFolderListPageSizeP516 = 50;
 
 const MY_CUSTOMER_FOLDER_SYSTEM_MY_ALL_P500 = 'SYS_MY_ALL';
 const MY_CUSTOMER_FOLDER_ADMIN_OWNER_P500 = '__PORTAL_ADMIN_REQUEST__';
@@ -581,6 +583,7 @@ function selectMyCustomerFolderP497_(folderId) {
   myCustomerFolderSelectedIdP497 = String(folderId || '').trim();
   myCustomerFolderExpandedRowNoP497 = null;
   myCustomerFolderCandidateRowsP497 = [];
+  resetMyCustomerFolderListPageP516_();
   clearMyCustomerFolderBulkSelectionP500_();
   renderMyCustomerFolderPageP497_();
 }
@@ -792,6 +795,73 @@ function getMyCustomerFolderCurrentViewRowsP506_(folderId) {
   return applyMyCustomerFolderListViewP506_(getMyCustomerFolderDisplayRowsP497_(folderId));
 }
 
+function resetMyCustomerFolderListPageP516_() {
+  myCustomerFolderListPageP516 = 0;
+}
+
+function normalizeMyCustomerFolderListPageSizeP516_(value) {
+  const n = Number(value) || 50;
+  if (n === 100 || n === 200) return n;
+  return 50;
+}
+
+function getMyCustomerFolderListPagerP516_(rows) {
+  const total = Array.isArray(rows) ? rows.length : 0;
+  const pageSize = normalizeMyCustomerFolderListPageSizeP516_(myCustomerFolderListPageSizeP516);
+  myCustomerFolderListPageSizeP516 = pageSize;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  let page = Number(myCustomerFolderListPageP516) || 0;
+  if (page < 0) page = 0;
+  if (page >= pageCount) page = pageCount - 1;
+  myCustomerFolderListPageP516 = page;
+  const start = total ? page * pageSize : 0;
+  const end = total ? Math.min(total, start + pageSize) : 0;
+  return {
+    total: total,
+    page: page,
+    pageSize: pageSize,
+    pageCount: pageCount,
+    start: start,
+    end: end,
+    rows: total ? rows.slice(start, end) : []
+  };
+}
+
+function renderMyCustomerFolderListPagerP516_(pager, allSelected) {
+  pager = pager || getMyCustomerFolderListPagerP516_([]);
+  const total = Number(pager.total) || 0;
+  if (total <= pager.pageSize && pager.pageSize === 50) return '';
+  const startText = total ? String((Number(pager.start) || 0) + 1) : '0';
+  const endText = String(Number(pager.end) || 0);
+  const pageText = String((Number(pager.page) || 0) + 1) + ' / ' + String(Number(pager.pageCount) || 1);
+  const disabledPrev = pager.page <= 0 ? ' disabled' : '';
+  const disabledNext = pager.page >= pager.pageCount - 1 ? ' disabled' : '';
+  const select = '<select onchange="changeMyCustomerFolderListPageSizeP516_(this.value)">' +
+    '<option value="50"' + (pager.pageSize === 50 ? ' selected' : '') + '>50건씩</option>' +
+    '<option value="100"' + (pager.pageSize === 100 ? ' selected' : '') + '>100건씩</option>' +
+    '<option value="200"' + (pager.pageSize === 200 ? ' selected' : '') + '>200건씩</option>' +
+    '</select>';
+  return '<div class="my-folder-list-pager-p516">' +
+    '<div><b>' + esc(startText) + '-' + esc(endText) + '</b> / 조회 ' + esc(String(total)) + '건 표시 중' + (allSelected ? ' <span class="my-folder-page-all-selected-p516">조회 전체 선택됨</span>' : '') + '</div>' +
+    '<div class="my-folder-list-pager-actions-p516">' + select +
+      '<button type="button" onclick="moveMyCustomerFolderListPageP516_(-1)"' + disabledPrev + '>이전</button>' +
+      '<span>' + esc(pageText) + '</span>' +
+      '<button type="button" onclick="moveMyCustomerFolderListPageP516_(1)"' + disabledNext + '>다음</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function moveMyCustomerFolderListPageP516_(delta) {
+  myCustomerFolderListPageP516 = (Number(myCustomerFolderListPageP516) || 0) + (Number(delta) || 0);
+  if (!refreshMyCustomerFolderListResultOnlyP511_()) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
+}
+
+function changeMyCustomerFolderListPageSizeP516_(value) {
+  myCustomerFolderListPageSizeP516 = normalizeMyCustomerFolderListPageSizeP516_(value);
+  resetMyCustomerFolderListPageP516_();
+  if (!refreshMyCustomerFolderListResultOnlyP511_()) renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
+}
+
 function normalizeMyCustomerFolderListTextP506_(value) {
   return String(value == null ? '' : value).toLowerCase().replace(/\s+/g, ' ').trim();
 }
@@ -906,6 +976,7 @@ function scheduleMyCustomerFolderListRenderP506_() {
 
 function updateMyCustomerFolderListKeywordP506_(value) {
   myCustomerFolderListKeywordP506 = String(value || '');
+  resetMyCustomerFolderListPageP516_();
   clearMyCustomerFolderBulkSelectionP500_();
   scheduleMyCustomerFolderListRenderP506_();
 }
@@ -915,6 +986,7 @@ function updateMyCustomerFolderListFilterP506_(key, value) {
   if (key === 'status') myCustomerFolderListStatusFilterP506 = value;
   if (key === 'salesRep') myCustomerFolderListSalesRepFilterP506 = value;
   if (key === 'vendor') myCustomerFolderListVendorFilterP506 = value;
+  resetMyCustomerFolderListPageP516_();
   clearMyCustomerFolderBulkSelectionP500_();
   renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
@@ -925,6 +997,7 @@ function resetMyCustomerFolderListViewP506_() {
   myCustomerFolderListSalesRepFilterP506 = '';
   myCustomerFolderListVendorFilterP506 = '';
   myCustomerFolderListSortP506 = { key: '', dir: '' };
+  resetMyCustomerFolderListPageP516_();
   clearMyCustomerFolderBulkSelectionP500_();
   renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
@@ -936,6 +1009,7 @@ function toggleMyCustomerFolderHeaderSortP506_(key) {
   if (cur.key !== key) myCustomerFolderListSortP506 = { key: key, dir: 'asc' };
   else if (cur.dir === 'asc') myCustomerFolderListSortP506 = { key: key, dir: 'desc' };
   else myCustomerFolderListSortP506 = { key: '', dir: '' };
+  resetMyCustomerFolderListPageP516_();
   renderMyCustomerFolderPageSafeDuringImeP506_({ keepFocus: true });
 }
 
@@ -967,7 +1041,7 @@ function renderMyCustomerFolderListControlsP506_(baseRows, viewRows) {
       '<select onchange="updateMyCustomerFolderListFilterP506_(\'vendor\', this.value)">' + opts(vendors, myCustomerFolderListVendorFilterP506, '수행사 전체') + '</select>' +
       '<button type="button" class="secondary" onclick="resetMyCustomerFolderListViewP506_()">정렬/필터 초기화</button>' +
     '</div>' +
-    '<div class="my-folder-list-filter-meta-p506"><span id="myCustomerFolderListMetaCountP511">표시 ' + esc(String((viewRows || []).length)) + '건 / 전체 ' + esc(String((baseRows || []).length)) + '건</span>' + sort + '</div>' +
+    '<div class="my-folder-list-filter-meta-p506"><span id="myCustomerFolderListMetaCountP511">표시 ' + esc(String(((viewRows || []).length ? 1 : 0))) + '-' + esc(String(Math.min((viewRows || []).length, myCustomerFolderListPageSizeP516))) + '건 / 조회 ' + esc(String((viewRows || []).length)) + '건 / 폴더 전체 ' + esc(String((baseRows || []).length)) + '건</span>' + sort + '</div>' +
   '</div>';
 }
 
@@ -997,16 +1071,21 @@ function refreshMyCustomerFolderListMetaP511_() {
   if (!meta || !folderId) return;
   const baseRows = getMyCustomerFolderDisplayRowsP497_(folderId);
   const rows = applyMyCustomerFolderListViewP506_(baseRows);
-  meta.textContent = '표시 ' + String(rows.length) + '건 / 전체 ' + String(baseRows.length) + '건';
+  const pager = getMyCustomerFolderListPagerP516_(rows);
+  const visibleText = rows.length ? String(pager.start + 1) + '-' + String(pager.end) : '0';
+  meta.textContent = '표시 ' + visibleText + '건 / 조회 ' + String(rows.length) + '건 / 폴더 전체 ' + String(baseRows.length) + '건';
 }
 
 function renderMyCustomerFolderListBodyP511_(folderId) {
   const baseRows = getMyCustomerFolderDisplayRowsP497_(folderId);
   const rows = applyMyCustomerFolderListViewP506_(baseRows);
+  const pager = getMyCustomerFolderListPagerP516_(rows);
+  const pageRows = pager.rows || [];
   const folder = getMyCustomerFolderFolderByIdP500_(folderId);
   const folderScope = getMyCustomerFolderScopeP500_(folder);
   const indexReady = !!(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length);
   const selectedCount = getSelectedMyCustomerFolderRecordsP500_().length;
+  const allFilteredSelected = !!(rows.length && selectedCount >= rows.length && rows.every(function(row) { return !!myCustomerFolderSelectedRowsP500[makeMyCustomerFolderSelectionIdP500_(row)]; }));
 
   if (!baseRows.length) {
     const loadingIndex = folderScope === 'SYSTEM' && (isMyCustomerFolderIndexLoadingP501_() || myCustomerFolderIndexEnsureRequestedP501);
@@ -1017,13 +1096,13 @@ function renderMyCustomerFolderListBodyP511_(folderId) {
       '<div class="my-folder-empty-p497">이 폴더에 표시할 고객이 없습니다.<br><span>' + esc(emptyHelp) + '</span></div>';
   }
 
-  let html = '<div class="my-folder-list-head-p497 my-folder-list-head-p500"><div>고객 목록 <b>' + rows.length + '</b>건' + (rows.length !== baseRows.length ? ' <span class="my-folder-filtered-count-p506">/ 전체 ' + baseRows.length + '건</span>' : '') + '</div><div id="myFolderBulkToolbarP502" class="my-folder-bulk-tools-p500">';
+  let html = '<div class="my-folder-list-head-p497 my-folder-list-head-p500"><div>고객 목록 <b>' + rows.length + '</b>건' + (rows.length !== baseRows.length ? ' <span class="my-folder-filtered-count-p506">/ 폴더 전체 ' + baseRows.length + '건</span>' : '') + ' <span class="my-folder-page-range-p516">현재 ' + (rows.length ? (pager.start + 1) + '-' + pager.end : '0') + '건 표시</span></div><div id="myFolderBulkToolbarP502" class="my-folder-bulk-tools-p500">';
   if (!myCustomerFolderBulkModeP500) {
     html += '<span class="my-folder-bulk-hint-p502">' + (!indexReady ? '검색인덱스 로딩 중: 일부 정보는 스냅샷으로 표시' : (folderScope === 'SYSTEM' ? '실시간 자동 폴더' : '검색인덱스 기준 최신 목록')) + '</span>';
     html += '<button type="button" class="secondary my-folder-bulk-start-p502" onclick="toggleMyCustomerFolderBulkModeP500_()">일괄 이동/복사</button>';
   } else {
     html += '<span id="myFolderBulkSelectedCountP502" class="my-folder-bulk-status-p502">선택 ' + selectedCount + '건</span>';
-    html += '<button type="button" class="my-folder-bulk-btn-p506" onclick="toggleAllMyCustomerFolderRowsP500_(true)">전체선택</button>';
+    html += '<button type="button" class="my-folder-bulk-btn-p506" onclick="toggleAllMyCustomerFolderRowsP500_(true)">조회 전체선택</button>';
     html += '<button type="button" class="my-folder-bulk-btn-p506" onclick="toggleAllMyCustomerFolderRowsP500_(false)">선택해제</button>';
     html += '<button id="myFolderBulkCopyBtnP502" type="button" class="my-folder-bulk-btn-p506 primary" onclick="openMyCustomerFolderBulkTransferModalP500_(\'copy\')" ' + (selectedCount ? '' : 'disabled') + '>선택 복사</button>';
     html += '<button id="myFolderBulkMoveBtnP502" type="button" class="my-folder-bulk-btn-p506 primary" onclick="openMyCustomerFolderBulkTransferModalP500_(\'move\')" ' + (selectedCount && canMoveSelectedMyCustomerFolderRowsP500_() ? '' : 'disabled') + '>선택 이동</button>';
@@ -1035,6 +1114,7 @@ function renderMyCustomerFolderListBodyP511_(folderId) {
     return html + '<div class="my-folder-empty-p497">검색/필터 조건에 맞는 고객이 없습니다.<br><span>검색어 또는 필터를 초기화해 주세요.</span></div>';
   }
 
+  html += renderMyCustomerFolderListPagerP516_(pager, allFilteredSelected);
   html += '<div class="customer-table-scroll my-folder-table-scroll-p497"><table class="customer-result-table my-folder-result-table-p497"><colgroup>';
   if (myCustomerFolderBulkModeP500) html += '<col style="width:42px">';
   html += '<col style="width:38px">';
@@ -1046,7 +1126,7 @@ function renderMyCustomerFolderListBodyP511_(folderId) {
   CUSTOMER_RESULT_TABLE.columns.forEach(function(col) { html += renderMyCustomerFolderSortableThP506_(col); });
   html += '<th></th></tr></thead><tbody>';
 
-  rows.forEach(function(r) {
+  pageRows.forEach(function(r) {
     const rowNo = Number(r.rowNo) || 0;
     const selectionId = makeMyCustomerFolderSelectionIdP500_(r);
     const isSelected = !!myCustomerFolderSelectedRowsP500[selectionId];
@@ -1073,6 +1153,7 @@ function renderMyCustomerFolderListBodyP511_(folderId) {
   });
 
   html += '</tbody></table></div>';
+  html += renderMyCustomerFolderListPagerP516_(pager, allFilteredSelected);
   return html;
 }
 
@@ -1430,8 +1511,9 @@ function refreshMyCustomerFolderBulkToolbarP502_() {
   const total = rows.length;
   const head = document.getElementById('myFolderBulkHeaderCheckP502');
   if (head) {
-    head.checked = !!(total && selectedCount === total);
-    head.indeterminate = !!(selectedCount && selectedCount < total);
+    const allSelected = !!(total && selectedCount >= total && rows.every(function(row) { return !!myCustomerFolderSelectedRowsP500[makeMyCustomerFolderSelectionIdP500_(row)]; }));
+    head.checked = allSelected;
+    head.indeterminate = !!(selectedCount && !allSelected);
   }
 }
 
