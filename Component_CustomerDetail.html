@@ -138,6 +138,7 @@ function openDetailSafe_(rowNo, customerNo, options) {
 function renderDetail(d, options) {
   options = options || {};
   const draftSnapshotP494B = (typeof captureCustomerDetailDraftSnapshotP494B_ === 'function') ? captureCustomerDetailDraftSnapshotP494B_(currentDetail || d || {}) : null;
+  const masterMemoSnapshotP519 = (typeof captureMasterMemoDraftSnapshotP519_ === 'function') ? captureMasterMemoDraftSnapshotP519_() : null;
   if (typeof prepareDetailForRenderP457_ === 'function') {
     d = prepareDetailForRenderP457_(d, options);
   }
@@ -220,6 +221,7 @@ function renderDetail(d, options) {
   try { if (typeof bindDetailDraftProtectionP457_ === 'function') bindDetailDraftProtectionP457_(); } catch (err) {}
   try { if (typeof registerCustomerDetailDraftFieldsP494B_ === 'function') registerCustomerDetailDraftFieldsP494B_({ detail: d, reason: options.reason || 'renderDetail' }); } catch (err) {}
   try { if (typeof restoreCustomerDetailDraftSnapshotP494B_ === 'function') restoreCustomerDetailDraftSnapshotP494B_(draftSnapshotP494B); } catch (err) {}
+  try { if (typeof restoreMasterMemoDraftSnapshotP519_ === 'function') restoreMasterMemoDraftSnapshotP519_(masterMemoSnapshotP519); } catch (err) {}
   try { if (typeof registerCustomerDetailDraftFieldsP494B_ === 'function') registerCustomerDetailDraftFieldsP494B_({ detail: d, reason: 'afterRestore' }); } catch (err) {}
   try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch (err) {}
   try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch (err) {}
@@ -642,6 +644,10 @@ function applyCustomerDetailServerValuesToDraftGuardP494B_(serverDetail, options
     if (!key) return;
     const serverValue = getCustomerDetailDraftBaseValueP494B_(key, serverDetail, null);
     try {
+      if (key === 'memo' && typeof isMasterMemoDomProtectedP519_ === 'function' && isMasterMemoDomProtectedP519_()) {
+        if (typeof deferCustomerDetailMemoServerValueP519_ === 'function') deferCustomerDetailMemoServerValueP519_(contextKey, serverValue, el, options);
+        return;
+      }
       safeApplyPortalServerValueP494_(contextKey, key, serverValue == null ? '' : String(serverValue), {
         scope: 'detailModal',
         element: el,
@@ -785,6 +791,109 @@ function getDetailInputKeyP457_(el) {
   return el && el.getAttribute ? String(el.getAttribute('data-key') || '') : '';
 }
 
+function normalizeMasterMemoDraftCompareP519_(value) {
+  return String(value == null ? '' : value).replace(/\r\n/g, '\n');
+}
+
+function getMasterMemoBaseValueP519_(el) {
+  try {
+    if (detailEditBaselineValues && Object.prototype.hasOwnProperty.call(detailEditBaselineValues, 'memo')) return String(detailEditBaselineValues.memo == null ? '' : detailEditBaselineValues.memo);
+  } catch (err) {}
+  try {
+    if (detailSessionP457 && detailSessionP457.serverSnapshot) return String(getDetailValueByKeyP457_(detailSessionP457.serverSnapshot, 'memo') || '');
+  } catch (err2) {}
+  try {
+    if (currentDetail) return String(getDetailValueByKeyP457_(currentDetail, 'memo') || '');
+  } catch (err3) {}
+  if (el && typeof el.defaultValue !== 'undefined') return String(el.defaultValue == null ? '' : el.defaultValue);
+  return '';
+}
+
+function isMasterMemoDomProtectedP519_() {
+  const el = (typeof getMasterMemoTextareaP484_ === 'function') ? getMasterMemoTextareaP484_() : document.querySelector('.detail-edit-input[data-key="memo"]');
+  if (!el) return false;
+  if (document.activeElement === el) return true;
+  try {
+    const contextKey = (typeof getCurrentCustomerDetailDraftContextKeyP494B_ === 'function') ? getCurrentCustomerDetailDraftContextKeyP494B_() : '';
+    if (contextKey && typeof isPortalDraftFieldProtectedP494_ === 'function' && isPortalDraftFieldProtectedP494_(contextKey, 'memo')) return true;
+  } catch (err) {}
+  try {
+    if (detailSessionP457) {
+      if (detailSessionP457.focusedField === 'memo') return true;
+      if (detailSessionP457.draft && Object.prototype.hasOwnProperty.call(detailSessionP457.draft, 'memo')) return true;
+      if (detailSessionP457.dirtyFields && detailSessionP457.dirtyFields.memo) return true;
+      if ((detailSessionP457.pendingOps || []).some(function(op) { return op && op.patch && Object.prototype.hasOwnProperty.call(op.patch, 'memo'); })) return true;
+    }
+  } catch (err2) {}
+  const currentValue = readCustomerDetailDraftElementValueP494B_(el);
+  const baseValue = getMasterMemoBaseValueP519_(el);
+  return !!(isDetailEditMode && normalizeMasterMemoDraftCompareP519_(currentValue) !== normalizeMasterMemoDraftCompareP519_(baseValue));
+}
+
+function captureMasterMemoDraftSnapshotP519_() {
+  const el = (typeof getMasterMemoTextareaP484_ === 'function') ? getMasterMemoTextareaP484_() : document.querySelector('.detail-edit-input[data-key="memo"]');
+  if (!el || !isMasterMemoDomProtectedP519_()) return null;
+  const value = readCustomerDetailDraftElementValueP494B_(el);
+  const baseValue = getMasterMemoBaseValueP519_(el);
+  const focused = document.activeElement === el;
+  return {
+    protected: true,
+    rowNo: Number(currentDetail && currentDetail.rowNo) || 0,
+    customerNo: normalizeCustomerNoForKey_((currentDetail && currentDetail.customerNo) || currentDetailCustomerNo || ''),
+    value: value,
+    baseValue: baseValue,
+    dirty: normalizeMasterMemoDraftCompareP519_(value) !== normalizeMasterMemoDraftCompareP519_(baseValue),
+    focused: focused,
+    selectionStart: typeof el.selectionStart === 'number' ? el.selectionStart : null,
+    selectionEnd: typeof el.selectionEnd === 'number' ? el.selectionEnd : null,
+    scrollTop: typeof el.scrollTop === 'number' ? el.scrollTop : 0
+  };
+}
+
+function restoreMasterMemoDraftSnapshotP519_(snapshot) {
+  if (!snapshot || snapshot.protected !== true) return false;
+  const currentRowNo = Number(currentDetail && currentDetail.rowNo) || 0;
+  const currentCustomerNo = normalizeCustomerNoForKey_((currentDetail && currentDetail.customerNo) || currentDetailCustomerNo || '');
+  if (snapshot.rowNo && currentRowNo && Number(snapshot.rowNo) !== currentRowNo) return false;
+  if (snapshot.customerNo && currentCustomerNo && snapshot.customerNo !== currentCustomerNo) return false;
+  const el = (typeof getMasterMemoTextareaP484_ === 'function') ? getMasterMemoTextareaP484_() : document.querySelector('.detail-edit-input[data-key="memo"]');
+  if (!el) return false;
+  const value = String(snapshot.value == null ? '' : snapshot.value);
+  if (String(el.value == null ? '' : el.value) !== value) el.value = value;
+  try {
+    el.classList.add('portal-draft-protected-p494');
+    if (snapshot.dirty) el.classList.add('portal-draft-server-deferred-p494');
+  } catch (err) {}
+  if (snapshot.dirty || snapshot.pending || snapshot.conflict) {
+    try { if (typeof markDetailDraftFieldP457_ === 'function') markDetailDraftFieldP457_('memo', value, { force: true }); } catch (err2) {}
+  }
+  try { if (typeof markCustomerDetailDraftFieldP494B_ === 'function') markCustomerDetailDraftFieldP494B_('memo', value, { userTouched: snapshot.dirty === true, baseValue: snapshot.baseValue, baseLoaded: true }); } catch (err3) {}
+  try {
+    if (snapshot.focused) {
+      el.focus({ preventScroll: true });
+      if (typeof el.setSelectionRange === 'function' && snapshot.selectionStart != null) el.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd == null ? snapshot.selectionStart : snapshot.selectionEnd);
+    }
+    if (typeof el.scrollTop === 'number') el.scrollTop = Number(snapshot.scrollTop || 0) || 0;
+  } catch (err4) {}
+  return true;
+}
+
+function deferCustomerDetailMemoServerValueP519_(contextKey, serverValue, el, options) {
+  if (!contextKey || typeof getPortalDraftFieldP494_ !== 'function') return false;
+  options = options || {};
+  const currentValue = el ? readCustomerDetailDraftElementValueP494B_(el) : '';
+  const baseValue = getMasterMemoBaseValueP519_(el);
+  const field = getPortalDraftFieldP494_(contextKey, 'memo', true, { initialValue: currentValue, baseValue: baseValue, serverValue: baseValue, baseLoaded: true });
+  if (!field) return false;
+  field.serverValue = String(serverValue == null ? '' : serverValue);
+  field.deferredServerValue = field.serverValue;
+  field.hasDeferredServerValue = true;
+  field.baseLoaded = true;
+  if (field.draftValue == null) field.draftValue = currentValue;
+  if (el && el.classList) el.classList.add('portal-draft-protected-p494', 'portal-draft-server-deferred-p494');
+  return true;
+}
+
 function getDetailProtectedFieldsP457_() {
   const protectedMap = {};
   const session = detailSessionP457;
@@ -807,9 +916,10 @@ function hasActiveDetailDraftP457_() {
   const p494Active = (typeof hasAnyProtectedPortalDraftP494_ === 'function' && typeof getCurrentCustomerDetailDraftContextKeyP494B_ === 'function')
     ? hasAnyProtectedPortalDraftP494_(getCurrentCustomerDetailDraftContextKeyP494B_())
     : false;
+  const memoDomProtectedP519 = (typeof isMasterMemoDomProtectedP519_ === 'function') ? isMasterMemoDomProtectedP519_() : false;
   const session = detailSessionP457;
-  if (!session) return !!p494Active;
-  return !!(p494Active || session.focusedField || Object.keys(session.draft || {}).length || Object.keys(session.dirtyFields || {}).length || (session.pendingOps || []).length);
+  if (!session) return !!(p494Active || memoDomProtectedP519);
+  return !!(memoDomProtectedP519 || p494Active || session.focusedField || Object.keys(session.draft || {}).length || Object.keys(session.dirtyFields || {}).length || (session.pendingOps || []).length);
 }
 
 function markDetailDraftFieldP457_(key, value, options) {
@@ -2533,6 +2643,174 @@ function saveDetailFields() {
         throw err;
       });
   }, { source: 'detailModal', silentQueued: true });
+}
+
+
+// P520: 자료발송 전 고객상세 저장 안 된 입력값 확인/저장 ------------------------
+function getCustomerDetailFieldLabelBeforeSendP520_(key) {
+  key = String(key || '').trim();
+  const fallback = {
+    memo: '마스터시트 메모', status: '영업 진행 현황', finalQuote: '최종 견적가', discountRate: '할인율(%)',
+    email: '담당자 이메일', phone: '대표전화번호', directPhone: '직통번호', contact: '고객사 담당자',
+    area: '연면적', grade: '관리등급', buildingType: '건물 유형', vat: '부가세', contractUnit: '계약단위',
+    appointment: '관리자 선임 여부', maintenance: '유지점검', performance: '성능점검', contractStartDate: '계약시작일',
+    contractEndDate: '계약종료일', specialTerms: '용역신청서특약사항'
+  };
+  try {
+    const el = getDetailInputByKey_ ? getDetailInputByKey_(key) : document.querySelector('.detail-edit-input[data-key="' + key.replace(/"/g, '\\"') + '"]');
+    const item = el && el.closest ? el.closest('.field-item,.quote-row-p484') : null;
+    const labelEl = item && (item.querySelector('.field-label') || item.querySelector('.quote-label-p484'));
+    const text = labelEl && labelEl.textContent ? labelEl.textContent.trim() : '';
+    if (text) return text;
+  } catch (err) {}
+  return fallback[key] || key;
+}
+
+function isCurrentCustomerDetailTargetBeforeSendP520_(customerNo, rowNo) {
+  if (!currentDetail || currentDetail.isNew) return false;
+  const currentRowNo = Number(currentDetail.rowNo || 0) || 0;
+  const currentCustomerNo = normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo || '');
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = normalizeCustomerNoForKey_(customerNo || '');
+  if (rowNo && currentRowNo && rowNo !== currentRowNo) return false;
+  if (customerNo && currentCustomerNo && customerNo !== currentCustomerNo) return false;
+  return true;
+}
+
+function collectCustomerDetailUnsavedChangesBeforeSendP520_(customerNo, rowNo) {
+  if (!isCurrentCustomerDetailTargetBeforeSendP520_(customerNo, rowNo)) return [];
+  try { if (typeof registerCustomerDetailDraftFieldsP494B_ === 'function') registerCustomerDetailDraftFieldsP494B_({ detail: currentDetail || {}, reason: 'sendPreflightCollectP520' }); } catch (err) {}
+  const values = getDirtyDetailInputValues_() || {};
+  const keys = Object.keys(values).filter(function(k) { return values[k] != null; });
+  if (!keys.length) return [];
+  const expected = (typeof getCustomerDetailDraftExpectedValuesP494B_ === 'function')
+    ? getCustomerDetailDraftExpectedValuesP494B_(values)
+    : ((typeof getDetailBaseValuesForPatchP457_ === 'function') ? getDetailBaseValuesForPatchP457_(values) : {});
+  return keys.map(function(key) {
+    return {
+      source: 'detailModal',
+      key: key,
+      label: getCustomerDetailFieldLabelBeforeSendP520_(key),
+      rowNo: Number(currentDetail && currentDetail.rowNo) || Number(rowNo || 0) || 0,
+      customerNo: normalizeCustomerNoForKey_((currentDetail && currentDetail.customerNo) || currentDetailCustomerNo || customerNo || ''),
+      oldValue: expected && Object.prototype.hasOwnProperty.call(expected, key) ? String(expected[key] == null ? '' : expected[key]) : '',
+      newValue: String(values[key] == null ? '' : values[key])
+    };
+  });
+}
+
+function saveCustomerDetailDirtyBeforeSendP520_(customerNo, rowNo, options) {
+  options = options || {};
+  if (!isCurrentCustomerDetailTargetBeforeSendP520_(customerNo, rowNo)) return Promise.resolve({ ok: true, skipped: true, reason: 'not-current-detail' });
+  if (!isCustomerDetailFullReadyForEditP492_()) return Promise.reject(new Error(getCustomerDetailNotReadyMessageP492_()));
+  const targetRowNo = Number(currentDetail.rowNo) || Number(rowNo || 0) || 0;
+  const targetCustomerNo = normalizeCustomerNoForKey_(currentDetail.customerNo || currentDetailCustomerNo || customerNo || '');
+  let values = getDirtyDetailInputValues_() || {};
+  try {
+    values = prepareDetailContractValuesForClientSaveP112_(values, { requireFull: false });
+    if (Object.prototype.hasOwnProperty.call(values, 'area')) values.grade = applyDetailAreaGradeAutoUpdateP451_();
+    values = prepareDetailValuesForSaveP484_(values);
+  } catch (err) {
+    showModalError(err);
+    return Promise.reject(err);
+  }
+  if (!Object.keys(values).length) return Promise.resolve({ ok: true, skipped: true, reason: 'not-dirty' });
+
+  const saveSeq = ++customerDetailSaveSeq;
+  const clientSavedAt = new Date().toISOString();
+  const baseValues = (typeof getCustomerDetailDraftExpectedValuesP494B_ === 'function')
+    ? getCustomerDetailDraftExpectedValuesP494B_(values)
+    : ((typeof getDetailBaseValuesForPatchP457_ === 'function') ? getDetailBaseValuesForPatchP457_(values) : {});
+  const op = (typeof createDetailSaveOperationP457_ === 'function')
+    ? createDetailSaveOperationP457_(targetRowNo, targetCustomerNo, values, baseValues)
+    : null;
+  if (op && typeof addDetailPendingOperationP457_ === 'function') addDetailPendingOperationP457_(op);
+
+  const optimisticDetail = (typeof computeDetailViewModelP457_ === 'function' && detailSessionP457)
+    ? computeDetailViewModelP457_(detailSessionP457.serverSnapshot)
+    : applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(currentDetail)), values);
+  optimisticDetail.__pendingSave = true;
+  optimisticDetail.__pendingSaveSeq = saveSeq;
+  optimisticDetail.__optimisticSavedAt = clientSavedAt;
+  const guardId = markCustomerDetailServerSaveStartedP430_(targetRowNo, targetCustomerNo, saveSeq, values);
+
+  setCustomerDetailCache_(optimisticDetail, {
+    force: true,
+    skipPendingMerge: true,
+    source: 'sendPreflightOptimisticP520',
+    allowIndexPatch: true,
+    patchValues: values
+  });
+  currentDetail = optimisticDetail;
+  currentDetailCustomerNo = targetCustomerNo;
+  repaintCustomerResultsIfVisible_();
+  try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
+  setDetailEditBaselineFromCurrentInputs_();
+  try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch(e) {}
+  try { if (typeof updateDetailSaveButtonDirtyStateP457_ === 'function') updateDetailSaveButtonDirtyStateP457_(); } catch(e) {}
+
+  return enqueueCustomerSaveP220_(targetRowNo, targetCustomerNo, function() {
+    try { if (op && typeof markDetailOperationQueuedP457_ === 'function') markDetailOperationQueuedP457_(op); } catch(e) {}
+    try { if (op && typeof markDetailOperationApplyingP457_ === 'function') markDetailOperationApplyingP457_(op); } catch(e) {}
+    return runCustomerSaveRequestP220_('saveCustomerDetailFast', makeCustomerSavePayloadP202_(targetRowNo, targetCustomerNo, values, {
+      clientSaveSource: options.source || 'sendPreflight.detailModal',
+      clientRequestId: guardId,
+      clientSavedAt: clientSavedAt,
+      clientOperationId: op && op.opId ? op.opId : '',
+      expectedValues: baseValues,
+      requireAuditLog: false,
+      fastMode: true,
+      noSynchronousRefresh: true,
+      thinSave: true,
+      skipIndexQueue: true
+    })).then(function(res) {
+      if (res && res.conflictP473) {
+        try { if (op && typeof markDetailOperationFailedP457_ === 'function') markDetailOperationFailedP457_(op, new Error('저장 충돌 확인 필요'), true); } catch(e) {}
+        markCustomerDetailServerSaveFinishedP430_(guardId, res || { message: '저장 충돌 확인 필요' });
+        try { renderDetailSyncStatusP457_(); } catch(e) {}
+        if (typeof showPortalSaveConflictDialogP474_ === 'function') showPortalSaveConflictDialogP474_(res, { rowNo: targetRowNo, customerNo: targetCustomerNo, key: '', label: '고객 상세' });
+        throw new Error('고객상세 저장 충돌이 발생했습니다. 입력값은 유지됩니다.');
+      }
+      const confirmedValues = (res && (res.changedValues || res.values)) ? (res.changedValues || res.values) : values;
+      try { applyCustomerMasterMetaFromSaveP202_(targetRowNo, targetCustomerNo, res); } catch(e) {}
+      try { if (op && typeof markDetailOperationAppliedP457_ === 'function') markDetailOperationAppliedP457_(op, confirmedValues, res || {}); } catch(e) {}
+      if (res && res.detail && res.refreshedFromMaster && typeof applyServerDetailSafelyP457_ === 'function') {
+        applyServerDetailSafelyP457_(res.detail, { reason: 'sendPreflightSaveResultP520', source: 'saveResult', neverRender: true, allowIndexPatch: true });
+      }
+      const baseForView = (detailSessionP457 && detailSessionP457.serverSnapshot)
+        ? detailSessionP457.serverSnapshot
+        : (getCustomerDetailCache_(targetRowNo, targetCustomerNo) || currentDetail || { rowNo: targetRowNo, customerNo: targetCustomerNo });
+      const viewDetail = (typeof computeDetailViewModelP457_ === 'function' && detailSessionP457)
+        ? computeDetailViewModelP457_(detailSessionP457.serverSnapshot)
+        : applyDetailValuesToDetailObject_(JSON.parse(JSON.stringify(baseForView)), confirmedValues);
+      viewDetail.rowNo = Number(viewDetail.rowNo || targetRowNo) || targetRowNo;
+      viewDetail.customerNo = normalizeCustomerNoForKey_(viewDetail.customerNo || targetCustomerNo);
+      viewDetail.__pendingSave = !!(detailSessionP457 && detailSessionP457.pendingOps && detailSessionP457.pendingOps.length);
+      currentDetail = viewDetail;
+      setCustomerDetailCache_(viewDetail, {
+        force: true,
+        skipPendingMerge: true,
+        source: 'sendPreflightSaveResultP520',
+        allowIndexPatch: true,
+        patchValues: confirmedValues
+      });
+      repaintCustomerResultsIfVisible_();
+      try { if (typeof rerenderSendCustomerResultsIfVisible_ === 'function') rerenderSendCustomerResultsIfVisible_(); } catch(e) {}
+      markCustomerDetailServerSaveFinishedP430_(guardId, res || { message: '마스터시트 저장 완료' });
+      try { if (typeof renderDetailSyncStatusP457_ === 'function') renderDetailSyncStatusP457_(); } catch(e) {}
+      return res || { ok: true };
+    }, function(err) {
+      const isStale = typeof isCustomerStaleSaveErrorP202_ === 'function' && isCustomerStaleSaveErrorP202_(err);
+      try { if (op && typeof markDetailOperationFailedP457_ === 'function') markDetailOperationFailedP457_(op, err, isStale); } catch(e) {}
+      markCustomerDetailServerSaveFinishedP430_(guardId, null);
+      try { setCustomerDetailSaveUiP430_(false); } catch(e) {}
+      try { renderDetailSyncStatusP457_(); } catch(e) {}
+      if (typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err)) {
+        return { ok: true, queuedRetryP468: true, rowNo: targetRowNo, customerNo: targetCustomerNo, values: values, clientOperationId: op && op.opId || '', message: '저장 대기 중' };
+      }
+      throw err;
+    });
+  }, { source: 'sendPreflight.detailModal', silentQueued: true });
 }
 
 function gatherValuesForCalc(targetFinalPrice) {

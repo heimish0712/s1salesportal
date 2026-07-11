@@ -287,7 +287,7 @@ function isCustomerSearchEditDomProtectedP513_() {
     const keys = Object.keys(expandedMemoDraftMapP473 || {});
     for (let i = 0; i < keys.length; i++) {
       const entry = expandedMemoDraftMapP473[keys[i]] || {};
-      if (entry.focused || entry.dirty || entry.pending || entry.pendingOperationId || entry.conflict) return true;
+      if (isExpandedMemoEntryProtectedP519_(entry)) return true;
     }
   } catch(e) {}
   return false;
@@ -376,6 +376,7 @@ function renderResults(response, fromCache, options) {
   resultArea.innerHTML = html;
   bindCustomerResultInlineEditDelegationP1F_();
   try { if (typeof restoreCustomerSearchContinuitySnapshotP494C_ === 'function') restoreCustomerSearchContinuitySnapshotP494C_(p494cSnapshot); } catch (err) {}
+  try { if (typeof restoreExpandedMemoDraftAfterRenderP519_ === 'function') restoreExpandedMemoDraftAfterRenderP519_(customerExpandedRowNo); } catch (err) {}
   applyPendingSupportCustomerOpenV64_(rows);
 }
 
@@ -1140,6 +1141,10 @@ function findExpandedMemoDraftEntryP473_(rowNo, customerNo) {
   return null;
 }
 
+function isExpandedMemoEntryProtectedP519_(entry) {
+  return !!(entry && (entry.focused || entry.dirty || entry.pending || entry.pendingOperationId || entry.conflict || entry.userTouched));
+}
+
 function updateExpandedMemoDraftP473_(rowNo, customerNo, value, flags) {
   const key = getExpandedMemoDraftKeyP473_(rowNo, customerNo);
   if (!key || key === '0:') return null;
@@ -1186,7 +1191,7 @@ function getProtectedExpandedMemoValueP473_(rowNo, customerNo, fallbackValue) {
   const p494Value = (typeof getProtectedExpandedMemoValueP494C_ === 'function') ? getProtectedExpandedMemoValueP494C_(rowNo, customerNo, null) : null;
   if (p494Value != null) return String(p494Value);
   const entry = findExpandedMemoDraftEntryP473_(rowNo, customerNo);
-  if (entry && (entry.dirty || entry.focused || entry.pendingOperationId)) return String(entry.value == null ? '' : entry.value);
+  if (isExpandedMemoEntryProtectedP519_(entry)) return String(entry.value == null ? '' : entry.value);
   return String(fallbackValue == null ? '' : fallbackValue);
 }
 
@@ -1214,7 +1219,7 @@ function protectIncomingDetailMemoWithExpandedDraftP473_(detail) {
   try { if (typeof stageExpandedMemoServerValueP494C_ === 'function') stageExpandedMemoServerValueP494C_(detail.rowNo, detail.customerNo, getCustomerExpandFieldValue_(detail, 'basic', 'memo').value || detail.memo || '', { source: 'incomingDetail' }); } catch (err) {}
   const p494Value = (typeof getProtectedExpandedMemoValueP494C_ === 'function') ? getProtectedExpandedMemoValueP494C_(detail.rowNo, detail.customerNo, null) : null;
   const entry = findExpandedMemoDraftEntryP473_(detail.rowNo, detail.customerNo);
-  if ((p494Value == null) && (!entry || !(entry.dirty || entry.focused || entry.pendingOperationId))) return detail;
+  if ((p494Value == null) && !isExpandedMemoEntryProtectedP519_(entry)) return detail;
   const protectedMemo = p494Value != null ? String(p494Value) : String(entry.value == null ? '' : entry.value);
   detail.memo = protectedMemo;
   if (detail.detailFields && detail.detailFields.basic) {
@@ -1466,6 +1471,49 @@ function restoreCustomerSearchContinuitySnapshotP494C_(snapshot) {
     } catch (err) {}
   }
   try { registerVisibleExpandedRowDraftFieldsP494C_(); } catch (err) {}
+}
+
+function restoreExpandedMemoDraftAfterRenderP519_(rowNo, customerNo) {
+  rowNo = Number(rowNo || customerExpandedRowNo || 0) || 0;
+  if (!rowNo) return false;
+  const el = document.getElementById('expandedMemo_' + rowNo);
+  if (!el) return false;
+  const cno = customerNo || el.getAttribute('data-customer-no') || (findCustomerRowSummaryByRowNo_(rowNo) || {}).customerNo || '';
+  const entry = findExpandedMemoDraftEntryP473_(rowNo, cno);
+  const p494Value = (typeof getProtectedExpandedMemoValueP494C_ === 'function') ? getProtectedExpandedMemoValueP494C_(rowNo, cno, null) : null;
+  if ((p494Value == null) && !isExpandedMemoEntryProtectedP519_(entry)) return false;
+  const value = p494Value != null ? String(p494Value) : String(entry && entry.value != null ? entry.value : '');
+  const wasFocused = document.activeElement === el || !!(entry && entry.focused);
+  const selectionStart = typeof el.selectionStart === 'number' ? el.selectionStart : null;
+  const selectionEnd = typeof el.selectionEnd === 'number' ? el.selectionEnd : null;
+  const scrollTop = typeof el.scrollTop === 'number' ? el.scrollTop : 0;
+  if (String(el.value == null ? '' : el.value) !== value) el.value = value;
+  try {
+    el.classList.add('portal-draft-protected-p494');
+    if (entry && entry.pending) el.classList.add('portal-draft-pending-p494');
+    if (entry && entry.conflict) el.classList.add('portal-draft-conflict-p494');
+  } catch (err) {}
+  try {
+    if (typeof syncExpandedMemoDraftGuardP494C_ === 'function') {
+      syncExpandedMemoDraftGuardP494C_(rowNo, cno, value, {
+        focused: wasFocused,
+        dirty: !!(entry && (entry.dirty || entry.pending || entry.conflict || entry.userTouched)),
+        pending: !!(entry && entry.pending),
+        pendingOperationId: entry && entry.pendingOperationId || '',
+        conflict: !!(entry && entry.conflict),
+        userTouched: !!(entry && entry.userTouched),
+        baseLoaded: true
+      });
+    }
+  } catch (err2) {}
+  try {
+    if (wasFocused) {
+      el.focus({ preventScroll: true });
+      if (selectionStart != null && typeof el.setSelectionRange === 'function') el.setSelectionRange(selectionStart, selectionEnd == null ? selectionStart : selectionEnd);
+    }
+    if (typeof el.scrollTop === 'number') el.scrollTop = scrollTop;
+  } catch (err3) {}
+  return true;
 }
 
 // P474: field-level conflict popup ------------------------------------------------
@@ -3409,6 +3457,127 @@ function saveExpandedCustomerMemo(rowNo) {
         return { ok: true, queuedRetryP473: true, rowNo: rowNo, customerNo: targetCustomerNo, memo: memoValue, message: '메모 저장 대기 중' };
       });
   }, { source: 'customer.expandedMemo', key: 'memo' });
+}
+
+
+function collectExpandedMemoUnsavedChangesBeforeSendP520_(customerNo, rowNo) {
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = normalizeCustomerNoForKey_(customerNo || '');
+  if (!rowNo && customerExpandedRowNo) rowNo = Number(customerExpandedRowNo) || 0;
+  if (!rowNo) return [];
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const cno = customerNo || normalizeCustomerNoForKey_(rowSummary.customerNo || '');
+  const el = document.getElementById('expandedMemo_' + rowNo);
+  const entry = findExpandedMemoDraftEntryP473_(rowNo, cno);
+  let value = null;
+  let baseValue = null;
+  try {
+    const fieldP494C = (typeof getExpandedMemoDraftFieldP494C_ === 'function') ? getExpandedMemoDraftFieldP494C_(rowNo, cno, false) : null;
+    if (fieldP494C && (fieldP494C.dirty || fieldP494C.userTouched || fieldP494C.focused || fieldP494C.pending || fieldP494C.conflict)) {
+      value = fieldP494C.draftValue == null ? '' : String(fieldP494C.draftValue);
+      baseValue = fieldP494C.baseValue == null ? '' : String(fieldP494C.baseValue);
+    }
+  } catch (err) {}
+  if (value == null && entry && (entry.dirty || entry.userTouched || entry.focused || entry.pending || entry.conflict || entry.pendingOperationId)) {
+    value = entry.value == null ? '' : String(entry.value);
+    baseValue = entry.baseValue == null ? getExpandedMemoBaseValueP494C_(rowNo, cno, value) : String(entry.baseValue);
+  }
+  if (value == null && el) {
+    const currentValue = el.value == null ? '' : String(el.value);
+    const originalValue = el.getAttribute('data-original') || getExpandedMemoBaseValueP494C_(rowNo, cno, currentValue);
+    if (normalizeExpandedMemoCompareP494C_(currentValue) !== normalizeExpandedMemoCompareP494C_(originalValue)) {
+      value = currentValue;
+      baseValue = originalValue;
+    }
+  }
+  if (value == null) return [];
+  if (normalizeExpandedMemoCompareP494C_(value) === normalizeExpandedMemoCompareP494C_(baseValue)) return [];
+  return [{
+    source: 'expandedMemo',
+    key: 'memo',
+    label: '마스터시트 메모',
+    rowNo: rowNo,
+    customerNo: cno,
+    oldValue: baseValue == null ? '' : String(baseValue),
+    newValue: value == null ? '' : String(value)
+  }];
+}
+
+function saveExpandedCustomerMemoBeforeSendP520_(rowNo, customerNo, options) {
+  options = options || {};
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = normalizeCustomerNoForKey_(customerNo || '');
+  if (!rowNo) return Promise.resolve({ ok: true, skipped: true, reason: 'no-row' });
+  const el = document.getElementById('expandedMemo_' + rowNo);
+  const entry = findExpandedMemoDraftEntryP473_(rowNo, customerNo);
+  const rowSummary = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const cno = customerNo || normalizeCustomerNoForKey_(rowSummary.customerNo || (entry && entry.customerNo) || (el && el.getAttribute('data-customer-no')) || '');
+  let memoValue = entry && entry.value != null ? String(entry.value) : (el ? String(el.value || '') : '');
+  let prevMemo = entry && entry.baseValue != null ? String(entry.baseValue) : '';
+  try {
+    const fieldP494C = (typeof getExpandedMemoDraftFieldP494C_ === 'function') ? getExpandedMemoDraftFieldP494C_(rowNo, cno, false) : null;
+    if (fieldP494C) {
+      if (fieldP494C.draftValue != null) memoValue = String(fieldP494C.draftValue);
+      if (fieldP494C.baseValue != null) prevMemo = String(fieldP494C.baseValue);
+    }
+  } catch (err) {}
+  if (!prevMemo) {
+    const cachedForMemo = getCustomerDetailCache_(rowNo, cno);
+    prevMemo = el && el.getAttribute('data-original') || (cachedForMemo && cachedForMemo.memo) || (rowSummary && rowSummary.memo) || '';
+  }
+  if (normalizeExpandedMemoCompareP494C_(memoValue) === normalizeExpandedMemoCompareP494C_(prevMemo)) {
+    return Promise.resolve({ ok: true, skipped: true, reason: 'not-dirty' });
+  }
+  const beforeAuthor = memoValue;
+  memoValue = appendCurrentUserToCustomerMemoTemplateLinesP508_(memoValue, prevMemo);
+  if (el && memoValue !== beforeAuthor) {
+    el.value = memoValue;
+    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch(e) {}
+  }
+  const operationId = 'DOP_EXP_MEMO_SEND_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+  const btn = document.getElementById('expandedMemoSaveBtn_' + rowNo);
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중'; }
+  markExpandedMemoSavePendingP473_(rowNo, cno, operationId, memoValue);
+  applyCustomerMemoOptimistic_(rowNo, memoValue);
+  let payload = null;
+  return enqueueCustomerSaveP220_(rowNo, cno, function() {
+    payload = makeCustomerMemoSavePayloadP220_(rowNo, cno, memoValue, {
+      expectedMemo: prevMemo,
+      thinSave: true,
+      clientOperationId: operationId,
+      clientSaveSource: options.source || 'sendPreflight.expandedMemo'
+    });
+    return runCustomerSaveRequestP220_('saveCustomerMemoFast', payload).then(function(res) {
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      applyCustomerMasterMetaFromSaveP202_(rowNo, cno, res);
+      applyCustomerMemoOptimistic_(rowNo, memoValue);
+      if (isPortalSaveConflictResponseP474_(res)) {
+        markExpandedMemoSavePendingP473_(rowNo, cno, operationId, memoValue);
+        try {
+          const info = (res && (res.conflictInfoP474 || res.conflictInfo)) || {};
+          markExpandedMemoConflictP494C_(rowNo, cno, info.currentValue || info.serverValue || '');
+        } catch(e) {}
+        if (typeof showPortalSaveConflictDialogP474_ === 'function') showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: cno, key: 'memo', label: '마스터시트 메모' });
+        throw new Error('마스터시트 메모 저장 충돌이 발생했습니다. 입력값은 유지됩니다.');
+      }
+      if (res && res.queuedFallbackP473) {
+        markExpandedMemoSavePendingP473_(rowNo, cno, operationId, memoValue);
+        try { persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'sendPreflight.expandedMemo', key: 'memo', lastError: 'serverQueuedP473' }); } catch(e) {}
+        return res;
+      }
+      markExpandedMemoSaveDoneP473_(rowNo, cno, operationId, memoValue);
+      return res || { ok: true };
+    }, function(err) {
+      if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+      markExpandedMemoSavePendingP473_(rowNo, cno, operationId, memoValue);
+      applyCustomerMemoOptimistic_(rowNo, memoValue);
+      try { if (payload) persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'sendPreflight.expandedMemo', key: 'memo', lastError: getErrorMessage_(err) }); } catch(e) {}
+      if (typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err)) {
+        return { ok: true, queuedRetryP473: true, rowNo: rowNo, customerNo: cno, memo: memoValue, message: '저장 대기 중' };
+      }
+      throw err;
+    });
+  }, { source: 'sendPreflight.expandedMemo', key: 'memo', silentQueued: true });
 }
 
 function resetExpandedCustomerMemo(rowNo) {

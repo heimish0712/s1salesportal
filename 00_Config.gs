@@ -38,6 +38,32 @@
  * 원칙: 기능 변경 없이 최신 단일 파일을 물리적으로 분리
  ***************************************/
 
+
+/***************************************
+ * P516 Baseline Lock
+ * 기준 ZIP: Git_salesportal_260709_2153.zip
+ * 기준일시: 2026-07-09 21:53
+ * 목적: 운영 안정화 스프린트 시작 전 공식 기준본 고정
+ * 주의: 이 블록은 읽기용 메타정보이며 업무 로직에 개입하지 않습니다.
+ ***************************************/
+const PORTAL_RELEASE_INFO = Object.freeze({
+  version: 'P516',
+  releaseName: 'P516_baseline_lock',
+  baselineZip: 'Git_salesportal_260709_2153.zip',
+  baselineFolder: 'Git_salesportal',
+  baselineTimestamp: '2026-07-09 21:53',
+  stabilizationSprint: 'operation_stabilization',
+  businessLogicChanged: false,
+  includedMilestones: [
+    'P515_settings_clear_portal_cache',
+    'P516_my_customer_folder_paged_render'
+  ],
+  notes: [
+    'Official baseline before operation stabilization sprint.',
+    'No menu, save, send, search, permission, cache, or contract logic changed in this patch.'
+  ]
+});
+
 const PORTAL_CONFIG = {
   MASTER_SPREADSHEET_ID: '1ADDJMrej-EJBw4QHkq17xefWxQw5hZ_NgQLf2BuCD8Q',
 
