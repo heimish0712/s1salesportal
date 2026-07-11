@@ -1,5 +1,5 @@
 <script>
-// P528: 나의 고객 현황 - 규칙 기반 1차 분석 화면
+// P529: 나의 고객 현황 - 정밀 규칙 분석 + 고객현황분석_DB 저장 화면
 let myCustomerStatusBundleP528 = null;
 let myCustomerStatusLoadingP528 = false;
 let myCustomerStatusActiveViewP528 = 'all';
@@ -58,20 +58,21 @@ function renderMyCustomerStatusPageP528_() {
   let html = '';
   html += '<div class="my-status-shell-p528">';
   html += '<div class="my-status-toolbar-p528">';
-  html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: 마스터시트 영업담당자 = ' + esc(owner.name || owner.displayName || '-') + ' · 분석방식: 규칙 기반 1차 분석</div></div>';
+  html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: 마스터시트 영업담당자 = ' + esc(owner.name || owner.displayName || '-') + ' · 분석방식: 마스터메모+TM/컨택이력 정밀 분석</div></div>';
   html += '<div class="my-status-actions-p528"><button class="secondary" onclick="loadMyCustomerStatusPageP528(true)">새로고침</button><button class="secondary" onclick="switchPage(\'myCustomerFolder\')">나의 고객 폴더</button></div>';
   html += '</div>';
 
-  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 검색인덱스 ' + esc((bundle.index && bundle.index.builtAt) || '-') + (bundle.index && bundle.index.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + '</div>';
+  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 검색인덱스 ' + esc((bundle.index && bundle.index.builtAt) || '-') + (bundle.index && bundle.index.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + '</div>';
 
   html += '<div class="my-status-cards-p528">';
   html += renderMyCustomerStatusCardP528_('전체 내 고객', cards.total, 'all', '', '담당자 기준 전체 고객');
   html += renderMyCustomerStatusCardP528_('진행중', cards.active, 'active', '', '수주실패/계약완료 제외');
   html += renderMyCustomerStatusCardP528_('상태지정필요', cards.needStatus, 'needStatus', '', '진행현황 정리 필요');
-  html += renderMyCustomerStatusCardP528_('상태 불일치 의심', cards.mismatch, 'mismatch', '', '메모와 진행현황 비교');
+  html += renderMyCustomerStatusCardP528_('상태 불일치 의심', cards.mismatch, 'mismatch', '', '메모/TM 이력과 진행현황 비교');
   html += renderMyCustomerStatusCardP528_('최근 7일 연락', cards.recent7, 'recent7', '', '최신 메모 날짜 기준');
   html += renderMyCustomerStatusCardP528_('14일 이상 미접촉', cards.noContact14, 'noContact14', '', '진행중 고객 기준');
   html += renderMyCustomerStatusCardP528_('자료발송 후 미후속', cards.sentNoFollow, 'sentNoFollow', '', '발송 후 확인 필요');
+  html += renderMyCustomerStatusCardP528_('수주실패/종결 확인', cards.terminal, 'terminal', '', '타사결정·계약완료 등 종결성 신호');
   html += renderMyCustomerStatusCardP528_('계약 가능성 높음', cards.highPotential, 'highPotential', '', '점수 6점 이상');
   html += renderMyCustomerStatusCardP528_('데이터 누락', cards.dataMissing, 'dataMissing', '', '영업 필수값 확인');
   html += '</div>';
@@ -87,6 +88,15 @@ function renderMyCustomerStatusPageP528_() {
   html += '</div>';
   html += '</div>';
   area.innerHTML = html;
+}
+
+
+function renderMyCustomerStatusDbMetaP529_(bundle) {
+  const db = bundle && bundle.analysisDb || {};
+  if (!db) return '';
+  if (db.saved) return ' · 분석DB 저장 ' + esc(String(db.rows || 0)) + '건(' + esc(db.sheetName || '고객현황분석_DB') + ')';
+  if (db.error) return ' · <b>분석DB 저장 실패</b>: ' + esc(db.error);
+  return '';
 }
 
 function renderMyCustomerStatusCardP528_(label, value, view, viewValue, desc) {
@@ -106,7 +116,7 @@ function renderMyCustomerStatusDistributionP528_(items) {
 
 function renderMyCustomerStatusTopIssuesP528_(bundle) {
   const list = ((bundle && bundle.lists && bundle.lists.mismatch) || []).slice(0, 5);
-  let html = '<div class="my-status-panel-head-p528"><div><b>상태 불일치 의심 TOP 5</b><span>자동수정이 아니라 사용자가 확인 후 적용합니다.</span></div><button type="button" class="secondary" onclick="setMyCustomerStatusViewP528_(\'mismatch\',\'\')">전체보기</button></div>';
+  let html = '<div class="my-status-panel-head-p528"><div><b>상태 불일치 의심 TOP 5</b><span>마스터메모·TM/컨택이력 근거 기준. 자동수정이 아니라 사용자가 확인 후 적용합니다.</span></div><button type="button" class="secondary" onclick="setMyCustomerStatusViewP528_(\'mismatch\',\'\')">전체보기</button></div>';
   if (!list.length) return html + '<div class="my-status-empty-p528">상태 불일치 의심 건이 없습니다.</div>';
   html += '<div class="my-status-issue-list-p528">';
   list.forEach(function(row) {
@@ -119,7 +129,7 @@ function renderMyCustomerStatusTopIssuesP528_(bundle) {
 function renderMyCustomerStatusListToolbarP528_() {
   const tabs = [
     ['all','전체'], ['mismatch','상태 불일치'], ['recent7','최근 연락'], ['noContact14','장기 미접촉'],
-    ['sentNoFollow','자료발송 후 미후속'], ['highPotential','계약 가능성 높음'], ['dataMissing','데이터 누락'], ['active','진행중'], ['needStatus','상태지정필요']
+    ['sentNoFollow','자료발송 후 미후속'], ['terminal','수주실패/종결 확인'], ['highPotential','계약 가능성 높음'], ['dataMissing','데이터 누락'], ['active','진행중'], ['needStatus','상태지정필요']
   ];
   let html = '<div class="my-status-tabs-p528">';
   tabs.forEach(function(t) {
@@ -157,6 +167,8 @@ function renderMyCustomerStatusRowP528_(row) {
     analysisHtml += '<span class="muted">추천 없음</span>';
   }
   if (a.potentialScore) analysisHtml += '<div class="my-status-potential-p528">가능성점수 ' + esc(String(a.potentialScore)) + '</div>';
+  if (a.sourceLabels && a.sourceLabels.length) analysisHtml += '<div class="my-status-source-p529">근거: ' + esc(a.sourceLabels.join(', ')) + '</div>';
+  if (a.matchedKeywords) analysisHtml += renderMyCustomerStatusKeywordBadgesP529_(a.matchedKeywords);
   if (a.missingFields && a.missingFields.length) analysisHtml += '<div class="my-status-missing-p528">누락: ' + esc(a.missingFields.join(', ')) + '</div>';
 
   let actions = '<div class="my-status-row-actions-p528">';
@@ -173,9 +185,24 @@ function renderMyCustomerStatusRowP528_(row) {
     '<td><span class="status">' + esc(row.status || '(공란)') + '</span></td>' +
     '<td>' + analysisHtml + '</td>' +
     '<td>' + esc(row.lastContactDate || '-') + '<div class="muted">' + (a.lastContactDays == null ? '날짜 없음' : esc(String(a.lastContactDays)) + '일 전') + '</div></td>' +
-    '<td><div class="my-status-memo-p528">' + esc(row.memoSummary || '') + '</div><div class="muted">' + esc(a.reason || '') + '</div></td>' +
+    '<td><div class="my-status-memo-p528">' + esc(row.memoSummary || '') + '</div><div class="muted">' + esc(a.latestEventSource ? ('출처: ' + a.latestEventSource) : '') + '</div><div class="muted">' + esc(a.reason || '') + '</div></td>' +
     '<td>' + actions + '</td>' +
     '</tr>';
+}
+
+
+function renderMyCustomerStatusKeywordBadgesP529_(matched) {
+  matched = matched || {};
+  const items = [];
+  if (matched.fail && matched.fail.length) items.push(['bad', '부정', matched.fail.slice(0, 3).join(', ')]);
+  if (matched.order && matched.order.length) items.push(['good', '계약', matched.order.slice(0, 3).join(', ')]);
+  if (matched.quote && matched.quote.length) items.push(['neutral', '발송', matched.quote.slice(0, 3).join(', ')]);
+  if (matched.long && matched.long.length) items.push(['warn', '장기', matched.long.slice(0, 3).join(', ')]);
+  if (!items.length) return '';
+  let html = '<div class="my-status-keywords-p529">';
+  items.forEach(function(it) { html += '<span class="' + it[0] + '">' + esc(it[1]) + ': ' + esc(it[2]) + '</span>'; });
+  html += '</div>';
+  return html;
 }
 
 function renderMyCustomerStatusPagerP528_(total) {
@@ -195,6 +222,7 @@ function getMyCustomerStatusRowsForViewP528_() {
   else if (view === 'noContact14') rows = (bundle.lists && bundle.lists.noContact14 || []).slice();
   else if (view === 'sentNoFollow') rows = (bundle.lists && bundle.lists.sentNoFollow || []).slice();
   else if (view === 'highPotential') rows = (bundle.lists && bundle.lists.highPotential || []).slice();
+  else if (view === 'terminal') rows = (bundle.lists && bundle.lists.terminal || []).slice();
   else if (view === 'dataMissing') rows = (bundle.lists && bundle.lists.dataMissing || []).slice();
   else if (view === 'active') rows = rows.filter(function(r) { return r.status !== '수주실패' && r.status !== '계약완료'; });
   else if (view === 'needStatus') rows = rows.filter(function(r) { return !String(r.status || '').trim() || String(r.status || '').indexOf('상태지정') >= 0; });
@@ -203,7 +231,7 @@ function getMyCustomerStatusRowsForViewP528_() {
   if (kw) {
     rows = rows.filter(function(r) {
       const a = r.analysis || {};
-      return [r.customerNo, r.company, r.status, r.vendor, r.memoSummary, a.recommendedStatus, a.reason, a.nextAction].join(' ').toLowerCase().indexOf(kw) >= 0;
+      return [r.customerNo, r.company, r.status, r.vendor, r.memoSummary, a.recommendedStatus, a.reason, a.nextAction, (a.sourceLabels||[]).join(' '), JSON.stringify(a.matchedKeywords||{})].join(' ').toLowerCase().indexOf(kw) >= 0;
     });
   }
   return rows;
@@ -241,7 +269,7 @@ function moveMyCustomerStatusPageP528_(delta) {
 function applyMyCustomerRecommendedStatusP528_(rowNo, customerNo, newStatus, expectedStatus) {
   if (!rowNo || !customerNo || !newStatus) return toast('상태 변경 대상이 올바르지 않습니다.');
   if (!confirm('진행현황을 [' + expectedStatus + '] → [' + newStatus + ']로 변경할까요?\n\n메모 분석 추천값이므로 실제 고객 상황을 확인한 뒤 적용해 주세요.')) return;
-  const opId = 'MY_STATUS_P528_' + String(customerNo) + '_' + String(rowNo) + '_' + Date.now();
+  const opId = 'MY_STATUS_P529_' + String(customerNo) + '_' + String(rowNo) + '_' + Date.now();
   google.script.run
     .withSuccessHandler(function(res) {
       toast('진행현황을 변경했습니다.');

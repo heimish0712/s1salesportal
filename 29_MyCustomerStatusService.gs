@@ -1,13 +1,22 @@
 /***************************************
  * S1 Sales Portal - 29_MyCustomerStatusService.gs
- * P528: 나의 고객 현황 - 규칙 기반 1차 분석
- * - 내 고객 기준: 마스터시트/검색인덱스의 영업담당자 = 현재 로그인 사용자의 영업담당자명
- * - GPT 연동 전 단계: 최신 메모 이벤트 + 키워드 기반 추천/불일치/후속관리 후보 추출
+ * P529: 나의 고객 현황 - 정밀 규칙 분석 + TM/컨택이력 통합 + 고객현황분석_DB 저장
+ * - 내 고객 기준: 마스터시트 영업담당자 = 현재 로그인 사용자의 영업담당자명
+ * - 마스터시트 원본 메모 + 컨택이력_DB + TM 컨택 내용 + 자료발송 스냅샷을 통합 분석
+ * - GPT 연동 전 단계: 비용 0원 규칙 기반 정밀 분석, 결과는 WebApp DB의 고객현황분석_DB에 저장
  ***************************************/
 
-const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P528_RULE_BASED_MEMO_ANALYZER_V1';
+const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P529_RULE_TM_CONTACT_ANALYZER_V2';
+const MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 = '고객현황분석_DB';
 const MY_CUSTOMER_STATUS_BLOCKING_STATUSES_P528 = ['수주실패', '계약완료'];
 const MY_CUSTOMER_STATUS_ACTIVE_STATUSES_P528 = ['견적제출완료', '장기 추진건', '고객 설득 중', '발주완료', '!!상태지정필요!!'];
+const MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529 = [
+  '분석일시', '분석ID', '고객번호', 'rowNo', '회사명', '영업담당자', '현재상태', '추천상태',
+  '판정유형', '신뢰도', '우선순위등급', '불일치여부', '분석소스', '최근연락일', '최근이벤트출처',
+  '최근이벤트요약', '강한긍정키워드', '강한부정키워드', '계약진행키워드', '자료발송키워드',
+  '장기추진키워드', '데이터누락키워드', '가능성점수', '위험태그', '추천액션', '근거JSON',
+  '이벤트JSON', 'memoHash', 'contactHistoryHash', 'sendHash', '분석버전', '검토상태', '검토자', '검토일시', '검토메모'
+];
 
 function getMyCustomerStatusDashboardP528(options) {
   options = options || {};
@@ -16,11 +25,15 @@ function getMyCustomerStatusDashboardP528(options) {
   const aliases = buildMyCustomerStatusOwnerAliasesP528_(perm);
   const indexData = getCustomerSearchIndexData(perm);
   const sourceRows = Array.isArray(indexData.rows) ? indexData.rows : [];
-  const ownRows = sourceRows.filter(function(row) { return isMyCustomerStatusOwnRowP528_(row, aliases); });
+  const ownRowsRaw = sourceRows.filter(function(row) { return isMyCustomerStatusOwnRowP528_(row, aliases); });
   const now = new Date();
 
+  const masterMap = getMyCustomerMasterRowMapP529_(ownRowsRaw);
+  const ownRows = ownRowsRaw.map(function(row) { return enrichMyCustomerStatusRowFromMasterP529_(row, masterMap); });
+  const contactMap = getMyCustomerContactHistoryMapP529_(ownRows);
+
   const analyzed = ownRows.map(function(row) {
-    return buildMyCustomerStatusAnalyzedRowP528_(row, now);
+    return buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap);
   }).filter(function(row) { return row && row.rowNo; });
 
   const statusCounts = {};
@@ -40,9 +53,26 @@ function getMyCustomerStatusDashboardP528(options) {
     .sort(function(a, b) { return (b.analysis.potentialScore || 0) - (a.analysis.potentialScore || 0); });
   const dataMissingRows = analyzed.filter(function(row) { return !!row.analysis.dataMissing; })
     .sort(function(a, b) { return (b.analysis.missingFields || []).length - (a.analysis.missingFields || []).length; });
+  const terminalRows = analyzed.filter(function(row) { return !!row.analysis.terminalCandidate; })
+    .sort(sortMyCustomerStatusByRecentP528_);
 
   const activeCount = analyzed.filter(function(row) { return isMyCustomerStatusActiveP528_(row.status); }).length;
   const needStatusCount = analyzed.filter(function(row) { return isMyCustomerStatusNeedStatusP528_(row.status); }).length;
+
+  let analysisDbResult = { saved: false, rows: 0, sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 };
+  if (options.persist !== false) {
+    try {
+      analysisDbResult = saveMyCustomerStatusAnalysisRowsP529_(analyzed, perm, aliases, started);
+    } catch (err) {
+      analysisDbResult = {
+        saved: false,
+        rows: 0,
+        sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
+        error: err && err.message ? err.message : String(err || '')
+      };
+      try { Logger.log('고객현황분석_DB 저장 실패: ' + (err && err.stack || err)); } catch (e) {}
+    }
+  }
 
   return {
     ok: true,
@@ -62,6 +92,7 @@ function getMyCustomerStatusDashboardP528(options) {
       sourceTotal: sourceRows.length,
       ownTotal: analyzed.length
     },
+    analysisDb: analysisDbResult,
     statusOptions: (PORTAL_CONFIG.STATUS_OPTIONS || []).slice(),
     statusCounts: objectToSortedStatusCountArrayP528_(statusCounts),
     cards: {
@@ -73,7 +104,8 @@ function getMyCustomerStatusDashboardP528(options) {
       noContact14: noContactRows.length,
       sentNoFollow: sentNoFollowRows.length,
       highPotential: highPotentialRows.length,
-      dataMissing: dataMissingRows.length
+      dataMissing: dataMissingRows.length,
+      terminal: terminalRows.length
     },
     rows: analyzed.slice(0, 1500),
     lists: {
@@ -82,7 +114,8 @@ function getMyCustomerStatusDashboardP528(options) {
       noContact14: noContactRows.slice(0, 300),
       sentNoFollow: sentNoFollowRows.slice(0, 300),
       highPotential: highPotentialRows.slice(0, 300),
-      dataMissing: dataMissingRows.slice(0, 300)
+      dataMissing: dataMissingRows.slice(0, 300),
+      terminal: terminalRows.slice(0, 300)
     }
   };
 }
@@ -114,8 +147,8 @@ function updateMyCustomerStatusFromAnalysisP528(payload) {
     customerNo: customerNo,
     values: { status: newStatus },
     expectedValues: { status: currentStatus },
-    clientSaveSource: 'myCustomerStatus.analysisStatusApply.P528',
-    source: 'myCustomerStatus.analysisStatusApply.P528',
+    clientSaveSource: 'myCustomerStatus.analysisStatusApply.P529',
+    source: 'myCustomerStatus.analysisStatusApply.P529',
     clientOperationId: String(payload.clientOperationId || makeMyCustomerStatusOperationIdP528_(customerNo, rowNo)),
     thinSave: true,
     fastMode: true,
@@ -127,7 +160,7 @@ function updateMyCustomerStatusFromAnalysisP528(payload) {
     customerNo: customerNo,
     oldStatus: currentStatus,
     newStatus: newStatus,
-    source: 'myCustomerStatus.analysisStatusApply.P528'
+    source: 'myCustomerStatus.analysisStatusApply.P529'
   });
 }
 
@@ -176,12 +209,151 @@ function isMyCustomerStatusOwnRowP528_(row, aliases) {
   });
 }
 
-function buildMyCustomerStatusAnalyzedRowP528_(row, now) {
+function getMyCustomerMasterRowMapP529_(ownRows) {
+  const map = { byRowNo: {}, byCustomerNo: {} };
+  try {
+    const needRowNo = {};
+    const needCustomerNo = {};
+    (ownRows || []).forEach(function(row) {
+      if (row && row.rowNo) needRowNo[String(row.rowNo)] = true;
+      const cno = normalizeCustomerNoForKey_(row && row.customerNo || '');
+      if (cno) needCustomerNo[cno] = true;
+    });
+    if (!Object.keys(needRowNo).length && !Object.keys(needCustomerNo).length) return map;
+    const masterObjects = getMasterObjects_();
+    masterObjects.forEach(function(obj) {
+      const rn = String(obj.__rowNo || '');
+      const cno = normalizeCustomerNoForKey_(getCustomerListValue_(obj, 'customerNo') || obj['고객번호'] || '');
+      if (rn && needRowNo[rn]) map.byRowNo[rn] = obj;
+      if (cno && needCustomerNo[cno]) map.byCustomerNo[cno] = obj;
+    });
+  } catch (err) {
+    try { Logger.log('나의 고객 현황 마스터 원본 메모 조회 실패: ' + (err && err.stack || err)); } catch (e) {}
+  }
+  return map;
+}
+
+function enrichMyCustomerStatusRowFromMasterP529_(indexRow, masterMap) {
+  indexRow = indexRow || {};
+  masterMap = masterMap || { byRowNo: {}, byCustomerNo: {} };
+  const rn = String(indexRow.rowNo || '');
+  const cno = normalizeCustomerNoForKey_(indexRow.customerNo || '');
+  const obj = (rn && masterMap.byRowNo[rn]) || (cno && masterMap.byCustomerNo[cno]) || null;
+  if (!obj) return indexRow;
+  const out = Object.assign({}, indexRow);
+  out.__source = 'master+index';
+  out.__summary = false;
+  out.__masterBacked = true;
+  out.customerNo = getCustomerListValue_(obj, 'customerNo') || out.customerNo;
+  out.orderNo = getCustomerListValue_(obj, 'orderNo') || out.orderNo;
+  out.company = getCustomerListValue_(obj, 'company') || out.company;
+  out.salesRep = getCustomerListValue_(obj, 'salesRep') || out.salesRep;
+  out.status = getCustomerListValue_(obj, 'status') || out.status;
+  out.customerRank = getCustomerListValue_(obj, 'customerRank') || out.customerRank;
+  out.contact = getCustomerListValue_(obj, 'contact') || out.contact;
+  out.phone = getCustomerListValue_(obj, 'phone') || out.phone;
+  out.directPhone = getCustomerListValue_(obj, 'directPhone') || out.directPhone;
+  out.email = getCustomerListValue_(obj, 'email') || out.email;
+  out.vendor = getCustomerListValue_(obj, 'vendor') || out.vendor;
+  out.finalQuote = getCustomerListValue_(obj, 'finalQuote') || out.finalQuote;
+  out.memo = getCustomerListValue_(obj, 'memo') || out.memo || '';
+  out.fullMemo = out.memo;
+  out.address = getCustomerListValue_(obj, 'address') || out.address;
+  out.fullAddress = getCustomerListValue_(obj, 'address') || out.fullAddress;
+  out.area = getCustomerIndexObjectValueK2_(obj, 'area') || out.area;
+  out.grade = getCustomerIndexObjectValueK2_(obj, 'grade') || out.grade;
+  out.buildingType = getCustomerIndexObjectValueK2_(obj, 'buildingType') || out.buildingType;
+  out.contractUnit = getCustomerIndexObjectValueK2_(obj, 'contractUnit') || out.contractUnit;
+  out.appointment = getCustomerIndexObjectValueK2_(obj, 'appointment') || out.appointment;
+  out.maintenance = getCustomerIndexObjectValueK2_(obj, 'maintenance') || out.maintenance;
+  out.performance = getCustomerIndexObjectValueK2_(obj, 'performance') || out.performance;
+  out.vat = getCustomerIndexObjectValueK2_(obj, 'vat') || out.vat;
+  out.discountRate = getCustomerIndexObjectValueK2_(obj, 'discountRate') || out.discountRate;
+  out.specialTerms = getCustomerIndexObjectValueK2_(obj, 'specialTerms') || out.specialTerms;
+  out.lastSent = getCustomerIndexObjectValueK2_(obj, 'lastSent') || out.lastSent;
+  out.sendCount = getCustomerIndexObjectValueK2_(obj, ['발송횟수', '발송 횟수']) || out.sendCount;
+  out.sendStatus = getCustomerIndexObjectValueK2_(obj, ['발송상태', '발송 상태']) || out.sendStatus;
+  out.sentAt = getCustomerIndexObjectValueK2_(obj, 'sentAt') || out.sentAt;
+  out.memoInferredStatus = getCustomerIndexObjectValueK2_(obj, ['메모상 추측 상태값', '메모상추측상태값', '메모 추측 상태값']) || out.memoInferredStatus;
+  out.statusMatch = getCustomerIndexObjectValueK2_(obj, ['상태값 일치 여부', '상태값일치여부']) || out.statusMatch;
+  out.tmProgressStatus = getCustomerIndexObjectValueK2_(obj, 'tmProgressStatus') || out.tmProgressStatus;
+  out.tmContactContent = getCustomerIndexObjectValueK2_(obj, 'tmContactContent') || out.tmContactContent;
+  return out;
+}
+
+function getMyCustomerContactHistoryMapP529_(ownRows) {
+  const result = { byCustomerNo: {}, byRowNo: {}, count: 0 };
+  const customerKeys = {};
+  const rowKeys = {};
+  (ownRows || []).forEach(function(row) {
+    const cno = normalizeCustomerNoForKey_(row && row.customerNo || '');
+    const rn = String(row && row.rowNo || '').trim();
+    if (cno) customerKeys[cno] = true;
+    if (rn) rowKeys[rn] = true;
+  });
+  if (!Object.keys(customerKeys).length && !Object.keys(rowKeys).length) return result;
+  try {
+    const ss = getWebAppDbSpreadsheet_();
+    const sheet = ss.getSheetByName(PORTAL_CONFIG.CONTACT_HISTORY_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return result;
+    const lastCol = sheet.getLastColumn();
+    const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+    const map = {};
+    headers.forEach(function(h, i) { if (h) map[h] = i; });
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getDisplayValues();
+    values.forEach(function(row, i) {
+      const cno = normalizeCustomerNoForKey_(cellByHeaderIndex_(row, map, ['고객번호']));
+      const rn = String(cellByHeaderIndex_(row, map, ['마스터행', 'rowNo']) || '').trim();
+      if (!(cno && customerKeys[cno]) && !(rn && rowKeys[rn])) return;
+      const createdAt = cellByHeaderIndex_(row, map, ['작성일시', '일시', '등록일시']);
+      const content = cellByHeaderIndex_(row, map, ['컨택내용', '메모']);
+      const note = cellByHeaderIndex_(row, map, ['특이사항', '비고']);
+      const status = cellByHeaderIndex_(row, map, ['계약진행상태', '통화결과']);
+      const nextAction = cellByHeaderIndex_(row, map, ['다음액션']);
+      const method = cellByHeaderIndex_(row, map, ['연락수단', '컨택방식']);
+      const recordType = cellByHeaderIndex_(row, map, ['기록구분']) || '컨택이력';
+      const author = cellByHeaderIndex_(row, map, ['작성자']);
+      const text = [status, content, note, nextAction].map(function(v) { return String(v || '').trim(); }).filter(Boolean).join(' / ');
+      if (!text && !createdAt) return;
+      const ev = makeMyCustomerStatusEventP529_({
+        source: 'contactHistory',
+        sourceLabel: '컨택이력_DB',
+        date: parseLoosePortalDateP528_(createdAt) || parseLoosePortalDateP528_(text),
+        text: '[' + recordType + (method ? '/' + method : '') + '] ' + text,
+        rawText: text,
+        actor: author,
+        order: 100000 + i
+      });
+      if (cno) {
+        if (!result.byCustomerNo[cno]) result.byCustomerNo[cno] = [];
+        result.byCustomerNo[cno].push(ev);
+      }
+      if (rn) {
+        if (!result.byRowNo[rn]) result.byRowNo[rn] = [];
+        result.byRowNo[rn].push(ev);
+      }
+      result.count += 1;
+    });
+  } catch (err) {
+    try { Logger.log('나의 고객 현황 컨택이력_DB 조회 실패: ' + (err && err.stack || err)); } catch (e) {}
+  }
+  return result;
+}
+
+function buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap) {
   row = row || {};
-  const memo = String(row.memo || '');
+  contactMap = contactMap || { byCustomerNo: {}, byRowNo: {} };
+  const memo = String(row.fullMemo || row.memo || '');
   const status = String(row.status || '').trim();
   const sentAt = String(row.sentAt || row.lastSent || '');
-  const events = extractMyCustomerMemoEventsP528_(memo);
+  const customerNo = normalizeCustomerNoForKey_(row.customerNo || '');
+  const rowNoKey = String(row.rowNo || '');
+  const contactEvents = [].concat(
+    customerNo && contactMap.byCustomerNo[customerNo] ? contactMap.byCustomerNo[customerNo] : [],
+    rowNoKey && contactMap.byRowNo[rowNoKey] ? contactMap.byRowNo[rowNoKey] : []
+  );
+  const dedupedContactEvents = dedupeMyCustomerEventsP529_(contactEvents);
+  const events = buildMyCustomerCombinedEventsP529_(row, memo, dedupedContactEvents);
   const latestEvent = getLatestMyCustomerMemoEventP528_(events);
   const latestDate = latestEvent && latestEvent.date ? latestEvent.date : parseLoosePortalDateP528_(sentAt);
   const lastContactDays = latestDate ? daysBetweenPortalDatesP528_(latestDate, now) : null;
@@ -190,6 +362,11 @@ function buildMyCustomerStatusAnalyzedRowP528_(row, now) {
   const missingFields = getMyCustomerMissingFieldsP528_(row);
   analysis.missingFields = missingFields;
   analysis.dataMissing = missingFields.length > 0;
+  analysis.events = events.slice(0, 40).map(function(ev) { return eventForClientP529_(ev); });
+  analysis.memoHash = hashMyCustomerStatusTextP529_(memo);
+  analysis.contactHistoryHash = hashMyCustomerStatusTextP529_(JSON.stringify(dedupedContactEvents.map(function(ev) { return eventForHashP529_(ev); })));
+  analysis.sendHash = hashMyCustomerStatusTextP529_([row.lastSent, row.sentAt, row.sendStatus, row.sendCount].join('|'));
+
   return {
     rowNo: Number(row.rowNo || 0) || 0,
     customerNo: String(row.customerNo || ''),
@@ -205,70 +382,168 @@ function buildMyCustomerStatusAnalyzedRowP528_(row, now) {
     lastSent: String(row.lastSent || ''),
     sentAt: String(row.sentAt || ''),
     sendStatus: String(row.sendStatus || ''),
-    memoSummary: shortenMyCustomerStatusTextP528_(latestText || memo, 220),
+    memoSummary: shortenMyCustomerStatusTextP528_(latestText || memo, 260),
     lastContactDate: latestDate ? formatMyCustomerStatusDateP528_(latestDate) : '',
     analysis: analysis
   };
 }
 
+function buildMyCustomerCombinedEventsP529_(row, memo, contactEvents) {
+  const events = [];
+  extractMyCustomerMemoEventsP528_(memo).forEach(function(ev) {
+    events.push(makeMyCustomerStatusEventP529_({
+      source: 'masterMemo',
+      sourceLabel: '마스터메모',
+      date: ev.date,
+      text: ev.text,
+      rawText: ev.text,
+      order: ev.index || 0
+    }));
+  });
+  String(row.tmContactContent || '').split(/\r?\n+/).map(function(v) { return String(v || '').trim(); }).filter(Boolean).forEach(function(line, idx) {
+    events.push(makeMyCustomerStatusEventP529_({
+      source: 'tmContact',
+      sourceLabel: 'TM컨택내용',
+      date: parseLoosePortalDateP528_(line),
+      text: '[TM] ' + line,
+      rawText: line,
+      order: 30000 + idx
+    }));
+  });
+  (contactEvents || []).forEach(function(ev, idx) {
+    ev.order = ev.order || (50000 + idx);
+    events.push(ev);
+  });
+  const sendText = [row.sendStatus, row.lastSent, row.sentAt, row.sendCount ? ('발송횟수 ' + row.sendCount) : ''].filter(Boolean).join(' / ');
+  if (sendText) {
+    events.push(makeMyCustomerStatusEventP529_({
+      source: 'sendLog',
+      sourceLabel: '자료발송',
+      date: parseLoosePortalDateP528_(row.sentAt || row.lastSent || sendText),
+      text: '[자료발송] ' + sendText,
+      rawText: sendText,
+      order: 90000
+    }));
+  }
+  return sortMyCustomerEventsDescP529_(dedupeMyCustomerEventsP529_(events));
+}
+
+function makeMyCustomerStatusEventP529_(data) {
+  data = data || {};
+  const text = String(data.text || data.rawText || '').trim();
+  const ev = {
+    source: String(data.source || 'unknown'),
+    sourceLabel: String(data.sourceLabel || data.source || '이력'),
+    date: data.date || null,
+    text: text,
+    rawText: String(data.rawText || text || ''),
+    actor: String(data.actor || ''),
+    order: Number(data.order || 0) || 0
+  };
+  ev.signal = getMyCustomerEventSignalsP529_(ev.text);
+  return ev;
+}
+
 function classifyMyCustomerMemoP528_(row, events, latestEvent, lastContactDays, now) {
   row = row || {};
+  events = Array.isArray(events) ? events : [];
   const currentStatus = String(row.status || '').trim();
-  const memo = String(row.memo || '');
-  const latestText = String(latestEvent && latestEvent.text || getLastMemoLineP528_(memo) || '');
-  const recentText = getRecentMemoTextP528_(events, memo, 5);
-  const basisText = (latestText + '\n' + recentText).toLowerCase();
-  const fullText = memo.toLowerCase();
-  const signals = {
-    complete: hasAnyKeywordP528_(basisText, ['계약완료', '계약 완료', '계약서 저장', '계약 완료 처리']),
-    order: hasAnyKeywordP528_(basisText, ['용역신청서', '계약서', '사업자등록증', '사업자 등록증', '발주', '계약 진행', '진행하시기로', '서류 받', '서류 요청']),
-    fail: hasAnyKeywordP528_(basisText, ['거절', '타사 계약', '타사계약', '기존 업체', '기존업체', '유지하기로', '진행 어려', '진행어려', '하지 말', '연락하지', '대상 아님', '대상아님', '폐업']),
-    long: hasAnyKeywordP528_(basisText, ['내년', '예산', '하반기', '상반기', '추후', '나중', '장기', '보류', '재검토']),
-    quote: hasAnyKeywordP528_(basisText, ['견적서 발송', '견적서발송', '견적 발송', '견적발송', '자료발송', '자료 발송', '단가표', '비교견적', '메일 발송', '발송완료']),
-    active: hasAnyKeywordP528_(basisText, ['검토중', '검토 중', '비교중', '비교 중', '담당자 전달', '내부 검토', '확인 후', '재확인', '연락 예정', '가격 조율', '본사', '회신', '전화 예정']),
-    data: hasAnyKeywordP528_(basisText + '\n' + fullText.slice(-800), ['중복', '전화번호 오류', '메일 오류', '주소 확인', '연면적 확인', '확인 필요', '정보 확인', '번호 오류'])
-  };
+  const sentDone = !!(String(row.sendStatus || '').indexOf('발송완료') >= 0 || row.lastSent || row.sentAt);
+  const signalSummary = summarizeMyCustomerSignalsP529_(events);
 
   let recommended = '';
   let mismatchType = '';
   let confidence = 0;
   let reason = '';
   let nextAction = '';
-  const sentDone = !!(String(row.sendStatus || '').indexOf('발송완료') >= 0 || row.lastSent || row.sentAt);
+  let priorityRank = '';
+  let terminalCandidate = false;
 
-  if (signals.complete) {
-    recommended = '계약완료'; confidence = 92; mismatchType = '계약완료 의심'; reason = '최근 메모에 계약완료/계약서 저장 신호가 있습니다.'; nextAction = '계약완료 여부를 확인하고 상태를 정리하세요.';
-  } else if (signals.fail) {
-    recommended = '수주실패'; confidence = 88; mismatchType = '수주실패 의심'; reason = '최근 메모에 거절/타사계약/진행불가 신호가 있습니다.'; nextAction = '수주실패 처리 또는 보류 사유를 확인하세요.';
-  } else if (signals.order) {
-    recommended = '발주완료'; confidence = 83; mismatchType = '단계 상향 의심'; reason = '최근 메모에 용역신청서/계약서/사업자등록증/발주 신호가 있습니다.'; nextAction = '계약서류 취합 여부를 확인하세요.';
-  } else if (signals.long) {
-    recommended = '장기 추진건'; confidence = 78; mismatchType = '장기추진 전환 의심'; reason = '최근 메모에 예산/추후/내년/보류 신호가 있습니다.'; nextAction = '다음 재접촉 시점을 잡아 두세요.';
-  } else if (signals.quote || sentDone) {
-    recommended = '견적제출완료'; confidence = signals.quote ? 76 : 68; mismatchType = '견적제출완료 의심'; reason = signals.quote ? '최근 메모에 견적/자료 발송 신호가 있습니다.' : '발송상태 또는 마지막발송 값이 있습니다.'; nextAction = '견적서 발송 후 후속 연락을 진행하세요.';
-  } else if (signals.active) {
-    recommended = '고객 설득 중'; confidence = 66; mismatchType = '진행중 상태 의심'; reason = '최근 메모에 검토/비교/재확인/담당자 전달 신호가 있습니다.'; nextAction = '고객 반응을 확인하고 다음 액션을 남기세요.';
+  const complete = signalSummary.complete.latest;
+  const fail = signalSummary.fail.latest;
+  const order = signalSummary.order.latest;
+  const long = signalSummary.long.latest;
+  const quote = signalSummary.quote.latest;
+  const active = signalSummary.active.latest;
+  const data = signalSummary.data.latest;
+
+  // 종결성 이벤트가 견적/자료발송보다 항상 우선입니다. 단, 종결 이후에 더 최근의 계약진행/견적/재진행 신호가 있으면 최신 긍정 이벤트를 따릅니다.
+  if (complete && !isMyCustomerSignalAfterP529_(fail, complete)) {
+    recommended = '계약완료';
+    confidence = 94;
+    mismatchType = currentStatus === '계약완료' ? '계약완료 정합' : '계약완료 의심';
+    reason = '최신 유효 이력에 계약완료/계약서 저장 신호가 있습니다.';
+    nextAction = '계약완료 자료와 마스터 상태가 일치하는지 확인하세요.';
+    priorityRank = '1_계약완료';
+    terminalCandidate = true;
+  } else if (fail && !hasPositiveSignalAfterP529_(signalSummary, fail)) {
+    recommended = '수주실패';
+    confidence = 91;
+    mismatchType = currentStatus === '수주실패' ? '수주실패 정합' : '수주실패 전환 의심';
+    reason = '최신 유효 이력에 거절/타사 결정/진행불가 신호가 있습니다.';
+    nextAction = currentStatus === '수주실패' ? '추가 영업 대상에서 제외하거나 장기 재컨택 여부만 검토하세요.' : '수주실패 처리 여부를 확인하세요.';
+    priorityRank = '2_수주실패';
+    terminalCandidate = true;
+  } else if (order) {
+    recommended = '발주완료';
+    confidence = isMyCustomerSignalAfterP529_(fail, order) ? 86 : 83;
+    mismatchType = currentStatus === '발주완료' ? '발주완료 정합' : '단계 상향 의심';
+    reason = '최근 이력에 용역신청서/계약서/사업자등록증/발주 신호가 있습니다.';
+    nextAction = '계약서류 취합 및 발주 완료 여부를 확인하세요.';
+    priorityRank = '4_발주계약진행';
+  } else if (long) {
+    recommended = '장기 추진건';
+    confidence = 80;
+    mismatchType = currentStatus === '장기 추진건' ? '장기추진 정합' : '장기추진 전환 의심';
+    reason = '최근 이력에 예산/내년/추후/보류 신호가 있습니다.';
+    nextAction = '다음 재접촉 시점을 지정하세요.';
+    priorityRank = '3_장기추진';
+  } else if (quote || sentDone) {
+    recommended = '견적제출완료';
+    confidence = quote ? 76 : 68;
+    mismatchType = currentStatus === '견적제출완료' ? '견적제출완료 정합' : '견적제출완료 의심';
+    reason = quote ? '최근 이력에 견적/자료 발송 신호가 있습니다.' : '발송상태 또는 마지막발송 값이 있습니다.';
+    nextAction = '견적서 발송 후 후속 연락을 진행하세요.';
+    priorityRank = '5_견적제출';
+  } else if (active) {
+    recommended = '고객 설득 중';
+    confidence = 67;
+    mismatchType = currentStatus === '고객 설득 중' ? '진행중 정합' : '진행중 상태 의심';
+    reason = '최근 이력에 검토/비교/재확인/담당자 전달 신호가 있습니다.';
+    nextAction = '고객 반응을 확인하고 다음 액션을 남기세요.';
+    priorityRank = '6_설득중';
+  } else if (data) {
+    recommended = currentStatus || '!!상태지정필요!!';
+    confidence = 62;
+    mismatchType = '데이터확인 필요';
+    reason = '이력에 중복/주소/연면적/연락처 확인 신호가 있습니다.';
+    nextAction = '고객정보를 먼저 정리하세요.';
+    priorityRank = '7_데이터확인';
   }
 
   const mismatch = !!(recommended && recommended !== currentStatus && confidence >= 65);
-  const active = isMyCustomerStatusActiveP528_(currentStatus);
-  const longNoContact = active && (lastContactDays == null || lastContactDays >= 14);
+  const activeStatus = isMyCustomerStatusActiveP528_(currentStatus);
+  const longNoContact = activeStatus && (lastContactDays == null || lastContactDays >= 14);
   let sentNoFollow = false;
-  if (sentDone && active) {
+  if (sentDone && activeStatus) {
     if (lastContactDays == null) sentNoFollow = true;
-    else if (lastContactDays >= 3 && !signals.order && !signals.fail && !signals.complete) sentNoFollow = true;
+    else if (lastContactDays >= 3 && !order && !fail && !complete) sentNoFollow = true;
   }
-  const potentialScore = calculateMyCustomerPotentialScoreP528_(row, signals, lastContactDays, recommended);
+  const potentialScore = calculateMyCustomerPotentialScoreP528_(row, signalSummary.flags, lastContactDays, recommended);
   const tags = [];
-  Object.keys(signals).forEach(function(k) { if (signals[k]) tags.push(k); });
+  Object.keys(signalSummary.flags).forEach(function(k) { if (signalSummary.flags[k]) tags.push(k); });
   if (longNoContact) tags.push('장기미접촉');
   if (sentNoFollow) tags.push('자료발송후미후속');
+  if (terminalCandidate) tags.push('종결성신호');
 
+  const latestText = latestEvent && latestEvent.text ? latestEvent.text : '';
   return {
     recommendedStatus: recommended,
     confidence: confidence,
+    priorityRank: priorityRank,
     mismatch: mismatch,
-    mismatchType: mismatch ? mismatchType : '',
+    mismatchType: mismatch ? mismatchType : (recommended && recommended === currentStatus ? mismatchType : ''),
+    terminalCandidate: terminalCandidate,
     reason: reason,
     nextAction: nextAction,
     lastContactDays: lastContactDays,
@@ -277,11 +552,137 @@ function classifyMyCustomerMemoP528_(row, events, latestEvent, lastContactDays, 
     potentialScore: potentialScore,
     tags: tags,
     latestMemoDate: latestEvent && latestEvent.date ? formatMyCustomerStatusDateP528_(latestEvent.date) : '',
-    latestMemoText: shortenMyCustomerStatusTextP528_(latestText, 180)
+    latestMemoText: shortenMyCustomerStatusTextP528_(latestText, 220),
+    latestEventSource: latestEvent ? latestEvent.sourceLabel : '',
+    signalSummary: signalSummary,
+    matchedKeywords: signalSummary.matchedKeywords,
+    sourceLabels: signalSummary.sourceLabels
   };
 }
 
+function getMyCustomerEventSignalsP529_(text) {
+  text = normalizeMyCustomerSignalTextP529_(text);
+  const defs = getMyCustomerSignalDefsP529_();
+  const out = { complete: [], fail: [], order: [], long: [], quote: [], active: [], data: [] };
+  Object.keys(defs).forEach(function(k) {
+    defs[k].forEach(function(rule) {
+      let hit = false;
+      if (rule.re) hit = rule.re.test(text);
+      else if (rule.kw) hit = text.indexOf(normalizeMyCustomerSignalTextP529_(rule.kw)) >= 0;
+      if (hit) out[k].push(rule.label || rule.kw || String(rule.re));
+    });
+  });
+  return out;
+}
+
+function getMyCustomerSignalDefsP529_() {
+  return {
+    complete: [
+      { kw: '계약완료' }, { kw: '계약 완료' }, { kw: '계약서 저장' }, { kw: '계약 완료 처리' }, { kw: '계약체결' }
+    ],
+    fail: [
+      { kw: '수주실패' }, { kw: '거절' }, { kw: '타사 계약' }, { kw: '타사계약' }, { kw: '타사로 결정', label: '타사로 결정' },
+      { kw: '타사 결정', label: '타사 결정' }, { kw: '타업체로 결정', label: '타업체로 결정' }, { kw: '타업체 결정', label: '타업체 결정' },
+      { kw: '다른 업체로 결정', label: '다른 업체로 결정' }, { kw: '기존 업체 유지' }, { kw: '기존업체 유지' }, { kw: '기존 업체' },
+      { kw: '가격차이가 많이 나서 어렵', label: '가격차이로 어려움' }, { kw: '가격 차이가 많이 나서 어렵', label: '가격차이로 어려움' },
+      { kw: '진행 어렵' }, { kw: '진행어렵' }, { kw: '어렵다고' }, { kw: '불가' }, { kw: '안한다고' }, { kw: '안 한다고' },
+      { kw: '하지 말' }, { kw: '연락하지' }, { kw: '대상 아님' }, { kw: '대상아님' }, { kw: '폐업' }, { kw: '취소' },
+      { re: /타(사|업체).{0,12}(결정|계약|진행|완료)/, label: '타사 결정/계약' },
+      { re: /(가격|금액).{0,12}(차이|비싸).{0,16}(어렵|불가|안)/, label: '가격 이슈로 진행불가' }
+    ],
+    order: [
+      { kw: '용역신청서' }, { kw: '계약서 요청' }, { kw: '계약서류' }, { kw: '계약 진행' }, { kw: '계약진행' },
+      { kw: '사업자등록증' }, { kw: '사업자 등록증' }, { kw: '발주' }, { kw: '진행하시기로' }, { kw: '계약하시기로' },
+      { kw: '서류 받' }, { kw: '서류 요청' }, { kw: '취합' }
+    ],
+    long: [
+      { kw: '내년' }, { kw: '예산' }, { kw: '하반기' }, { kw: '상반기' }, { kw: '추후' }, { kw: '나중' }, { kw: '장기' }, { kw: '보류' }, { kw: '재검토' }
+    ],
+    quote: [
+      { kw: '견적서 발송' }, { kw: '견적서발송' }, { kw: '견적 발송' }, { kw: '견적발송' }, { kw: '자료발송' }, { kw: '자료 발송' },
+      { kw: '단가표' }, { kw: '비교견적' }, { kw: '수기견적' }, { kw: '메일 발송' }, { kw: '발송완료' }, { kw: '견적서 재발송' }, { kw: '재견적' }
+    ],
+    active: [
+      { kw: '검토중' }, { kw: '검토 중' }, { kw: '비교중' }, { kw: '비교 중' }, { kw: '타업체와 비교' }, { kw: '타사 비교' },
+      { kw: '담당자 전달' }, { kw: '내부 검토' }, { kw: '확인 후' }, { kw: '재확인' }, { kw: '연락 예정' }, { kw: '연락준다고' },
+      { kw: '가격 조율' }, { kw: '본사' }, { kw: '회신' }, { kw: '상담' }
+    ],
+    data: [
+      { kw: '중복' }, { kw: '전화번호 오류' }, { kw: '메일 오류' }, { kw: '주소 확인' }, { kw: '연면적 확인' }, { kw: '확인 필요' }, { kw: '정보 확인' }, { kw: '번호 오류' }
+    ]
+  };
+}
+
+function normalizeMyCustomerSignalTextP529_(text) {
+  return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function summarizeMyCustomerSignalsP529_(events) {
+  const categories = ['complete', 'fail', 'order', 'long', 'quote', 'active', 'data'];
+  const summary = {
+    flags: {},
+    matchedKeywords: {},
+    sourceLabels: [],
+    complete: { latest: null, count: 0, keywords: [] },
+    fail: { latest: null, count: 0, keywords: [] },
+    order: { latest: null, count: 0, keywords: [] },
+    long: { latest: null, count: 0, keywords: [] },
+    quote: { latest: null, count: 0, keywords: [] },
+    active: { latest: null, count: 0, keywords: [] },
+    data: { latest: null, count: 0, keywords: [] }
+  };
+  const sourceSeen = {};
+  (events || []).forEach(function(ev) {
+    if (ev && ev.sourceLabel && !sourceSeen[ev.sourceLabel]) {
+      sourceSeen[ev.sourceLabel] = true;
+      summary.sourceLabels.push(ev.sourceLabel);
+    }
+    categories.forEach(function(cat) {
+      const hits = ev && ev.signal && ev.signal[cat] || [];
+      if (!hits.length) return;
+      summary.flags[cat] = true;
+      summary[cat].count += 1;
+      hits.forEach(function(h) {
+        if (summary[cat].keywords.indexOf(h) < 0) summary[cat].keywords.push(h);
+      });
+      if (!summary[cat].latest || compareMyCustomerEventsP529_(ev, summary[cat].latest) > 0) summary[cat].latest = ev;
+    });
+  });
+  categories.forEach(function(cat) {
+    summary.matchedKeywords[cat] = summary[cat].keywords.slice(0, 12);
+  });
+  return summary;
+}
+
+function hasPositiveSignalAfterP529_(summary, baseEvent) {
+  if (!baseEvent) return false;
+  const positives = [];
+  ['complete', 'order', 'quote', 'active'].forEach(function(cat) {
+    if (summary && summary[cat] && summary[cat].latest) positives.push(summary[cat].latest);
+  });
+  return positives.some(function(ev) {
+    if (!isMyCustomerSignalAfterP529_(ev, baseEvent)) return false;
+    // 단순 과거 자료발송보다 종결 이후의 재견적/재진행/계약 진행 신호만 살립니다.
+    const txt = normalizeMyCustomerSignalTextP529_(ev.text || '');
+    if (ev.source === 'sendLog' && txt.indexOf('재') < 0) return false;
+    return true;
+  });
+}
+
+function isMyCustomerSignalAfterP529_(a, b) {
+  if (!a || !b) return false;
+  return compareMyCustomerEventsP529_(a, b) > 0;
+}
+
+function compareMyCustomerEventsP529_(a, b) {
+  const at = a && a.date ? a.date.getTime() : 0;
+  const bt = b && b.date ? b.date.getTime() : 0;
+  if (at !== bt) return at - bt;
+  return (Number(a && a.order || 0) || 0) - (Number(b && b.order || 0) || 0);
+}
+
 function calculateMyCustomerPotentialScoreP528_(row, signals, lastContactDays, recommended) {
+  signals = signals || {};
   let score = 0;
   if (lastContactDays != null && lastContactDays <= 7) score += 2;
   if (row.lastSent || row.sentAt || String(row.sendStatus || '').indexOf('발송완료') >= 0) score += 2;
@@ -290,8 +691,10 @@ function calculateMyCustomerPotentialScoreP528_(row, signals, lastContactDays, r
   if (row.contact) score += 1;
   if (signals.order) score += 3;
   if (signals.quote || signals.active) score += 1;
-  if (signals.fail) score -= 4;
+  if (signals.fail) score -= 5;
+  if (signals.complete) score -= 2;
   if (recommended === '발주완료') score += 2;
+  if (recommended === '수주실패') score -= 4;
   if (lastContactDays != null && lastContactDays >= 30) score -= 2;
   return Math.max(0, score);
 }
@@ -336,8 +739,7 @@ function getLatestMyCustomerMemoEventP528_(events) {
   let best = null;
   events.forEach(function(ev) {
     if (!best) { best = ev; return; }
-    if (ev.date && (!best.date || ev.date.getTime() >= best.date.getTime())) best = ev;
-    else if (!best.date && ev.index > best.index) best = ev;
+    if (compareMyCustomerEventsP529_(ev, best) >= 0) best = ev;
   });
   return best;
 }
@@ -345,7 +747,7 @@ function getLatestMyCustomerMemoEventP528_(events) {
 function getRecentMemoTextP528_(events, memo, limit) {
   events = Array.isArray(events) ? events : [];
   limit = Math.max(1, Number(limit || 5) || 5);
-  if (events.length) return events.slice(Math.max(0, events.length - limit)).map(function(ev) { return ev.text; }).join('\n');
+  if (events.length) return events.slice(0, limit).map(function(ev) { return ev.text; }).join('\n');
   return String(memo || '').split(/\r?\n+/).slice(-limit).join('\n');
 }
 
@@ -434,5 +836,176 @@ function sortMyCustomerStatusByStaleP528_(a, b) {
 }
 
 function makeMyCustomerStatusOperationIdP528_(customerNo, rowNo) {
-  return 'MY_STATUS_P528_' + String(customerNo || '') + '_' + String(rowNo || '') + '_' + String(Date.now());
+  return 'MY_STATUS_P529_' + String(customerNo || '') + '_' + String(rowNo || '') + '_' + String(Date.now());
+}
+
+function sortMyCustomerEventsDescP529_(events) {
+  return (events || []).slice().sort(function(a, b) { return compareMyCustomerEventsP529_(b, a); });
+}
+
+function dedupeMyCustomerEventsP529_(events) {
+  const seen = {};
+  const out = [];
+  (events || []).forEach(function(ev) {
+    if (!ev) return;
+    const key = [ev.source, formatMyCustomerStatusDateP528_(ev.date), shortenMyCustomerStatusTextP528_(ev.text, 120)].join('|');
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(ev);
+  });
+  return out;
+}
+
+function eventForClientP529_(ev) {
+  return {
+    source: ev.source,
+    sourceLabel: ev.sourceLabel,
+    date: ev.date ? formatMyCustomerStatusDateP528_(ev.date) : '',
+    text: shortenMyCustomerStatusTextP528_(ev.text, 260),
+    actor: ev.actor || '',
+    keywords: flattenMyCustomerSignalKeywordsP529_(ev.signal)
+  };
+}
+
+function eventForHashP529_(ev) {
+  return {
+    source: ev.source,
+    date: ev.date ? formatMyCustomerStatusDateP528_(ev.date) : '',
+    text: ev.text || '',
+    actor: ev.actor || ''
+  };
+}
+
+function flattenMyCustomerSignalKeywordsP529_(signal) {
+  const out = [];
+  Object.keys(signal || {}).forEach(function(k) {
+    (signal[k] || []).forEach(function(v) { if (out.indexOf(v) < 0) out.push(v); });
+  });
+  return out.slice(0, 10);
+}
+
+function hashMyCustomerStatusTextP529_(text) {
+  text = String(text || '');
+  if (!text) return '';
+  try {
+    const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8);
+    return bytes.map(function(b) { const v = (b < 0 ? b + 256 : b).toString(16); return v.length === 1 ? '0' + v : v; }).join('').slice(0, 24);
+  } catch (err) {
+    return String(text.length) + '_' + String(text.charCodeAt(0) || 0) + '_' + String(text.charCodeAt(text.length - 1) || 0);
+  }
+}
+
+function ensureMyCustomerStatusAnalysisSheetP529_() {
+  const ss = getWebAppDbSpreadsheet_();
+  let sheet = ss.getSheetByName(MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529);
+  if (!sheet) {
+    sheet = ss.insertSheet(MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529);
+    sheet.getRange(1, 1, 1, MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529.length).setValues([MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529.length).setFontWeight('bold').setBackground('#f2f4f7');
+    sheet.autoResizeColumns(1, Math.min(MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529.length, 12));
+    return sheet;
+  }
+  ensureSheetHeaders_(sheet, MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529);
+  return sheet;
+}
+
+function saveMyCustomerStatusAnalysisRowsP529_(rows, perm, aliases, analyzedAt) {
+  rows = Array.isArray(rows) ? rows : [];
+  const sheet = ensureMyCustomerStatusAnalysisSheetP529_();
+  const lastCol = Math.max(sheet.getLastColumn(), MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529.length);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+  const headerMap = {};
+  headers.forEach(function(h, i) { if (h) headerMap[h] = i; });
+  const ownerAliases = {};
+  (aliases || []).forEach(function(a) { const k = normalizeMyCustomerStatusNameP528_(a); if (k) ownerAliases[k] = true; });
+  const ownerName = String((perm && (perm.salesRepName || perm.name || perm.displayName)) || '').trim();
+  const ownerKey = normalizeMyCustomerStatusNameP528_(ownerName);
+  if (ownerKey) ownerAliases[ownerKey] = true;
+
+  const existing = [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+    values.forEach(function(r) {
+      const rep = String(r[headerMap['영업담당자']] || '').trim();
+      const rk = normalizeMyCustomerStatusNameP528_(rep);
+      if (rk && ownerAliases[rk]) return;
+      existing.push(r);
+    });
+  }
+
+  const nowText = formatMyCustomerStatusDateTimeP528_(analyzedAt || new Date());
+  const newRows = rows.map(function(row) { return buildMyCustomerAnalysisDbRowP529_(row, nowText, headers); });
+  const combined = existing.concat(newRows);
+  if (lastRow >= 2) sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+  if (combined.length) sheet.getRange(2, 1, combined.length, lastCol).setValues(combined);
+  return {
+    saved: true,
+    rows: newRows.length,
+    totalRows: combined.length,
+    sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
+    spreadsheetUrl: getWebAppDbSpreadsheet_().getUrl(),
+    savedAt: nowText
+  };
+}
+
+function buildMyCustomerAnalysisDbRowP529_(row, analyzedAtText, headers) {
+  row = row || {};
+  const a = row.analysis || {};
+  const s = a.signalSummary || {};
+  const latestEvent = (a.events && a.events[0]) || {};
+  const evidence = {
+    reason: a.reason || '',
+    nextAction: a.nextAction || '',
+    sourceLabels: a.sourceLabels || [],
+    matchedKeywords: a.matchedKeywords || {},
+    latestEvent: latestEvent
+  };
+  const sourceLabels = (a.sourceLabels || []).join(', ');
+  const rec = {
+    '분석일시': analyzedAtText,
+    '분석ID': 'MCSA-' + String(row.customerNo || '') + '-' + String(row.rowNo || '') + '-' + String(a.memoHash || '').slice(0, 8),
+    '고객번호': row.customerNo || '',
+    'rowNo': row.rowNo || '',
+    '회사명': row.company || '',
+    '영업담당자': row.salesRep || '',
+    '현재상태': row.status || '',
+    '추천상태': a.recommendedStatus || '',
+    '판정유형': a.mismatchType || '',
+    '신뢰도': a.confidence || '',
+    '우선순위등급': a.priorityRank || '',
+    '불일치여부': a.mismatch ? 'Y' : 'N',
+    '분석소스': sourceLabels,
+    '최근연락일': row.lastContactDate || a.latestMemoDate || '',
+    '최근이벤트출처': a.latestEventSource || latestEvent.sourceLabel || '',
+    '최근이벤트요약': a.latestMemoText || row.memoSummary || '',
+    '강한긍정키워드': [].concat((a.matchedKeywords && a.matchedKeywords.complete) || [], (a.matchedKeywords && a.matchedKeywords.order) || [], (a.matchedKeywords && a.matchedKeywords.active) || []).join(', '),
+    '강한부정키워드': ((a.matchedKeywords && a.matchedKeywords.fail) || []).join(', '),
+    '계약진행키워드': ((a.matchedKeywords && a.matchedKeywords.order) || []).join(', '),
+    '자료발송키워드': ((a.matchedKeywords && a.matchedKeywords.quote) || []).join(', '),
+    '장기추진키워드': ((a.matchedKeywords && a.matchedKeywords.long) || []).join(', '),
+    '데이터누락키워드': (a.missingFields || []).join(', '),
+    '가능성점수': a.potentialScore || 0,
+    '위험태그': (a.tags || []).join(', '),
+    '추천액션': a.nextAction || '',
+    '근거JSON': safeStringifyMyCustomerStatusP529_(evidence, 12000),
+    '이벤트JSON': safeStringifyMyCustomerStatusP529_((a.events || []).slice(0, 30), 30000),
+    'memoHash': a.memoHash || '',
+    'contactHistoryHash': a.contactHistoryHash || '',
+    'sendHash': a.sendHash || '',
+    '분석버전': MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528,
+    '검토상태': '',
+    '검토자': '',
+    '검토일시': '',
+    '검토메모': ''
+  };
+  return headers.map(function(h) { return rec[h] == null ? '' : rec[h]; });
+}
+
+function safeStringifyMyCustomerStatusP529_(value, maxLen) {
+  let s = '';
+  try { s = JSON.stringify(value || {}); } catch (err) { s = String(value || ''); }
+  maxLen = Number(maxLen || 20000) || 20000;
+  return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
 }
