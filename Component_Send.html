@@ -2890,12 +2890,12 @@ function renderPortalSendSaveQueueBlockingRowsP521_(items) {
   return html;
 }
 
-function closePortalSendSaveQueueBlockingModalP521_() {
+function closePortalSendSaveQueueBlockingModalP521_(action) {
   const resolver = portalSendQueueBlockModalResolverP521_;
   portalSendQueueBlockModalResolverP521_ = null;
   const backdrop = document.getElementById('portalSendSaveQueueBlockingBackdropP521');
   if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-  if (resolver) resolver(true);
+  if (resolver) resolver(action || 'cancel');
 }
 
 function showPortalSendSaveQueueBlockingModalP521_(items, actionLabel, message) {
@@ -2911,18 +2911,19 @@ function showPortalSendSaveQueueBlockingModalP521_(items, actionLabel, message) 
       '<div class="support-modal" style="width:1040px;max-width:96vw;max-height:92vh;">' +
         '<div class="support-modal-header">' +
           '<div class="support-modal-title">자료발송 전 저장 충돌/미완료 확인</div>' +
-          '<button type="button" class="support-modal-close" onclick="closePortalSendSaveQueueBlockingModalP521_()">X</button>' +
+          '<button type="button" class="support-modal-close" onclick="closePortalSendSaveQueueBlockingModalP521_(\'cancel\')">X</button>' +
         '</div>' +
         '<div class="support-modal-body">' +
           '<div style="border:1px solid #fecdca;background:#fef3f2;color:#b42318;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;font-weight:800;line-height:1.65;">' +
-            '현재 고객의 저장 충돌 또는 미완료 내역이 저장큐에 남아 있어 ' + esc(actionLabel || '자료발송') + '을 계속 진행할 수 없습니다.<br>' +
-            '아래 기존값/신규값을 확인한 뒤 저장 상태를 정리하고 다시 진행해 주세요.' +
+            '현재 고객의 저장 충돌 또는 미완료 내역이 저장큐에 남아 있어 ' + esc(actionLabel || '자료발송') + ' 전에 확인이 필요합니다.<br>' +
+            '아래 기존값/신규값을 확인해 주세요. <b>저장하기</b>를 누르면 저장하려던 신규값을 현재 마스터시트에 다시 저장한 뒤 ' + esc(actionLabel || '자료발송') + '을 계속 진행합니다.' +
             (message ? '<br><span style="font-weight:900;">사유: ' + esc(message) + '</span>' : '') +
           '</div>' +
           renderPortalSendSaveQueueBlockingRowsP521_(items) +
         '</div>' +
         '<div class="support-modal-footer">' +
-          '<button type="button" onclick="closePortalSendSaveQueueBlockingModalP521_()">저장상태 확인 완료</button>' +
+          '<button type="button" class="secondary" onclick="closePortalSendSaveQueueBlockingModalP521_(\'cancel\')">취소</button>' +
+          '<button type="button" onclick="closePortalSendSaveQueueBlockingModalP521_(\'save\')">저장하기</button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(backdrop);
@@ -2935,6 +2936,52 @@ function getPortalSendBlockingItemsFromErrorP521_(err) {
   if (err.portalSaveQueueResponseP521 && Array.isArray(err.portalSaveQueueResponseP521.blockingItems)) return err.portalSaveQueueResponseP521.blockingItems;
   if (Array.isArray(err.blockingItems)) return err.blockingItems;
   return [];
+}
+
+
+// P522: 저장큐 차단 팝업에서 사용자가 승인하면 저장하려던 신규값을 강제 저장합니다.
+function getPortalSendBlockingOperationIdsP522_(items) {
+  items = normalizePortalSendQueueBlockingItemsP521_(items || []);
+  const seen = {};
+  const out = [];
+  items.forEach(function(item) {
+    const id = String(item && item.operationId || '').trim();
+    if (!id || seen[id]) return;
+    seen[id] = true;
+    out.push(id);
+  });
+  return out;
+}
+
+function forceApplyPortalSendSaveQueueBlockingItemsP522_(items, payload, actionLabel) {
+  payload = payload || {};
+  const customerNo = normalizeCustomerNoForKey_(payload.customerNo || '');
+  const rowNo = Number(payload.rowNo || 0) || 0;
+  const operationIds = getPortalSendBlockingOperationIdsP522_(items);
+  if (!customerNo) return Promise.reject(new Error('저장할 고객번호를 확인하지 못했습니다.'));
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || res.ok === false) {
+          reject(new Error((res && res.message) || '저장큐 내역 저장에 실패했습니다.'));
+          return;
+        }
+        resolve(res);
+      })
+      .withFailureHandler(reject)
+      .forceApplyCustomerSaveQueueBlockingItemsP522(customerNo, {
+        rowNo: rowNo,
+        operationIds: operationIds,
+        source: 'sendPreflightP522',
+        actionLabel: actionLabel || '자료발송'
+      });
+  });
+}
+
+function continuePortalSendActionAfterPreflightP522_(action, ws) {
+  try { if (action && action.type === 'MAIL' && typeof markSendMailDraftPendingP494D_ === 'function') markSendMailDraftPendingP494D_(action.runId || action.actionId || ''); } catch(e) {}
+  captureSendGlobalsToWorkspaceP211_(ws);
+  enqueueSendActionP477_(action);
 }
 
 function getPortalLocalPendingSaveCountBeforeSendP489_(customerNo, rowNo) {
@@ -3015,19 +3062,36 @@ function enqueueSendActionAfterPendingSaveFlushP489_(action, payload, ws) {
     : ensurePortalSendPendingSavesFlushedP489_(payload && payload.customerNo, payload && payload.rowNo);
   preflightP520
     .then(function(){
-      try { if (action && action.type === 'MAIL' && typeof markSendMailDraftPendingP494D_ === 'function') markSendMailDraftPendingP494D_(action.runId || action.actionId || ''); } catch(e) {}
-      captureSendGlobalsToWorkspaceP211_(ws);
-      enqueueSendActionP477_(action);
+      continuePortalSendActionAfterPreflightP522_(action, ws);
     })
     .catch(function(err){
       const msg = err && err.message ? err.message : String(err || '');
       const blockingItemsP521 = (typeof getPortalSendBlockingItemsFromErrorP521_ === 'function') ? getPortalSendBlockingItemsFromErrorP521_(err) : [];
-      const finishBlockedP521 = function() {
-        setSendMessage('현재 고객의 저장 확인이 완료되지 않아 ' + actionLabelP520 + '을 중단했습니다. 저장 상태를 확인한 뒤 다시 진행해 주세요.' + (msg ? ' (' + msg + ')' : ''), true);
+      const finishBlockedP521 = function(blockMsg) {
+        const finalMsg = blockMsg || msg;
+        setSendMessage('현재 고객의 저장 확인이 완료되지 않아 ' + actionLabelP520 + '을 중단했습니다. 저장 상태를 확인한 뒤 다시 진행해 주세요.' + (finalMsg ? ' (' + finalMsg + ')' : ''), true);
         try { if (typeof renderInlineMailProgress_ === 'function') renderInlineMailProgress_(); } catch(e) {}
       };
       if (blockingItemsP521 && blockingItemsP521.length && typeof showPortalSendSaveQueueBlockingModalP521_ === 'function') {
-        showPortalSendSaveQueueBlockingModalP521_(blockingItemsP521, actionLabelP520, msg).then(finishBlockedP521);
+        showPortalSendSaveQueueBlockingModalP521_(blockingItemsP521, actionLabelP520, msg).then(function(modalActionP522) {
+          if (modalActionP522 !== 'save') {
+            finishBlockedP521('사용자가 저장하지 않고 취소했습니다.');
+            return;
+          }
+          setSendMessage('저장큐에 남아 있는 값을 먼저 저장하는 중입니다.', false);
+          forceApplyPortalSendSaveQueueBlockingItemsP522_(blockingItemsP521, payload, actionLabelP520)
+            .then(function(){
+              setSendMessage('저장 완료 여부를 다시 확인하는 중입니다.', false);
+              return ensurePortalSendPendingSavesFlushedP489_(payload && payload.customerNo, payload && payload.rowNo);
+            })
+            .then(function(){
+              setSendMessage('저장 확인 완료. ' + actionLabelP520 + '을 계속 진행합니다.', false);
+              continuePortalSendActionAfterPreflightP522_(action, ws);
+            })
+            .catch(function(saveErrP522){
+              finishBlockedP521(saveErrP522 && saveErrP522.message ? saveErrP522.message : String(saveErrP522 || '저장 실패'));
+            });
+        });
       } else {
         finishBlockedP521();
       }

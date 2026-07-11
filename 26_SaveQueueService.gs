@@ -599,6 +599,159 @@ function getCustomerSaveQueueBlockingItemsP521_(customerNo, limit) {
   return out;
 }
 
+
+// P522: 자료발송 전 저장큐 차단 팝업에서 사용자가 승인한 경우,
+// 저장큐에 남은 신규값을 현재 마스터시트에 강제 반영하고 큐 상태를 DONE으로 정리합니다.
+// - expectedValues / expectedMemo / masterVersion 계열은 제거하여 현재 서버값 위에 저장합니다.
+// - 사용자가 팝업에서 기존값/신규값을 확인하고 '저장하기'를 누른 경우에만 호출됩니다.
+function forceApplyCustomerSaveQueueBlockingItemsP522(customerNo, options) {
+  options = options || {};
+  const no = String(customerNo || options.customerNo || '').trim();
+  const rowNoFilter = Number(options.rowNo || 0) || 0;
+  const operationIds = Array.isArray(options.operationIds) ? options.operationIds.map(function(v) { return String(v || '').trim(); }).filter(Boolean) : [];
+  const operationSet = {};
+  operationIds.forEach(function(id) { operationSet[id] = true; });
+  if (!no) return { ok: false, applied: 0, failed: 0, message: '고객번호가 없어 저장큐 내역을 저장할 수 없습니다.' };
+
+  const sheet = getPortalSaveQueueSheetP473_();
+  const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2 || !idx['고객번호'] || !idx['상태']) return { ok: true, applied: 0, failed: 0, message: '저장큐에 처리할 내역이 없습니다.' };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(Number(options.lockWaitMs || 1800) || 1800)) {
+    return { ok: false, applied: 0, failed: 0, message: '다른 저장큐 작업이 처리 중입니다. 잠시 후 다시 시도해 주세요.' };
+  }
+
+  const blockingStatuses = {};
+  [
+    PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED,
+    PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING,
+    PORTAL_SAVE_QUEUE_P473.STATUS.RETRY,
+    PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT,
+    PORTAL_SAVE_QUEUE_P473.STATUS.FAIL
+  ].forEach(function(st) { blockingStatuses[st] = true; });
+
+  const out = { ok: true, customerNo: no, applied: 0, failed: 0, skipped: 0, results: [], message: '' };
+
+  try {
+    const width = sheet.getLastColumn();
+    const rows = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
+    const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function(v) { return String(v || '').trim(); });
+    const customerCol = idx['고객번호'] - 1;
+    const statusCol = idx['상태'] - 1;
+    const rowNoCol = idx['rowNo'] ? idx['rowNo'] - 1 : -1;
+    const opCol = idx['작업ID'] ? idx['작업ID'] - 1 : -1;
+    const maxJobs = Math.max(1, Math.min(Number(options.maxJobs || 10) || 10, 20));
+
+    for (let i = rows.length - 1; i >= 0 && (out.applied + out.failed) < maxJobs; i--) {
+      const row = rows[i];
+      const queueRowNo = i + 2;
+      if (String(row[customerCol] || '').trim() !== no) continue;
+      const status = String(row[statusCol] || '').trim();
+      if (!blockingStatuses[status]) continue;
+      const operationId = opCol >= 0 ? String(row[opCol] || '').trim() : '';
+      if (operationIds.length && !operationSet[operationId]) continue;
+      const queuedRowNo = rowNoCol >= 0 ? Number(row[rowNoCol] || 0) || 0 : 0;
+      if (rowNoFilter && queuedRowNo && queuedRowNo !== rowNoFilter) continue;
+
+      const obj = {};
+      headers.forEach(function(h, c) { if (h) obj[h] = row[c]; });
+      const methodName = String(obj['methodName'] || 'saveCustomerDetailFast').trim();
+      const patch = parsePortalSaveQueueJsonP473_(obj['patchJson'], {});
+      const rawPayload = parsePortalSaveQueueJsonP473_(obj['payloadJson'], {});
+      const forcedPayload = buildPortalForceSavePayloadP522_(methodName, rawPayload, patch, no, queuedRowNo, operationId);
+      const now = new Date();
+
+      try {
+        if (idx['상태']) sheet.getRange(queueRowNo, idx['상태']).setValue(PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING);
+        if (idx['수정일시']) sheet.getRange(queueRowNo, idx['수정일시']).setValue(now);
+        SpreadsheetApp.flush();
+
+        const result = applyPortalQueuedSaveJobP473_(methodName, forcedPayload);
+        const finalResult = Object.assign({}, result || {}, {
+          ok: true,
+          forcedApplyP522: true,
+          previousStatusP522: status,
+          operationIdP522: operationId,
+          forcedByP522: getPortalActiveUserEmailP473_(),
+          forcedAtP522: new Date().toISOString()
+        });
+        if (idx['상태']) sheet.getRange(queueRowNo, idx['상태']).setValue(PORTAL_SAVE_QUEUE_P473.STATUS.DONE);
+        if (idx['수정일시']) sheet.getRange(queueRowNo, idx['수정일시']).setValue(new Date());
+        if (idx['시도횟수']) sheet.getRange(queueRowNo, idx['시도횟수']).setValue((Number(obj['시도횟수'] || 0) || 0) + 1);
+        if (idx['resultJson']) sheet.getRange(queueRowNo, idx['resultJson']).setValue(stringifyPortalSaveQueueJsonP473_(finalResult).slice(0, 45000));
+        if (idx['마지막오류']) sheet.getRange(queueRowNo, idx['마지막오류']).setValue('');
+        if (idx['적용일시']) sheet.getRange(queueRowNo, idx['적용일시']).setValue(new Date());
+        out.applied++;
+        out.results.push({ ok: true, queueRowNo: queueRowNo, operationId: operationId, methodName: methodName, statusBefore: status });
+      } catch (err) {
+        const errText = String(err && (err.stack || err.message) || err).slice(0, 45000);
+        if (idx['상태']) sheet.getRange(queueRowNo, idx['상태']).setValue(isPortalServerStaleErrorP473_(err) ? PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT : PORTAL_SAVE_QUEUE_P473.STATUS.FAIL);
+        if (idx['수정일시']) sheet.getRange(queueRowNo, idx['수정일시']).setValue(new Date());
+        if (idx['시도횟수']) sheet.getRange(queueRowNo, idx['시도횟수']).setValue((Number(obj['시도횟수'] || 0) || 0) + 1);
+        if (idx['마지막오류']) sheet.getRange(queueRowNo, idx['마지막오류']).setValue(errText);
+        out.failed++;
+        out.results.push({ ok: false, queueRowNo: queueRowNo, operationId: operationId, methodName: methodName, statusBefore: status, error: errText.slice(0, 1000) });
+      }
+    }
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+
+  out.ok = out.failed === 0;
+  out.message = out.ok
+    ? ('저장큐 내역 ' + out.applied + '건을 저장했습니다.')
+    : ('저장큐 내역 저장 중 실패 ' + out.failed + '건이 있습니다.');
+  if (!out.applied && !out.failed) out.message = '현재 고객에 저장할 차단 내역이 없습니다.';
+  out.blockingItems = getCustomerSaveQueueBlockingItemsP521_(no, 10).items;
+  if (out.blockingItems && out.blockingItems.length) out.ok = false;
+  return out;
+}
+
+function buildPortalForceSavePayloadP522_(methodName, payload, patch, customerNo, rowNo, operationId) {
+  payload = Object.assign({}, payload || {});
+  patch = patch && typeof patch === 'object' ? Object.assign({}, patch) : {};
+  const method = String(methodName || '').trim();
+  const forced = Object.assign({}, payload);
+  forced.customerNo = String(forced.customerNo || customerNo || '').trim();
+  forced.rowNo = Number(forced.rowNo || rowNo || 0) || rowNo || '';
+  forced.clientSaveSource = String(forced.clientSaveSource || forced.source || 'saveQueue.forceApplyP522') + '.forceApplyP522';
+  forced.source = forced.clientSaveSource;
+  forced.forceApplyP522 = true;
+  forced.noSynchronousRefresh = true;
+  forced.fastMode = true;
+  forced.thinSave = true;
+  forced.clientOperationId = String(operationId || forced.clientOperationId || 'FORCE_P522') + '_FORCE_' + new Date().getTime();
+
+  delete forced.expectedValues;
+  delete forced.expectedMemo;
+  delete forced.baseMasterVersion;
+  delete forced.masterVersion;
+  delete forced.__masterVersion;
+  delete forced.expectedMasterVersion;
+
+  if (Object.keys(patch).length) {
+    forced.values = Object.assign({}, patch);
+    forced.patch = Object.assign({}, patch);
+    if (Object.prototype.hasOwnProperty.call(patch, 'memo')) forced.memo = patch.memo;
+  } else if (forced.patch && typeof forced.patch === 'object') {
+    forced.values = Object.assign({}, forced.patch || {});
+    if (Object.prototype.hasOwnProperty.call(forced.patch, 'memo')) forced.memo = forced.patch.memo;
+  } else if (forced.values && typeof forced.values === 'object') {
+    forced.values = Object.assign({}, forced.values || {});
+    if (Object.prototype.hasOwnProperty.call(forced.values, 'memo')) forced.memo = forced.values.memo;
+  }
+
+  if (method === 'saveCustomerMemoFast' && !Object.prototype.hasOwnProperty.call(forced, 'memo') && forced.values && Object.prototype.hasOwnProperty.call(forced.values, 'memo')) {
+    forced.memo = forced.values.memo;
+  }
+  if (method === 'saveCustomerPatchFastP473' || method === 'saveCustomerDetailFast') {
+    if (!forced.values || typeof forced.values !== 'object') forced.values = Object.assign({}, patch || {});
+  }
+  return forced;
+}
+
 function flushCustomerPendingOpsP473(customerNo, timeoutMs) {
   try { resolveCustomerSupersededSaveConflictsP489_(customerNo); } catch (e) {}
   const started = new Date().getTime();
