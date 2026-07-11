@@ -471,6 +471,134 @@ function applyPortalQueuedSaveJobP473_(methodName, payload) {
   throw new Error('지원하지 않는 저장큐 methodName: ' + methodName);
 }
 
+
+// P521: 자료발송 전 저장큐 차단 내역 상세 조회.
+// - 발송 preflight에서 CONFLICT / FAIL / QUEUED / RETRY / RUNNING 상태를 팝업으로 보여주기 위한 읽기 전용 helper입니다.
+// - 큐 상태를 변경하지 않고, 저장/발송 로직도 실행하지 않습니다.
+function getCustomerSaveQueueBlockingItemsP521(customerNo, limit) {
+  return getCustomerSaveQueueBlockingItemsP521_(customerNo, limit);
+}
+
+function trimPortalSaveQueueValueP521_(value, maxLen) {
+  const text = String(value == null ? '' : value);
+  const limit = Math.max(80, Number(maxLen || 1500) || 1500);
+  return text.length > limit ? text.slice(0, limit) + '\n…' : text;
+}
+
+function stringifyPortalSaveQueuePreviewP521_(value, maxLen) {
+  if (value == null || value === '') return '';
+  try {
+    if (typeof value === 'object') return trimPortalSaveQueueValueP521_(JSON.stringify(value), maxLen || 1500);
+  } catch (e) {}
+  return trimPortalSaveQueueValueP521_(value, maxLen || 1500);
+}
+
+function getPortalSaveQueueNestedObjectP521_(payload, key) {
+  if (!payload || typeof payload !== 'object') return null;
+  const obj = payload[key];
+  return obj && typeof obj === 'object' ? obj : null;
+}
+
+function hasPortalSaveQueueOwnP521_(obj, key) {
+  return !!(obj && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key));
+}
+
+function buildPortalSaveQueueFieldSummariesP521_(patch, expected, payload, resultJson) {
+  patch = patch && typeof patch === 'object' ? patch : {};
+  expected = expected && typeof expected === 'object' ? expected : {};
+  payload = payload && typeof payload === 'object' ? payload : {};
+  resultJson = resultJson && typeof resultJson === 'object' ? resultJson : {};
+  const payloadPatch = getPortalSaveQueueNestedObjectP521_(payload, 'patch') || getPortalSaveQueueNestedObjectP521_(payload, 'values') || {};
+  const payloadExpected = getPortalSaveQueueNestedObjectP521_(payload, 'expectedValues') || {};
+  const resultCurrent = getPortalSaveQueueNestedObjectP521_(resultJson, 'currentValues') || getPortalSaveQueueNestedObjectP521_(resultJson, 'serverValues') || {};
+  const seen = {};
+  const keys = [];
+  [patch, expected, payloadPatch, payloadExpected, resultCurrent].forEach(function(obj) {
+    Object.keys(obj || {}).forEach(function(k) {
+      if (!seen[k]) {
+        seen[k] = true;
+        keys.push(k);
+      }
+    });
+  });
+  if (!keys.length && hasPortalSaveQueueOwnP521_(payload, 'memo')) keys.push('memo');
+  if (!keys.length) return [];
+  return keys.slice(0, 8).map(function(k) {
+    let oldValue = hasPortalSaveQueueOwnP521_(expected, k) ? expected[k] : (hasPortalSaveQueueOwnP521_(payloadExpected, k) ? payloadExpected[k] : '');
+    let newValue = hasPortalSaveQueueOwnP521_(patch, k) ? patch[k] : (hasPortalSaveQueueOwnP521_(payloadPatch, k) ? payloadPatch[k] : (k === 'memo' && hasPortalSaveQueueOwnP521_(payload, 'memo') ? payload.memo : ''));
+    let serverValue = hasPortalSaveQueueOwnP521_(resultCurrent, k) ? resultCurrent[k] : '';
+    if (!serverValue && String(resultJson.field || '') === String(k) && hasPortalSaveQueueOwnP521_(resultJson, 'serverValue')) serverValue = resultJson.serverValue;
+    if (!serverValue && String(resultJson.field || '') === String(k) && hasPortalSaveQueueOwnP521_(resultJson, 'serverValuePreview')) serverValue = resultJson.serverValuePreview;
+    return {
+      field: String(k || ''),
+      oldValue: trimPortalSaveQueueValueP521_(oldValue, 1800),
+      newValue: trimPortalSaveQueueValueP521_(newValue, 1800),
+      serverValue: trimPortalSaveQueueValueP521_(serverValue, 1800)
+    };
+  });
+}
+
+function getCustomerSaveQueueBlockingItemsP521_(customerNo, limit) {
+  const no = String(customerNo || '').trim();
+  const max = Math.max(1, Math.min(Number(limit || 10) || 10, 20));
+  const out = { ok: true, customerNo: no, totalBlocking: 0, items: [] };
+  if (!no) return out;
+  const sheet = getPortalSaveQueueSheetP473_();
+  const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2 || !idx['고객번호'] || !idx['상태']) return out;
+  const width = sheet.getLastColumn();
+  const data = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
+  const blockingStatuses = {};
+  [
+    PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED,
+    PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING,
+    PORTAL_SAVE_QUEUE_P473.STATUS.RETRY,
+    PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT,
+    PORTAL_SAVE_QUEUE_P473.STATUS.FAIL
+  ].forEach(function(st) { blockingStatuses[st] = true; });
+  const customerCol = idx['고객번호'] - 1;
+  const statusCol = idx['상태'] - 1;
+
+  for (let i = data.length - 1; i >= 0; i--) {
+    const row = data[i];
+    if (String(row[customerCol] || '').trim() !== no) continue;
+    const status = String(row[statusCol] || '').trim();
+    if (!blockingStatuses[status]) continue;
+    out.totalBlocking++;
+    if (out.items.length >= max) continue;
+
+    const patch = idx['patchJson'] ? parsePortalSaveQueueJsonP473_(row[idx['patchJson'] - 1], {}) : {};
+    const expected = idx['expectedValuesJson'] ? parsePortalSaveQueueJsonP473_(row[idx['expectedValuesJson'] - 1], {}) : {};
+    const payload = idx['payloadJson'] ? parsePortalSaveQueueJsonP473_(row[idx['payloadJson'] - 1], {}) : {};
+    const resultJson = idx['resultJson'] ? parsePortalSaveQueueJsonP473_(row[idx['resultJson'] - 1], {}) : {};
+    const lastError = idx['마지막오류'] ? String(row[idx['마지막오류'] - 1] || '') : '';
+
+    out.items.push({
+      sheetRow: i + 2,
+      registeredAt: idx['등록일시'] ? row[idx['등록일시'] - 1] : '',
+      updatedAt: idx['수정일시'] ? row[idx['수정일시'] - 1] : '',
+      operationId: idx['작업ID'] ? String(row[idx['작업ID'] - 1] || '') : '',
+      user: idx['사용자'] ? String(row[idx['사용자'] - 1] || '') : '',
+      sessionId: idx['세션ID'] ? String(row[idx['세션ID'] - 1] || '') : '',
+      customerNo: no,
+      rowNo: idx['rowNo'] ? String(row[idx['rowNo'] - 1] || '') : '',
+      methodName: idx['methodName'] ? String(row[idx['methodName'] - 1] || '') : '',
+      source: idx['source'] ? String(row[idx['source'] - 1] || '') : '',
+      status: status,
+      priority: idx['우선순위'] ? String(row[idx['우선순위'] - 1] || '') : '',
+      attempts: idx['시도횟수'] ? String(row[idx['시도횟수'] - 1] || '') : '',
+      lastError: trimPortalSaveQueueValueP521_(lastError, 1200),
+      resultPreview: stringifyPortalSaveQueuePreviewP521_(resultJson, 1200),
+      fieldSummaries: buildPortalSaveQueueFieldSummariesP521_(patch, expected, payload, resultJson),
+      patchPreview: stringifyPortalSaveQueuePreviewP521_(patch, 1200),
+      expectedPreview: stringifyPortalSaveQueuePreviewP521_(expected, 1200),
+      payloadPreview: stringifyPortalSaveQueuePreviewP521_(payload, 1200)
+    });
+  }
+  return out;
+}
+
 function flushCustomerPendingOpsP473(customerNo, timeoutMs) {
   try { resolveCustomerSupersededSaveConflictsP489_(customerNo); } catch (e) {}
   const started = new Date().getTime();
@@ -479,13 +607,13 @@ function flushCustomerPendingOpsP473(customerNo, timeoutMs) {
   while (new Date().getTime() - started < limit) {
     const before = getCustomerSaveQueueStatusCountsP489_(customerNo);
     if (before.fail) {
-      return { ok: false, pending: before.pending, conflict: before.conflict, fail: before.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.' };
+      return { ok: false, pending: before.pending, conflict: before.conflict, fail: before.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10).items };
     }
     if (!before.pending && !before.conflict) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
     last = processSaveQueueP473({ maxJobs: 8, lockWaitMs: 800 });
     const after = getCustomerSaveQueueStatusCountsP489_(customerNo);
     if (after.fail) {
-      return { ok: false, pending: after.pending, conflict: after.conflict, fail: after.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.' };
+      return { ok: false, pending: after.pending, conflict: after.conflict, fail: after.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10).items };
     }
     if (!after.pending && !after.conflict) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
     if (after.conflict && !after.pending) {
@@ -493,12 +621,12 @@ function flushCustomerPendingOpsP473(customerNo, timeoutMs) {
         Utilities.sleep(300);
         continue;
       }
-      return { ok: false, pending: 0, conflict: after.conflict, fail: 0, result: last, message: '자동 재기준 저장으로 해결되지 않은 충돌이 남아 있습니다.' };
+      return { ok: false, pending: 0, conflict: after.conflict, fail: 0, result: last, message: '자동 재기준 저장으로 해결되지 않은 충돌이 남아 있습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10).items };
     }
     Utilities.sleep(300);
   }
   const finalCounts = getCustomerSaveQueueStatusCountsP489_(customerNo);
-  return { ok: false, pending: finalCounts.pending, conflict: finalCounts.conflict, fail: finalCounts.fail, result: last, message: '저장 대기 작업이 아직 남아 있습니다.' };
+  return { ok: false, pending: finalCounts.pending, conflict: finalCounts.conflict, fail: finalCounts.fail, result: last, message: '저장 대기 작업이 아직 남아 있습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10).items };
 }
 
 function getCustomerSaveQueueStatusCountsP489_(customerNo) {

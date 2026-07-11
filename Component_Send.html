@@ -2786,6 +2786,157 @@ function ensurePortalSendPreflightP520_(action, payload, ws) {
     .then(function(){ return ensurePortalSendPendingSavesFlushedP489_(payload && payload.customerNo, payload && payload.rowNo); });
 }
 
+
+// P521: 저장큐 차단 내역(CONFLICT/FAIL/미완료)을 자료발송 전 팝업으로 표시합니다.
+var portalSendQueueBlockModalResolverP521_ = null;
+
+function normalizePortalSendQueueBlockingItemsP521_(items) {
+  if (!Array.isArray(items)) return [];
+  return items.filter(function(item){ return !!item; });
+}
+
+function getPortalSendQueueStatusTextP521_(status) {
+  status = String(status || '').toUpperCase();
+  if (status === 'CONFLICT') return '충돌';
+  if (status === 'FAIL') return '실패';
+  if (status === 'RETRY') return '재시도 대기';
+  if (status === 'QUEUED') return '대기';
+  if (status === 'RUNNING') return '처리 중';
+  return status || '확인 필요';
+}
+
+function getPortalSendQueueStatusStyleP521_(status) {
+  status = String(status || '').toUpperCase();
+  if (status === 'CONFLICT' || status === 'FAIL') return 'background:#fef3f2;color:#b42318;border-color:#fecdca;';
+  if (status === 'RETRY' || status === 'QUEUED' || status === 'RUNNING') return 'background:#fffbeb;color:#92400e;border-color:#fedf89;';
+  return 'background:#f2f4f7;color:#344054;border-color:#d0d5dd;';
+}
+
+function renderPortalSendQueueFieldSummariesP521_(item) {
+  const fields = Array.isArray(item && item.fieldSummaries) ? item.fieldSummaries : [];
+  if (!fields.length) {
+    const expected = summarizePortalSendPreflightValueP520_(item && item.expectedPreview, 900);
+    const patch = summarizePortalSendPreflightValueP520_(item && item.patchPreview, 900);
+    if (!expected && !patch) return '<div style="color:#667085;font-size:12px;font-weight:800;">표시할 기존값/신규값 상세가 없습니다.</div>';
+    return '' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #eaecf0;border-radius:10px;overflow:hidden;background:#fff;">' +
+        '<div style="padding:10px 12px;border-right:1px solid #eaecf0;min-width:0;">' +
+          '<div style="font-size:11px;font-weight:900;color:#667085;margin-bottom:6px;">기존값 / 기대값</div>' +
+          '<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.55;color:#344054;font-family:inherit;max-height:160px;overflow:auto;">' + esc(expected || '(공란)') + '</pre>' +
+        '</div>' +
+        '<div style="padding:10px 12px;min-width:0;background:#fffef7;">' +
+          '<div style="font-size:11px;font-weight:900;color:#7a4b00;margin-bottom:6px;">저장하려던 신규값</div>' +
+          '<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.55;color:#111827;font-family:inherit;max-height:160px;overflow:auto;">' + esc(patch || '(공란)') + '</pre>' +
+        '</div>' +
+      '</div>';
+  }
+  let html = '<div style="display:flex;flex-direction:column;gap:10px;">';
+  fields.forEach(function(field) {
+    const label = field && field.field ? String(field.field) : '입력값';
+    const oldValue = summarizePortalSendPreflightValueP520_(field && field.oldValue, 900);
+    const newValue = summarizePortalSendPreflightValueP520_(field && field.newValue, 900);
+    const serverValue = summarizePortalSendPreflightValueP520_(field && field.serverValue, 900);
+    html += '<div style="border:1px solid #eaecf0;border-radius:10px;overflow:hidden;background:#fff;">' +
+      '<div style="padding:8px 10px;background:#f8fafc;border-bottom:1px solid #eaecf0;font-size:12px;font-weight:900;color:#111827;">' + esc(label) + '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr' + (serverValue ? ' 1fr' : '') + ';gap:0;">' +
+        '<div style="padding:10px 12px;border-right:1px solid #eaecf0;min-width:0;">' +
+          '<div style="font-size:11px;font-weight:900;color:#667085;margin-bottom:6px;">기존값 / 기대값</div>' +
+          '<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.55;color:#344054;font-family:inherit;max-height:150px;overflow:auto;">' + esc(oldValue || '(공란)') + '</pre>' +
+        '</div>' +
+        '<div style="padding:10px 12px;min-width:0;background:#fffef7;' + (serverValue ? 'border-right:1px solid #eaecf0;' : '') + '">' +
+          '<div style="font-size:11px;font-weight:900;color:#7a4b00;margin-bottom:6px;">저장하려던 신규값</div>' +
+          '<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.55;color:#111827;font-family:inherit;max-height:150px;overflow:auto;">' + esc(newValue || '(공란)') + '</pre>' +
+        '</div>' +
+        (serverValue ? '<div style="padding:10px 12px;min-width:0;background:#f9fafb;">' +
+          '<div style="font-size:11px;font-weight:900;color:#667085;margin-bottom:6px;">현재 서버값</div>' +
+          '<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.55;color:#344054;font-family:inherit;max-height:150px;overflow:auto;">' + esc(serverValue || '(공란)') + '</pre>' +
+        '</div>' : '') +
+      '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderPortalSendSaveQueueBlockingRowsP521_(items) {
+  items = normalizePortalSendQueueBlockingItemsP521_(items);
+  if (!items.length) return '<div style="color:#667085;font-weight:800;">표시할 저장큐 차단 내역이 없습니다.</div>';
+  let html = '<div style="display:flex;flex-direction:column;gap:12px;">';
+  items.forEach(function(item, idx) {
+    const status = String(item && item.status || '');
+    const statusText = getPortalSendQueueStatusTextP521_(status);
+    const statusStyle = getPortalSendQueueStatusStyleP521_(status);
+    const title = (item && item.source ? item.source : (item && item.methodName ? item.methodName : '저장 작업'));
+    const meta = [];
+    if (item && item.operationId) meta.push('작업ID ' + item.operationId);
+    if (item && item.updatedAt) meta.push('수정 ' + item.updatedAt);
+    if (item && item.attempts) meta.push('시도 ' + item.attempts + '회');
+    if (item && item.sheetRow) meta.push('큐 ' + item.sheetRow + '행');
+    html += '<div style="border:1px solid #d0d5dd;border-radius:12px;background:#fff;overflow:hidden;">' +
+      '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #eaecf0;">' +
+        '<div style="min-width:0;">' +
+          '<div style="font-size:13px;font-weight:900;color:#111827;">' + esc(title) + '</div>' +
+          '<div style="font-size:11px;font-weight:800;color:#667085;margin-top:4px;word-break:break-all;">' + esc(meta.join(' · ') || ('저장큐 차단 내역 #' + (idx + 1))) + '</div>' +
+        '</div>' +
+        '<div style="border:1px solid;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:900;white-space:nowrap;' + statusStyle + '">' + esc(statusText) + '</div>' +
+      '</div>' +
+      '<div style="padding:12px;display:flex;flex-direction:column;gap:10px;">' +
+        (item && item.lastError ? '<div style="border:1px solid #fecdca;background:#fef3f2;color:#b42318;border-radius:10px;padding:9px 10px;font-size:12px;font-weight:800;line-height:1.55;white-space:pre-wrap;word-break:break-word;">' + esc(summarizePortalSendPreflightValueP520_(item.lastError, 700)) + '</div>' : '') +
+        renderPortalSendQueueFieldSummariesP521_(item) +
+      '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function closePortalSendSaveQueueBlockingModalP521_() {
+  const resolver = portalSendQueueBlockModalResolverP521_;
+  portalSendQueueBlockModalResolverP521_ = null;
+  const backdrop = document.getElementById('portalSendSaveQueueBlockingBackdropP521');
+  if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+  if (resolver) resolver(true);
+}
+
+function showPortalSendSaveQueueBlockingModalP521_(items, actionLabel, message) {
+  return new Promise(function(resolve) {
+    try { closePortalSendSaveQueueBlockingModalP521_(); } catch (e) {}
+    portalSendQueueBlockModalResolverP521_ = resolve;
+    const backdrop = document.createElement('div');
+    backdrop.id = 'portalSendSaveQueueBlockingBackdropP521';
+    backdrop.className = 'support-modal-backdrop';
+    backdrop.style.display = 'flex';
+    backdrop.style.zIndex = '1720';
+    backdrop.innerHTML = '' +
+      '<div class="support-modal" style="width:1040px;max-width:96vw;max-height:92vh;">' +
+        '<div class="support-modal-header">' +
+          '<div class="support-modal-title">자료발송 전 저장 충돌/미완료 확인</div>' +
+          '<button type="button" class="support-modal-close" onclick="closePortalSendSaveQueueBlockingModalP521_()">X</button>' +
+        '</div>' +
+        '<div class="support-modal-body">' +
+          '<div style="border:1px solid #fecdca;background:#fef3f2;color:#b42318;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;font-weight:800;line-height:1.65;">' +
+            '현재 고객의 저장 충돌 또는 미완료 내역이 저장큐에 남아 있어 ' + esc(actionLabel || '자료발송') + '을 계속 진행할 수 없습니다.<br>' +
+            '아래 기존값/신규값을 확인한 뒤 저장 상태를 정리하고 다시 진행해 주세요.' +
+            (message ? '<br><span style="font-weight:900;">사유: ' + esc(message) + '</span>' : '') +
+          '</div>' +
+          renderPortalSendSaveQueueBlockingRowsP521_(items) +
+        '</div>' +
+        '<div class="support-modal-footer">' +
+          '<button type="button" onclick="closePortalSendSaveQueueBlockingModalP521_()">저장상태 확인 완료</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(backdrop);
+  });
+}
+
+function getPortalSendBlockingItemsFromErrorP521_(err) {
+  if (!err) return [];
+  if (Array.isArray(err.portalSaveQueueBlockingItemsP521)) return err.portalSaveQueueBlockingItemsP521;
+  if (err.portalSaveQueueResponseP521 && Array.isArray(err.portalSaveQueueResponseP521.blockingItems)) return err.portalSaveQueueResponseP521.blockingItems;
+  if (Array.isArray(err.blockingItems)) return err.blockingItems;
+  return [];
+}
+
 function getPortalLocalPendingSaveCountBeforeSendP489_(customerNo, rowNo) {
   customerNo = normalizeCustomerNoForKey_(customerNo || '');
   rowNo = Number(rowNo || 0) || 0;
@@ -2841,7 +2992,11 @@ function ensurePortalSendPendingSavesFlushedP489_(customerNo, rowNo) {
         google.script.run
           .withSuccessHandler(function(res){
             if (res && res.ok === false) {
-              reject(new Error(res.message || '저장 대기 작업이 아직 남아 있습니다.'));
+              const err = new Error(res.message || '저장 대기 작업이 아직 남아 있습니다.');
+              err.portalSaveQueueBlockingP521 = true;
+              err.portalSaveQueueResponseP521 = res;
+              err.portalSaveQueueBlockingItemsP521 = Array.isArray(res.blockingItems) ? res.blockingItems : [];
+              reject(err);
               return;
             }
             resolve(res || { ok: true });
@@ -2866,8 +3021,16 @@ function enqueueSendActionAfterPendingSaveFlushP489_(action, payload, ws) {
     })
     .catch(function(err){
       const msg = err && err.message ? err.message : String(err || '');
-      setSendMessage('현재 고객의 저장 확인이 완료되지 않아 ' + actionLabelP520 + '을 중단했습니다. 저장 상태를 확인한 뒤 다시 진행해 주세요.' + (msg ? ' (' + msg + ')' : ''), true);
-      try { if (typeof renderInlineMailProgress_ === 'function') renderInlineMailProgress_(); } catch(e) {}
+      const blockingItemsP521 = (typeof getPortalSendBlockingItemsFromErrorP521_ === 'function') ? getPortalSendBlockingItemsFromErrorP521_(err) : [];
+      const finishBlockedP521 = function() {
+        setSendMessage('현재 고객의 저장 확인이 완료되지 않아 ' + actionLabelP520 + '을 중단했습니다. 저장 상태를 확인한 뒤 다시 진행해 주세요.' + (msg ? ' (' + msg + ')' : ''), true);
+        try { if (typeof renderInlineMailProgress_ === 'function') renderInlineMailProgress_(); } catch(e) {}
+      };
+      if (blockingItemsP521 && blockingItemsP521.length && typeof showPortalSendSaveQueueBlockingModalP521_ === 'function') {
+        showPortalSendSaveQueueBlockingModalP521_(blockingItemsP521, actionLabelP520, msg).then(finishBlockedP521);
+      } else {
+        finishBlockedP521();
+      }
     });
 }
 
