@@ -3,10 +3,11 @@ let portalBootOverlayHideTimerP463_ = null;
 let portalRouteLoadingNonceP463_ = 0;
 let portalCurrentPageP469_ = 'home';
 
-// P515: 브라우저 포털 캐시 초기화/자동 버전 관리
+// P528: 나의 고객 현황 추가 후 클라이언트 캐시 버전 갱신
 // - 크롬 전체 캐시는 웹앱에서 삭제할 수 없으므로, 포털이 직접 저장한 localStorage/sessionStorage/Cache API만 정리합니다.
 // - 캐시 버전이 바뀐 경우 1회 자동 초기화해 오래된 고객 row/detail/send workspace 캐시를 제거합니다.
-const PORTAL_CLIENT_CACHE_VERSION_P515 = 'P515_settings_clear_portal_cache';
+// - 단, 미처리 저장/발송 operation은 보호해 사용자의 저장 의도를 지우지 않습니다.
+const PORTAL_CLIENT_CACHE_VERSION_P515 = 'P528_my_customer_status_dashboard';
 const PORTAL_CLIENT_CACHE_VERSION_KEY_P515 = 'salesPortal.clientCache.version';
 const PORTAL_CLIENT_CACHE_RESET_MARKER_P515 = 'salesPortal.clientCache.resetNotice';
 
@@ -23,6 +24,7 @@ function normalizePortalPageP470_(page) {
     customers: true,
     favorites: true,
     myCustomerFolder: true,
+    myCustomerStatus: true,
     focusCustomers: true,
     contracts: true,
     send: true,
@@ -108,6 +110,10 @@ function portalResetCurrentPageP469_() {
   }
   if (page === 'myCustomerFolder') {
     try { if (typeof resetMyCustomerFolderPageP497_ === 'function') resetMyCustomerFolderPageP497_(); } catch (err) {}
+    return;
+  }
+  if (page === 'myCustomerStatus') {
+    try { if (typeof resetMyCustomerStatusPageP528_ === 'function') resetMyCustomerStatusPageP528_(); } catch (err) {}
     return;
   }
   if (page === 'focusCustomers') {
@@ -274,7 +280,7 @@ function isPortalTransientStorageKeyP515_(key) {
   if (!key) return false;
   // 포털이 쓰는 캐시/작업상태/화면상태만 정리합니다. 사용자 서버 설정은 삭제하지 않습니다.
   return /^(salesPortal\.|s1portal:|portalCustomerPage:)/i.test(key) ||
-    /customerSearch|customerDetail|customerPage|customerFolder|myCustomerFolder|focusCustomer|favorite|sendWorkspaces|sendActionQueue|mailProgress|portalPerf|portalPermission|activityLog|contractComplete|supportRequest|todayTask/i.test(key);
+    /customerSearch|customerDetail|customerPage|customerFolder|myCustomerFolder|myCustomerStatus|focusCustomer|favorite|sendWorkspaces|sendActionQueue|mailProgress|portalPerf|portalPermission|activityLog|contractComplete|supportRequest|todayTask/i.test(key);
 }
 
 function safeStorageKeysP515_(storage) {
@@ -284,6 +290,81 @@ function safeStorageKeysP515_(storage) {
     for (let i = 0; i < storage.length; i++) keys.push(storage.key(i));
   } catch (err) {}
   return keys.filter(function(k) { return k != null && k !== ''; });
+}
+
+
+// P526: 자동 캐시 버전 갱신 시에도 저장/발송 의도가 남아 있는 localStorage 키는 보호합니다.
+function getPortalStorageValueP526_(storage, key) {
+  try { return storage && key ? String(storage.getItem(key) || '') : ''; } catch (err) { return ''; }
+}
+
+function parsePortalStorageJsonP526_(raw) {
+  try { return raw ? JSON.parse(raw) : null; } catch (err) { return null; }
+}
+
+function hasPortalPendingStoredArrayP526_(raw, doneStatuses) {
+  const arr = parsePortalStorageJsonP526_(raw);
+  if (!Array.isArray(arr) || !arr.length) return false;
+  const done = doneStatuses || { APPLIED: true, DONE: true, CANCELLED: true, SKIPPED: true, IGNORE: true };
+  return arr.some(function(item) {
+    if (!item) return false;
+    const st = String(item.status || item.state || '').toUpperCase();
+    if (st && done[st]) return false;
+    return true;
+  });
+}
+
+function hasPortalSendWorkspaceActiveDraftP526_(raw) {
+  const payload = parsePortalStorageJsonP526_(raw);
+  const arr = payload && Array.isArray(payload.workspaces) ? payload.workspaces : [];
+  if (!arr.length) return false;
+  return arr.some(function(ws) {
+    if (!ws) return false;
+    if (ws.sendActionLockP480 || ws.mailSendInFlight) return true;
+    const progress = String((ws.mailProgressState && ws.mailProgressState.status) || '').toUpperCase();
+    if (progress === 'RUNNING' || progress === 'PENDING' || progress === 'QUEUED') return true;
+    const touched = ws.recipientTouched || {};
+    if (touched.to || touched.cc) return true;
+    const mailTouched = ws.mailContentTouched || {};
+    if (mailTouched.subject || mailTouched.body) return true;
+    if (String(ws.mailBodyDraft || ws.mailBodyHtmlDraft || ws.mailSubjectDraft || '').trim()) return true;
+    return false;
+  });
+}
+
+function isPortalProtectedPendingStorageKeyP526_(key, storage) {
+  key = String(key || '');
+  if (!key) return false;
+  const raw = getPortalStorageValueP526_(storage, key);
+  if (!raw) return false;
+  if (/^s1portal:customerSaveDurableOps:P468:/i.test(key)) return hasPortalPendingStoredArrayP526_(raw);
+  if (/^s1portal:detailDurableOps:P458:/i.test(key)) return hasPortalPendingStoredArrayP526_(raw, { APPLIED: true, DONE: true, CANCELLED: true, SKIPPED: true, IGNORE: true });
+  if (/^salesPortal\.sendActionQueue\.p477$/i.test(key)) return hasPortalPendingStoredArrayP526_(raw);
+  if (/^salesPortal\.sendWorkspaces\.v213\./i.test(key)) return hasPortalSendWorkspaceActiveDraftP526_(raw);
+  return false;
+}
+
+function countPortalProtectedPendingStorageKeysP526_() {
+  let local = 0, session = 0;
+  try { local = safeStorageKeysP515_(localStorage).filter(function(k) { return isPortalProtectedPendingStorageKeyP526_(k, localStorage); }).length; } catch (err) {}
+  try { session = safeStorageKeysP515_(sessionStorage).filter(function(k) { return isPortalProtectedPendingStorageKeyP526_(k, sessionStorage); }).length; } catch (err2) {}
+  return { local: local, session: session, total: local + session };
+}
+
+function getPortalClientCacheVersionInfoP526_() {
+  const protectedCounts = countPortalProtectedPendingStorageKeysP526_();
+  let storedVersion = '';
+  try { storedVersion = String(localStorage.getItem(PORTAL_CLIENT_CACHE_VERSION_KEY_P515) || ''); } catch (err) {}
+  return {
+    currentVersion: PORTAL_CLIENT_CACHE_VERSION_P515,
+    storedVersion: storedVersion || '',
+    versionKey: PORTAL_CLIENT_CACHE_VERSION_KEY_P515,
+    resetMarkerKey: PORTAL_CLIENT_CACHE_RESET_MARKER_P515,
+    versionMatched: storedVersion === PORTAL_CLIENT_CACHE_VERSION_P515,
+    protectedLocal: protectedCounts.local,
+    protectedSession: protectedCounts.session,
+    protectedTotal: protectedCounts.total
+  };
 }
 
 function clearPortalClientRuntimeStateP515_() {
@@ -299,10 +380,11 @@ function clearPortalClientRuntimeStateP515_() {
 
 function clearPortalClientCachesP515_(options) {
   options = options || {};
-  const counts = { local: 0, session: 0, cacheApi: 0, errors: [] };
+  const counts = { local: 0, session: 0, cacheApi: 0, protected: 0, errors: [] };
   try {
     safeStorageKeysP515_(localStorage).forEach(function(k) {
       if (k === PORTAL_CLIENT_CACHE_VERSION_KEY_P515 && options.keepVersionKey !== false) return;
+      if (options.keepProtectedPending !== false && isPortalProtectedPendingStorageKeyP526_(k, localStorage)) { counts.protected++; return; }
       if (isPortalTransientStorageKeyP515_(k)) {
         try { localStorage.removeItem(k); counts.local++; } catch (e) { counts.errors.push('local:' + k); }
       }
@@ -311,6 +393,7 @@ function clearPortalClientCachesP515_(options) {
   try {
     safeStorageKeysP515_(sessionStorage).forEach(function(k) {
       if (k === PORTAL_CLIENT_CACHE_RESET_MARKER_P515 && options.keepResetMarker !== false) return;
+      if (options.keepProtectedPending !== false && isPortalProtectedPendingStorageKeyP526_(k, sessionStorage)) { counts.protected++; return; }
       if (isPortalTransientStorageKeyP515_(k) || options.clearAllSession === true) {
         try { sessionStorage.removeItem(k); counts.session++; } catch (e) { counts.errors.push('session:' + k); }
       }
@@ -351,7 +434,7 @@ function ensurePortalClientCacheVersionP515_() {
   try { prev = String(localStorage.getItem(PORTAL_CLIENT_CACHE_VERSION_KEY_P515) || ''); } catch (err) {}
   if (prev === PORTAL_CLIENT_CACHE_VERSION_P515) return false;
 
-  // P515 최초 반영 시 이전 버전/무버전 브라우저 캐시를 1회 정리합니다.
+  // P526 배포 후 이전 버전/무버전 브라우저 캐시를 1회 정리합니다.
   try { sessionStorage.setItem(PORTAL_CLIENT_CACHE_RESET_MARKER_P515, '자동 캐시 초기화 완료 · ' + PORTAL_CLIENT_CACHE_VERSION_P515); } catch (err2) {}
   return true;
 }
@@ -419,7 +502,7 @@ function clearPortalClientCacheFromSettingsP515_() {
   if (status) status.textContent = '포털 브라우저 캐시를 삭제하는 중입니다...';
   clearPortalClientCachesP515_({ includeCacheApi: true, keepVersionKey: false, keepResetMarker: true, clearAllSession: true }).then(function(counts) {
     try { localStorage.setItem(PORTAL_CLIENT_CACHE_VERSION_KEY_P515, PORTAL_CLIENT_CACHE_VERSION_P515); } catch (err) {}
-    try { sessionStorage.setItem(PORTAL_CLIENT_CACHE_RESET_MARKER_P515, '포털 캐시 초기화 완료 · local ' + (counts.local || 0) + '개 / session ' + (counts.session || 0) + '개 / cache ' + (counts.cacheApi || 0) + '개'); } catch (err2) {}
+    try { sessionStorage.setItem(PORTAL_CLIENT_CACHE_RESET_MARKER_P515, '포털 캐시 초기화 완료 · local ' + (counts.local || 0) + '개 / session ' + (counts.session || 0) + '개 / cache ' + (counts.cacheApi || 0) + '개' + ((counts.protected || 0) ? ' / 보호 ' + counts.protected + '개' : '')); } catch (err2) {}
     if (status) status.textContent = '초기화 완료. 화면을 새로고침합니다...';
     setTimeout(function() { window.location.replace(addPortalCacheBustParamP515_(window.location.href)); }, 300);
   }).catch(function(err) {
@@ -463,10 +546,12 @@ function renderPortalSettingsPageP310_() {
   html += '<button type="button" class="secondary" onclick="clearPortalPerfLogsP460_()">브라우저 로그 비우기</button>';
   html += '</div>';
   const cacheSummaryP515 = (typeof getPortalClientCacheSummaryP515_ === 'function') ? getPortalClientCacheSummaryP515_() : { local: 0, session: 0 };
+  const cacheVersionP526 = (typeof getPortalClientCacheVersionInfoP526_ === 'function') ? getPortalClientCacheVersionInfoP526_() : { currentVersion: '', storedVersion: '', protectedTotal: 0 };
   html += '<div class="portal-settings-card-p310 portal-cache-reset-card-p515">';
   html += '<div class="portal-settings-card-title-p310">이 PC 포털 캐시 초기화</div>';
   html += '<div class="portal-settings-card-desc-p310">현재 브라우저에 저장된 고객검색/고객상세/자료발송 작업창/고객폴더 임시 캐시를 삭제하고 최신 코드로 다시 불러옵니다. 고객번호와 행이 꼬이거나 특정 PC에서만 메일 발송이 실패할 때 사용합니다.</div>';
-  html += '<div class="portal-cache-reset-meta-p515">현재 감지된 포털 캐시: localStorage ' + escapeHtml_(String(cacheSummaryP515.local || 0)) + '개 · sessionStorage ' + escapeHtml_(String(cacheSummaryP515.session || 0)) + '개</div>';
+  html += '<div class="portal-cache-reset-meta-p515">클라이언트 캐시 버전: ' + escapeHtml_(String(cacheVersionP526.storedVersion || '미기록')) + ' → ' + escapeHtml_(String(cacheVersionP526.currentVersion || '-')) + '</div>';
+  html += '<div class="portal-cache-reset-meta-p515">현재 감지된 포털 캐시: localStorage ' + escapeHtml_(String(cacheSummaryP515.local || 0)) + '개 · sessionStorage ' + escapeHtml_(String(cacheSummaryP515.session || 0)) + '개 · 보호대상 ' + escapeHtml_(String(cacheVersionP526.protectedTotal || 0)) + '개</div>';
   html += '<button type="button" class="portal-danger-primary-p310" id="clearPortalClientCacheBtnP515" onclick="clearPortalClientCacheFromSettingsP515_()">이 PC 포털 캐시 초기화</button>';
   html += '<div class="portal-settings-status-p310" id="clearPortalClientCacheStatusP515">저장/발송 진행 중에는 자동으로 차단됩니다.</div>';
   html += '<div class="portal-cache-reset-note-p515">마스터시트/서버 DB 데이터는 삭제하지 않습니다. 크롬 전체 방문기록이나 구글 로그인 쿠키도 삭제하지 않습니다.</div>';
@@ -560,7 +645,7 @@ function switchPage(page, skipSearch) {
   } catch (err) {}
 
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.getAttribute('data-page') === page));
-  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'myCustomerFolderSectionP497', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
+  ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'myCustomerFolderSectionP497', 'myCustomerStatusSectionP528', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('active');
   });
@@ -613,6 +698,14 @@ function switchPage(page, skipSearch) {
     pageSubtitle.textContent = '유저별 개인 폴더에 고객을 중복 분류하고 빠르게 조회합니다.';
     deferPortalRouteLoadP462_('myCustomerFolder', function(){ loadMyCustomerFolderPageP497(false); });
     setTimeout(function() { const el = document.getElementById('myCustomerFolderAddKeywordP497'); if (el) el.focus(); }, 120);
+    return;
+  }
+
+  if (page === 'myCustomerStatus') {
+    document.getElementById('myCustomerStatusSectionP528').classList.add('active');
+    pageTitle.textContent = '나의 고객 현황';
+    pageSubtitle.textContent = '내 담당 고객의 진행현황, 최근 연락, 장기미접촉, 메모-상태 불일치를 분석합니다.';
+    deferPortalRouteLoadP462_('myCustomerStatus', function(){ loadMyCustomerStatusPageP528(false); });
     return;
   }
 
@@ -703,6 +796,7 @@ function getPortalSectionIdForPageP470_(page) {
     customers: 'customerSearchSection',
     favorites: 'customerFavoritesSection',
     myCustomerFolder: 'myCustomerFolderSectionP497',
+    myCustomerStatus: 'myCustomerStatusSectionP528',
     focusCustomers: 'focusCustomerSection',
     contracts: 'contractCompleteSection',
     send: 'placeholderSection',
@@ -717,7 +811,7 @@ function getPortalSectionIdForPageP470_(page) {
 
 function forcePortalHomeVisibleP470_(reason) {
   try {
-    ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'myCustomerFolderSectionP497', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(function(id) {
+    ['homeSection', 'noticeSection', 'supportSection', 'activityLogSection', 'systemHealthSection', 'todaySection', 'customerSearchSection', 'customerFavoritesSection', 'myCustomerFolderSectionP497', 'myCustomerStatusSectionP528', 'focusCustomerSection', 'contractCompleteSection', 'placeholderSection'].forEach(function(id) {
       const el = document.getElementById(id);
       if (el) el.classList.remove('active');
     });
@@ -738,7 +832,7 @@ function forcePortalHomeVisibleP470_(reason) {
 
 function ensurePortalActiveSectionP470_(page) {
   try {
-    const active = document.querySelector('#homeSection.active, #noticeSection.active, #supportSection.active, #activityLogSection.active, #systemHealthSection.active, #todaySection.active, #customerSearchSection.active, #customerFavoritesSection.active, #myCustomerFolderSectionP497.active, #focusCustomerSection.active, #contractCompleteSection.active, #placeholderSection.active');
+    const active = document.querySelector('#homeSection.active, #noticeSection.active, #supportSection.active, #activityLogSection.active, #systemHealthSection.active, #todaySection.active, #customerSearchSection.active, #customerFavoritesSection.active, #myCustomerFolderSectionP497.active, #myCustomerStatusSectionP528.active, #focusCustomerSection.active, #contractCompleteSection.active, #placeholderSection.active');
     if (active) return true;
     const sectionId = getPortalSectionIdForPageP470_(page || getPortalCurrentPageP469_());
     const section = document.getElementById(sectionId) || document.getElementById('homeSection');
