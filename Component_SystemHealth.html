@@ -25,8 +25,10 @@ function loadSystemHealthPageP208(force) {
   loadSystemHealthPermissionCardP503_(true);
   if (canAdmin) {
     loadSystemHealthConnectionCardP503_(true);
+    loadSystemHealthSaveQueueCardP525_(true);
   } else {
     setSystemHealthCardP503_('systemHealthConnectionCardP503', '권한 제한', '시스템 연결 상세 점검은 관리자/서무 권한에서만 사용할 수 있습니다.', 'warn');
+    setSystemHealthCardP503_('systemHealthSaveQueueCardP525', '권한 제한', '저장큐 상세 점검은 관리자/서무 권한에서만 사용할 수 있습니다.', 'warn');
     setSystemHealthCardP503_('systemHealthFullCardP503', '권한 제한', '전체 점검은 관리자/서무 권한에서만 사용할 수 있습니다.', 'warn');
   }
 }
@@ -56,6 +58,7 @@ function renderSystemHealthShellP503_(canAdmin) {
   html += renderSystemHealthCardShellP503_('systemHealthPermissionCardP503', '권한/사용자 상태', '권한_DB 반영 여부와 현재 담당자 필터를 확인합니다.');
   html += renderSystemHealthCardShellP503_('systemHealthCacheCardP503', '브라우저 캐시', '현재 브라우저에 남아 있는 포털 캐시를 확인하고 정리합니다.');
   html += renderSystemHealthCardShellP503_('systemHealthConnectionCardP503', '시스템 연결 상태', '마스터시트, 웹앱 DB, 주요 DB 시트 연결을 가볍게 확인합니다.');
+  html += renderSystemHealthCardShellP503_('systemHealthSaveQueueCardP525', '저장큐 상태', '자료발송을 막을 수 있는 저장큐 충돌·실패·대기 건을 확인합니다.');
   html += renderSystemHealthCardShellP503_('systemHealthFullCardP503', '전체 점검', '필요할 때만 기존 전체 점검을 실행합니다.');
   html += '</div>';
 
@@ -65,6 +68,7 @@ function renderSystemHealthShellP503_(canAdmin) {
   html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="installPermissionCacheTriggerP350_()">권한 트리거 설치</button>';
   html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="installSystemHealthTriggerP208_()">마스터 트리거 설치/재설치</button>';
   html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="processChangeQueueP209_()">변경큐 재처리</button>';
+  html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="loadSystemHealthSaveQueueCardP525_(true)">저장큐 다시 확인</button>';
   html += '<button class="danger-light-p208" ' + (canAdmin ? '' : 'disabled') + ' onclick="repairBlankMasterMetaP208_()">빈 행 수정메타 정리</button>';
   html += '<button class="secondary" ' + (canAdmin ? '' : 'disabled') + ' onclick="runFullSystemHealthCheckP503_()">전체 점검 실행</button>';
   html += '</div>';
@@ -190,9 +194,73 @@ function renderSystemHealthConnectionCardP503_(res) {
   setSystemHealthCardP503_('systemHealthConnectionCardP503', '연결 점검 결과', html, status);
 }
 
+
+function loadSystemHealthSaveQueueCardP525_(force) {
+  beginSystemHealthTimedLoadP503_('saveQueueP525', 'systemHealthSaveQueueCardP525', '저장큐_DB 상태를 확인하는 중입니다...');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      clearSystemHealthTimerP503_('saveQueueP525');
+      renderSystemHealthSaveQueueCardP525_(res);
+    })
+    .withFailureHandler(function(err) {
+      clearSystemHealthTimerP503_('saveQueueP525');
+      setSystemHealthCardP503_('systemHealthSaveQueueCardP525', '저장큐 상태 확인 실패', '<pre class="system-health-detail-p208">' + escapeHtml_(getSystemHealthErrorP208_(err, '저장큐 상태를 확인하지 못했습니다.')) + '</pre>', 'warn');
+    })
+    .getPortalSaveQueueDashboardP525();
+}
+
+function renderSystemHealthSaveQueueCardP525_(res) {
+  res = res || {};
+  const counts = res.counts || {};
+  const blocking = res.blockingByStatus || {};
+  const ignored = res.ignoredByReason || {};
+  let status = res.status || (res.ok === false ? 'warn' : 'ok');
+  let html = '<div class="system-health-kv-p503">';
+  html += renderSystemHealthKvP503_('전체/스캔', String(res.totalRows || 0) + '건 / 최근 ' + String(res.scannedRows || 0) + '행');
+  html += renderSystemHealthKvP503_('차단 가능', String(res.blockingCount || 0) + '건');
+  html += renderSystemHealthKvP503_('대기/재시도', String((blocking.QUEUED || 0) + (blocking.RUNNING || 0) + (blocking.RETRY || 0)) + '건');
+  html += renderSystemHealthKvP503_('충돌/실패', String((blocking.CONFLICT || 0) + (blocking.FAIL || 0)) + '건');
+  html += renderSystemHealthKvP503_('DONE', String(counts.DONE || 0) + '건');
+  html += renderSystemHealthKvP503_('차단 제외', String(res.ignoredCount || 0) + '건');
+  if (res.latestUpdated || res.latestRegistered) html += renderSystemHealthKvP503_('최근 처리/등록', res.latestUpdated || res.latestRegistered || '-');
+  html += '</div>';
+
+  const statusParts = [];
+  ['QUEUED','RUNNING','RETRY','CONFLICT','FAIL'].forEach(function(k) {
+    if (blocking[k]) statusParts.push(k + ' ' + blocking[k]);
+  });
+  if (statusParts.length) html += '<div class="system-health-card-message-p503">차단 상태: ' + escapeHtml_(statusParts.join(' / ')) + '</div>';
+  const ignoredParts = Object.keys(ignored).filter(function(k) { return ignored[k]; }).map(function(k) { return k + ' ' + ignored[k]; });
+  if (ignoredParts.length) html += '<div class="system-health-card-message-p503">차단 제외: ' + escapeHtml_(ignoredParts.join(' / ')) + '</div>';
+
+  const items = Array.isArray(res.recentBlocking) ? res.recentBlocking : [];
+  html += '<div class="system-health-mini-checks-p503">';
+  if (items.length) {
+    items.slice(0, 5).forEach(function(item) {
+      const itemStatus = /CONFLICT|FAIL/i.test(item.status || '') ? 'danger' : 'warn';
+      const title = '#' + escapeHtml_(String(item.sheetRow || '')) + ' · ' + escapeHtml_(item.status || '') + ' · 고객 ' + escapeHtml_(item.customerNo || '-') + (item.rowNo ? ' / row ' + escapeHtml_(item.rowNo) : '');
+      const msg = [item.source || item.methodName || '', item.updatedAt || item.registeredAt || '', item.lastError || ''].filter(Boolean).join(' · ');
+      html += '<div class="system-health-mini-check-p503 is-' + itemStatus + '"><span>' + renderSystemHealthStatusTextP208_(itemStatus) + '</span><div><b>' + title + '</b><small>' + escapeHtml_(msg || '-') + '</small></div></div>';
+    });
+  } else {
+    html += '<div class="system-health-mini-check-p503 is-ok"><span>정상</span><div><b>자료발송 차단 가능 저장큐 없음</b><small>DONE/적용완료/비차단 상태는 차단 대상에서 제외됩니다.</small></div></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="system-health-inline-actions-p503">';
+  html += '<button class="secondary" onclick="loadSystemHealthSaveQueueCardP525_(true)">저장큐 다시 확인</button>';
+  if (res.sheetUrl) html += '<button class="secondary" onclick="window.open(\'' + escapeHtml_(String(res.sheetUrl || '')).replace(/'/g, '&#39;') + '\', \'_blank\')">저장큐_DB 열기</button>';
+  html += '</div>';
+  setSystemHealthCardP503_('systemHealthSaveQueueCardP525', res.message || '저장큐 상태', html, status);
+}
+
 function renderSystemHealthBrowserCacheCardP503_() {
   const counts = getPortalBrowserCacheCountsP503_();
+  const versionInfo = (typeof getPortalClientCacheVersionInfoP526_ === 'function') ? getPortalClientCacheVersionInfoP526_() : { currentVersion: '-', storedVersion: '', protectedTotal: 0, versionMatched: false };
   let html = '<div class="system-health-kv-p503">';
+  html += renderSystemHealthKvP503_('클라이언트 캐시 버전', String(versionInfo.currentVersion || '-'));
+  html += renderSystemHealthKvP503_('브라우저 보관 버전', String(versionInfo.storedVersion || '미기록') + (versionInfo.versionMatched ? ' / 정상' : ' / 갱신 예정'));
+  html += renderSystemHealthKvP503_('보호된 저장/발송 작업', String(versionInfo.protectedTotal || 0) + '개');
   html += renderSystemHealthKvP503_('localStorage', counts.localTotal + '개');
   html += renderSystemHealthKvP503_('sessionStorage', counts.sessionTotal + '개');
   html += renderSystemHealthKvP503_('고객검색/상세 캐시', counts.customer + '개');

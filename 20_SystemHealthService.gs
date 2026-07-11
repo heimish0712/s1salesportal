@@ -73,6 +73,10 @@ const PORTAL_SYSTEM_HEALTH_SAVE_FLOW_FUNCTIONS_P518 = [
   { name: 'flushCustomerPendingOpsP473', label: '자료발송 전 pending flush', required: true }
 ];
 
+// P525: 시스템 점검 저장큐 관리 카드에서 발송 차단 가능 상태만 별도로 요약합니다.
+const PORTAL_SYSTEM_HEALTH_SAVE_QUEUE_BLOCKING_STATUSES_P525 = ['QUEUED', 'RUNNING', 'RETRY', 'CONFLICT', 'FAIL'];
+const PORTAL_SYSTEM_HEALTH_SAVE_QUEUE_NON_BLOCKING_STATUSES_P525 = ['DONE', 'CANCELLED', 'SKIPPED', 'IGNORE', 'IGNORED'];
+
 function getPortalSystemHealthP208() {
   const started = new Date();
   const userInfo = getPortalSystemHealthUserP208_();
@@ -242,6 +246,15 @@ function getPortalSystemHealthP208() {
     status: saveQueueCheck.status,
     message: saveQueueCheck.message,
     detail: saveQueueCheck.detail
+  });
+
+  const saveQueueDashboardCheckP525 = buildPortalSaveQueueDashboardP525_(webSs);
+  addCheck({
+    group: '저장 안정성',
+    name: '자료발송 차단 가능 저장큐',
+    status: saveQueueDashboardCheckP525.status,
+    message: saveQueueDashboardCheckP525.message,
+    detail: saveQueueDashboardCheckP525.detail
   });
 
   const saveFlowFunctionCheck = checkPortalSaveFlowFunctionsP518_();
@@ -896,6 +909,213 @@ function checkPortalPerformanceLogP517_(webSs) {
   } catch (err) {
     return { status: 'warn', message: '성능로그 상태 확인 실패', detail: getPortalSystemHealthErrorTextP517_(err) };
   }
+}
+
+
+/***************************************
+ * P525: 저장큐 관리/정리용 점검 요약
+ * - 저장/발송 동작은 바꾸지 않고, 저장큐_DB를 최근 1000행까지만 읽어 운영자가 볼 수 있게 요약합니다.
+ ***************************************/
+function getPortalSaveQueueDashboardP525() {
+  const userInfo = getPortalSystemHealthUserP208_();
+  assertPortalSystemHealthAllowedP208_(userInfo);
+  const webSs = getPortalSystemHealthWebDbSpreadsheetP208_();
+  return buildPortalSaveQueueDashboardP525_(webSs);
+}
+
+function buildPortalSaveQueueDashboardP525_(webSs) {
+  try {
+    const sheetName = getPortalSaveQueueSheetNameP517_();
+    const sheet = webSs.getSheetByName(sheetName);
+    if (!sheet) {
+      return {
+        ok: true,
+        status: 'warn',
+        sheetName: sheetName,
+        sheetUrl: webSs.getUrl(),
+        message: sheetName + ' 없음: fallback 저장이 아직 발생하지 않았을 수 있음',
+        detail: '정상 저장은 마스터시트 직접 저장 경로를 사용하므로, 예외 저장이 발생하기 전까지 저장큐_DB가 없을 수 있습니다.',
+        totalRows: 0,
+        scannedRows: 0,
+        counts: {},
+        blockingCount: 0,
+        ignoredCount: 0,
+        ignoredByReason: {},
+        recentBlocking: []
+      };
+    }
+
+    const recent = getPortalSystemRecentRowsP517_(sheet, 1000, 18);
+    const headerMap = getPortalSystemHeaderMapFromHeadersP517_(recent.headers);
+    const statusCol = getPortalSystemColFromHeadersP517_(recent.headers, '상태');
+    const jobCol = getPortalSystemColFromHeadersP517_(recent.headers, '작업ID');
+    const customerCol = getPortalSystemColFromHeadersP517_(recent.headers, '고객번호');
+    const rowNoCol = getPortalSystemColFromHeadersP517_(recent.headers, 'rowNo');
+    const sourceCol = getPortalSystemColFromHeadersP517_(recent.headers, 'source');
+    const methodCol = getPortalSystemColFromHeadersP517_(recent.headers, 'methodName');
+    const updatedCol = getPortalSystemColFromHeadersP517_(recent.headers, ['수정일시', 'updatedAt']);
+    const createdCol = getPortalSystemColFromHeadersP517_(recent.headers, ['등록일시', 'createdAt']);
+    const appliedCol = getPortalSystemColFromHeadersP517_(recent.headers, '적용일시');
+    const errorCol = getPortalSystemColFromHeadersP517_(recent.headers, '마지막오류');
+    const resultCol = getPortalSystemColFromHeadersP517_(recent.headers, 'resultJson');
+
+    if (!statusCol) {
+      return {
+        ok: false,
+        status: 'danger',
+        sheetName: sheetName,
+        sheetUrl: webSs.getUrl() + '#gid=' + sheet.getSheetId(),
+        message: sheetName + ' 상태 헤더 없음',
+        detail: '저장큐_DB 헤더를 확인해 주세요.',
+        totalRows: recent.totalRows,
+        scannedRows: recent.rows.length,
+        counts: {},
+        blockingCount: 0,
+        ignoredCount: 0,
+        ignoredByReason: {},
+        recentBlocking: []
+      };
+    }
+
+    const blockingStatuses = getPortalSystemSaveQueueBlockingStatusSetP525_();
+    const counts = { QUEUED: 0, RUNNING: 0, RETRY: 0, CONFLICT: 0, FAIL: 0, DONE: 0, BLANK: 0, OTHER: 0 };
+    const blockingByStatus = { QUEUED: 0, RUNNING: 0, RETRY: 0, CONFLICT: 0, FAIL: 0 };
+    const ignoredByReason = {};
+    const recentBlocking = [];
+    let ignoredCount = 0;
+    let blockingCount = 0;
+    let latestRegistered = '';
+    let latestUpdated = '';
+
+    for (let i = recent.rows.length - 1; i >= 0; i--) {
+      const row = recent.rows[i];
+      const sheetRow = recent.startRow + i;
+      const rawStatus = String(row[statusCol - 1] || '').trim();
+      const status = rawStatus.toUpperCase();
+      const countKey = Object.prototype.hasOwnProperty.call(counts, status) ? status : (status ? 'OTHER' : 'BLANK');
+      counts[countKey]++;
+
+      const registeredAt = createdCol ? String(row[createdCol - 1] || '').trim() : '';
+      const updatedAt = updatedCol ? String(row[updatedCol - 1] || '').trim() : '';
+      if (!latestRegistered && registeredAt) latestRegistered = registeredAt;
+      if (!latestUpdated && (updatedAt || registeredAt)) latestUpdated = updatedAt || registeredAt;
+
+      const resultJson = resultCol ? getPortalSystemSaveQueueJsonP525_(row[resultCol - 1]) : {};
+      const ignoreReason = getPortalSystemSaveQueueIgnoreReasonP525_(row, headerMap, status, resultJson, blockingStatuses);
+      if (ignoreReason) {
+        ignoredCount++;
+        ignoredByReason[ignoreReason] = (ignoredByReason[ignoreReason] || 0) + 1;
+        continue;
+      }
+
+      blockingCount++;
+      if (blockingByStatus[status] !== undefined) blockingByStatus[status]++;
+      if (recentBlocking.length < 10) {
+        const item = {
+          sheetRow: sheetRow,
+          registeredAt: registeredAt,
+          updatedAt: updatedAt,
+          appliedAt: appliedCol ? String(row[appliedCol - 1] || '').trim() : '',
+          operationId: jobCol ? String(row[jobCol - 1] || '').trim() : '',
+          customerNo: customerCol ? String(row[customerCol - 1] || '').trim() : '',
+          rowNo: rowNoCol ? String(row[rowNoCol - 1] || '').trim() : '',
+          status: rawStatus || '상태공란',
+          source: sourceCol ? String(row[sourceCol - 1] || '').trim() : '',
+          methodName: methodCol ? String(row[methodCol - 1] || '').trim() : '',
+          lastError: errorCol ? String(row[errorCol - 1] || '').trim().slice(0, 500) : '',
+          resultPreview: resultJson && Object.keys(resultJson).length ? JSON.stringify(resultJson).slice(0, 500) : ''
+        };
+        recentBlocking.push(item);
+      }
+    }
+
+    const risky = (blockingByStatus.CONFLICT || 0) + (blockingByStatus.FAIL || 0);
+    const waiting = (blockingByStatus.QUEUED || 0) + (blockingByStatus.RUNNING || 0) + (blockingByStatus.RETRY || 0);
+    const status = risky ? 'danger' : (waiting ? 'warn' : 'ok');
+    const statusParts = [];
+    PORTAL_SYSTEM_HEALTH_SAVE_QUEUE_BLOCKING_STATUSES_P525.forEach(function(k) {
+      if (blockingByStatus[k]) statusParts.push(k + ' ' + blockingByStatus[k]);
+    });
+    const message = blockingCount
+      ? ('자료발송 차단 가능 ' + blockingCount + '건' + (statusParts.length ? ' · ' + statusParts.join(' / ') : ''))
+      : ('자료발송 차단 가능 저장큐 없음 · DONE ' + (counts.DONE || 0) + '건');
+    const detailParts = [];
+    detailParts.push('전체 ' + recent.totalRows + '건 / 최근 ' + recent.rows.length + '행 스캔');
+    if (ignoredCount) detailParts.push('차단 제외 ' + ignoredCount + '건(' + Object.keys(ignoredByReason).map(function(k) { return k + ' ' + ignoredByReason[k]; }).join(', ') + ')');
+    if (latestRegistered) detailParts.push('마지막 등록: ' + latestRegistered);
+    if (latestUpdated) detailParts.push('마지막 수정/처리: ' + latestUpdated);
+    if (recentBlocking.length) {
+      detailParts.push('최근 차단 가능 큐:\n' + recentBlocking.map(function(item) {
+        return '큐행 ' + item.sheetRow + ' / ' + item.status + (item.customerNo ? ' / 고객번호 ' + item.customerNo : '') + (item.rowNo ? ' / rowNo ' + item.rowNo : '') + (item.source ? ' / ' + item.source : '') + (item.lastError ? ' / ' + item.lastError : '');
+      }).join('\n'));
+    }
+
+    return {
+      ok: true,
+      status: status,
+      sheetName: sheetName,
+      sheetUrl: webSs.getUrl() + '#gid=' + sheet.getSheetId(),
+      message: message,
+      detail: detailParts.join('\n'),
+      totalRows: recent.totalRows,
+      scannedRows: recent.rows.length,
+      counts: counts,
+      blockingByStatus: blockingByStatus,
+      blockingCount: blockingCount,
+      ignoredCount: ignoredCount,
+      ignoredByReason: ignoredByReason,
+      latestRegistered: latestRegistered,
+      latestUpdated: latestUpdated,
+      recentBlocking: recentBlocking
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'warn',
+      message: '저장큐 관리 요약 확인 실패',
+      detail: getPortalSystemHealthErrorTextP517_(err),
+      counts: {},
+      blockingByStatus: {},
+      blockingCount: 0,
+      ignoredCount: 0,
+      ignoredByReason: {},
+      recentBlocking: []
+    };
+  }
+}
+
+function getPortalSystemSaveQueueBlockingStatusSetP525_() {
+  const set = {};
+  try {
+    if (typeof getPortalSaveQueueBlockingStatusSetP524_ === 'function') return getPortalSaveQueueBlockingStatusSetP524_();
+  } catch (err) {}
+  PORTAL_SYSTEM_HEALTH_SAVE_QUEUE_BLOCKING_STATUSES_P525.forEach(function(st) { set[st] = true; });
+  return set;
+}
+
+function getPortalSystemSaveQueueJsonP525_(value) {
+  try {
+    if (typeof parsePortalSaveQueueJsonP473_ === 'function') return parsePortalSaveQueueJsonP473_(value, {});
+  } catch (err) {}
+  try {
+    const text = String(value || '').trim();
+    return text ? JSON.parse(text) : {};
+  } catch (err2) {
+    return {};
+  }
+}
+
+function getPortalSystemSaveQueueIgnoreReasonP525_(row, headerMap, status, resultJson, blockingStatuses) {
+  status = String(status || '').trim().toUpperCase();
+  blockingStatuses = blockingStatuses || getPortalSystemSaveQueueBlockingStatusSetP525_();
+  if (!blockingStatuses[status]) return 'nonBlockingStatus';
+  const appliedCol = headerMap['적용일시'] || 0;
+  const appliedAt = appliedCol ? String(row[appliedCol - 1] || '').trim() : '';
+  if (appliedAt) return 'alreadyApplied';
+  resultJson = resultJson && typeof resultJson === 'object' ? resultJson : {};
+  if (resultJson.forcedApplyP522 || resultJson.forcedApplyP524 || resultJson.forceApplied || resultJson.applied || String(resultJson.status || '').toUpperCase() === 'DONE') return 'alreadyApplied';
+  if (PORTAL_SYSTEM_HEALTH_SAVE_QUEUE_NON_BLOCKING_STATUSES_P525.indexOf(status) >= 0) return 'nonBlockingStatus';
+  return '';
 }
 
 

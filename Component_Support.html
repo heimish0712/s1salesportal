@@ -157,6 +157,203 @@ function markSupportModalConflictP494D_(payload) {
   const keys = getSupportModalFieldMapP494D_().map(function(pair) { return pair[1]; });
   markPortalDraftConflictP494_(getSupportModalDraftContextKeyP494D_((payload && payload.rowNo) || supportCurrentRowNo || 0), keys, {});
 }
+
+
+// P527: 요청자 본인의 접수 상태 영업지원요청은 업무유형/요청업무만 수정할 수 있게 합니다.
+let supportRequesterEditStateP527 = null;
+
+function normalizeSupportActorClientP527_(value) {
+  const compact = String(value || '').replace(/\s+/g, '').trim();
+  return compact.replace(/[\(\（][^\)\）]*[\)\）]$/g, '').trim();
+}
+
+function getSupportActorVariantsClientP527_(value) {
+  const out = [];
+  function add(v) {
+    v = String(v || '').trim();
+    if (!v) return;
+    const compact = v.replace(/\s+/g, '').trim();
+    const stripped = normalizeSupportActorClientP527_(v);
+    [compact, stripped].forEach(function(x) {
+      x = String(x || '').trim();
+      if (x && out.indexOf(x) < 0) out.push(x);
+    });
+  }
+  add(value);
+  return out;
+}
+
+function isSupportRequesterCurrentUserClientP527_(requester) {
+  const requesterVariants = getSupportActorVariantsClientP527_(requester);
+  if (!requesterVariants.length) return false;
+  const p = getSupportEffectivePermissionP310_ ? getSupportEffectivePermissionP310_() : null;
+  const candidates = [];
+  function add(v) { v = String(v || '').trim(); if (v) candidates.push(v); }
+  add(supportCurrentData && supportCurrentData.currentUser);
+  add(p && p.name);
+  add(p && p.displayName);
+  add(p && p.salesRepName);
+  const currentVariants = [];
+  candidates.forEach(function(v) {
+    getSupportActorVariantsClientP527_(v).forEach(function(x) {
+      if (x && currentVariants.indexOf(x) < 0) currentVariants.push(x);
+    });
+  });
+  return requesterVariants.some(function(x) { return currentVariants.indexOf(x) >= 0; });
+}
+
+function buildSupportRequesterEditStateP527_(item) {
+  item = item || {};
+  const status = String(item.status || '접수').trim() || '접수';
+  const hasHandler = !!String(item.handler || '').trim();
+  const hasProcessContent = !!String(item.processContent || '').trim();
+  const hasCompletedAt = !!String(item.completedAt || '').trim();
+  const hasAutoSendCheck = !!String(item.autoSendCheck || '').trim();
+  const processingStarted = hasHandler || hasProcessContent || hasCompletedAt || hasAutoSendCheck || (status && status !== '접수');
+  const requesterMatched = isSupportRequesterCurrentUserClientP527_(item.requester || '');
+  const canWrite = canWritePortalSupportP310_();
+  let message = '';
+  let reason = '';
+  if (!canWrite) {
+    reason = 'NO_WRITE_PERMISSION';
+    message = '영업지원 요청 작성 권한이 없습니다.';
+  } else if (!requesterMatched) {
+    reason = 'NOT_REQUESTER';
+    message = '요청자 본인만 요청내용을 수정할 수 있습니다.';
+  } else if (processingStarted) {
+    reason = 'PROCESSING_STARTED';
+    message = '처리중인 건이라 요청내용 수정이 불가합니다. 처리중인 서무에게 문의하세요.';
+  }
+  return {
+    rowNo: Number(item.rowNo || supportCurrentRowNo || 0) || 0,
+    canEdit: !!(canWrite && requesterMatched && !processingStarted),
+    requesterMatched: requesterMatched,
+    processingStarted: processingStarted,
+    reason: reason,
+    message: message,
+    baseRequestType: item.requestType || '',
+    baseRequestText: item.requestText || '',
+    baseHandler: item.handler || '',
+    baseStatus: status || '접수',
+    baseProcessContent: item.processContent || '',
+    baseCompletedAt: item.completedAt || '',
+    baseAutoSendCheck: item.autoSendCheck || ''
+  };
+}
+
+function ensureSupportRequesterEditNoticeP527_() {
+  const body = document.getElementById('supportModalBody') || document.querySelector('#supportRequestBackdrop .support-modal-body');
+  if (!body) return null;
+  let notice = document.getElementById('supportRequesterEditNoticeP527');
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.id = 'supportRequesterEditNoticeP527';
+    notice.style.cssText = 'display:none;margin:0 0 12px 0;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.45;';
+    body.insertBefore(notice, body.firstChild);
+  }
+  return notice;
+}
+
+function setSupportRequesterEditNoticeP527_(kind, message) {
+  const notice = ensureSupportRequesterEditNoticeP527_();
+  if (!notice) return;
+  message = String(message || '').trim();
+  if (!message) {
+    notice.style.display = 'none';
+    notice.textContent = '';
+    return;
+  }
+  notice.textContent = message;
+  notice.style.display = '';
+  if (kind === 'ok') {
+    notice.style.background = '#ecfdf3';
+    notice.style.border = '1px solid #abefc6';
+    notice.style.color = '#067647';
+  } else {
+    notice.style.background = '#fff7ed';
+    notice.style.border = '1px solid #fed7aa';
+    notice.style.color = '#9a3412';
+  }
+}
+
+function applySupportRequesterEditUiP527_(item) {
+  const isNew = !supportCurrentRowNo;
+  if (isNew) {
+    supportRequesterEditStateP527 = null;
+    setSupportRequesterEditNoticeP527_('', '');
+    const typeNew = document.getElementById('supportRequestType');
+    const textNew = document.getElementById('supportRequestText');
+    const requesterNew = document.getElementById('supportRequester');
+    if (typeNew) typeNew.disabled = false;
+    if (textNew) { textNew.disabled = false; textNew.readOnly = false; textNew.classList.remove('support-readonly-field'); }
+    if (requesterNew) requesterNew.disabled = false;
+    return;
+  }
+
+  if (item) supportRequesterEditStateP527 = buildSupportRequesterEditStateP527_(item);
+  const state = supportRequesterEditStateP527 || buildSupportRequesterEditStateP527_({ rowNo: supportCurrentRowNo });
+  const isProcessor = canCompletePortalSupportP310_();
+  const typeSel = document.getElementById('supportRequestType');
+  const requestText = document.getElementById('supportRequestText');
+  const requester = document.getElementById('supportRequester');
+  const saveBtn = document.getElementById('supportSaveBtn');
+
+  if (typeSel) typeSel.disabled = !state.canEdit;
+  if (requestText) {
+    requestText.readOnly = !state.canEdit;
+    requestText.disabled = false;
+    requestText.classList.toggle('support-readonly-field', !state.canEdit);
+  }
+  if (requester) requester.disabled = true;
+
+  if (!isProcessor) {
+    ['supportHandler','supportCompletedAt','supportProcessContent','supportAutoSendCheck','supportStatus'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = true;
+    });
+  }
+
+  if (saveBtn && !isProcessor) {
+    saveBtn.disabled = !state.canEdit;
+    saveBtn.textContent = state.canEdit ? '요청내용 저장' : '수정 불가';
+  } else if (saveBtn) {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '저장';
+  }
+
+  if (state.canEdit && !isProcessor) {
+    setSupportRequesterEditNoticeP527_('ok', '처리자가 지정되기 전이라 업무유형과 요청업무를 수정할 수 있습니다.');
+  } else if (state.requesterMatched && state.processingStarted) {
+    setSupportRequesterEditNoticeP527_('warn', '처리중인 건이라 요청내용 수정이 불가합니다. 처리중인 서무에게 문의하세요.');
+  } else if (!isProcessor && state.message) {
+    setSupportRequesterEditNoticeP527_('warn', state.message);
+  } else {
+    setSupportRequesterEditNoticeP527_('', '');
+  }
+}
+
+function isSupportModalValueChangedP527_(id, baseValue) {
+  const el = document.getElementById(id);
+  if (!el) return false;
+  return String(el.value || '') !== String(baseValue || '');
+}
+
+function isSupportRequesterEditDirtyP527_(payload) {
+  const state = supportRequesterEditStateP527 || {};
+  if (!payload || !payload.rowNo) return false;
+  return String(payload.requestType || '') !== String(state.baseRequestType || '') ||
+    String(payload.requestText || '') !== String(state.baseRequestText || '');
+}
+
+function isSupportProcessDirtyP527_(payload) {
+  const state = supportRequesterEditStateP527 || {};
+  if (!payload || !payload.rowNo) return false;
+  return String(payload.handler || '') !== String(state.baseHandler || '') ||
+    String(payload.status || '접수') !== String(state.baseStatus || '접수') ||
+    String(payload.processContent || '') !== String(state.baseProcessContent || '') ||
+    String(payload.completedAt || '') !== String(state.baseCompletedAt || '') ||
+    String(payload.autoSendCheck || '') !== String(state.baseAutoSendCheck || '');
+}
 function setPendingSupportCustomerPrefillP462_(info) {
   info = Object.assign({}, info || {}, { createdAt: Date.now(), stickyP462: true });
   window.__supportPendingCustomerPrefillP461 = info;
@@ -434,6 +631,7 @@ function updateSupportRoleUiV65_() {
     ? '신규 영업지원 요청을 등록하고 기존 요청 처리 상태를 확인합니다.'
     : '영업지원 요청 조회 권한만 있습니다.';
   if (title) title.textContent = isProcessor ? '처리할 요청 목록' : '기존 요청 목록';
+  try { if (supportCurrentRowNo) applySupportRequesterEditUiP527_(); } catch (err) {}
 }
 
 function formatSupportCompletedAtDisplay_(value) {
@@ -1047,10 +1245,13 @@ function closeSupportRequestModal() {
   if (backdrop) backdrop.style.display = 'none';
   supportCurrentRowNo = 0;
   supportCurrentCustomer = null;
+  supportRequesterEditStateP527 = null;
 }
 
 function resetSupportModal_() {
   try { releaseSupportModalDraftContextP494D_(supportCurrentRowNo || 'new'); } catch (err) {}
+  supportRequesterEditStateP527 = null;
+  setSupportRequesterEditNoticeP527_('', '');
   ['supportReceiptNo','supportCustomerNo','supportRequester','supportCustomerName','supportDiscountRate','supportQuoteAmount','supportArea','supportRegion','supportContactName','supportContactEmail','supportRequestText','supportHandler','supportCompletedAt','supportAutoSendCheck','supportProcessContent','supportMasterMemo'].forEach(function(id) {
     const el = document.getElementById(id);
     if (el) el.value = '';
@@ -1144,6 +1345,7 @@ function fillSupportModal_(item, options) {
   setSupportModalFieldValueP494D_('supportAutoSendCheck', 'autoSendCheck', item.autoSendCheck || '', { force: force });
   try { registerSupportModalDraftFieldsP494D_(item, { forceBase: force }); } catch (err) {}
   try { applyPortalPermissionToUi_(); } catch (err) {}
+  try { applySupportRequesterEditUiP527_(item); } catch (err) {}
 }
 
 function lookupSupportCustomer() {
@@ -1238,7 +1440,26 @@ function saveSupportRequestFromModal() {
   const btn = document.getElementById('supportSaveBtn');
   if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; btn.dataset.requestId = payload.clientRequestId; }
   try { markSupportModalPendingP494D_(payload); } catch (err) {}
-  const saveMethodP474 = payload.rowNo ? 'savePortalSupportProcessThinP474' : 'savePortalSupportRequest';
+  let saveMethodP474 = payload.rowNo ? 'savePortalSupportProcessThinP474' : 'savePortalSupportRequest';
+  if (payload.rowNo) {
+    const requesterEditAllowedP527 = !!(supportRequesterEditStateP527 && supportRequesterEditStateP527.canEdit);
+    const requesterEditDirtyP527 = isSupportRequesterEditDirtyP527_(payload);
+    const processDirtyP527 = isSupportProcessDirtyP527_(payload);
+    if (!canCompletePortalSupportP310_()) {
+      if (!requesterEditAllowedP527) {
+        return alert((supportRequesterEditStateP527 && supportRequesterEditStateP527.message) || '처리중인 건이라 요청내용 수정이 불가합니다. 처리중인 서무에게 문의하세요.');
+      }
+      saveMethodP474 = 'savePortalSupportRequesterEditP527';
+    } else if (requesterEditDirtyP527) {
+      if (!requesterEditAllowedP527) {
+        return alert((supportRequesterEditStateP527 && supportRequesterEditStateP527.message) || '요청내용 수정이 불가합니다.');
+      }
+      if (processDirtyP527) {
+        return alert('요청내용 수정과 서무 처리 저장은 한 번에 처리하지 않습니다. 요청내용을 먼저 저장한 뒤 처리내용을 저장해 주세요.');
+      }
+      saveMethodP474 = 'savePortalSupportRequesterEditP527';
+    }
+  }
   const runnerP474 = google.script.run
     .withSuccessHandler(function(res) {
       if (btn && btn.dataset.requestId && btn.dataset.requestId !== payload.clientRequestId) return;
@@ -1279,6 +1500,7 @@ function saveSupportRequestFromModal() {
       alert('영업지원 요청 저장 실패: ' + normalizePortalSaveErrorMessageP26_(err, '저장하지 못했습니다. 입력 내용은 유지됩니다.'));
     });
   if (saveMethodP474 === 'savePortalSupportProcessThinP474') runnerP474.savePortalSupportProcessThinP474(payload);
+  else if (saveMethodP474 === 'savePortalSupportRequesterEditP527') runnerP474.savePortalSupportRequesterEditP527(payload);
   else runnerP474.savePortalSupportRequest(payload);
 }
 

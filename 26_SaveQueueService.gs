@@ -106,6 +106,12 @@ function getPortalSavePatchP473_(methodName, payload) {
       autoSendCheck: payload.autoSendCheck || ''
     };
   }
+  if (methodName === 'savePortalSupportRequesterEditP527') {
+    return {
+      requestType: payload.requestType || '',
+      requestText: payload.requestText || ''
+    };
+  }
   if (methodName === 'savePortalSupportRequest') {
     return {
       requestType: payload.requestType || '',
@@ -138,6 +144,7 @@ function normalizePortalSaveQueueSourceP474_(methodName, payload) {
   if (methodName === 'saveCustomerMemoFast') return 'customer.expandedMemo';
   if (methodName === 'saveCustomerDetailFast' || methodName === 'saveCustomerPatchFastP473') return 'customer.detailPatch';
   if (methodName === 'savePortalSupportProcessThinP474') return 'support.process';
+  if (methodName === 'savePortalSupportRequesterEditP527') return 'support.requesterEdit';
   if (methodName === 'savePortalSupportRequest') return 'support.request';
   if (methodName === 'savePortalNotice') return 'notice.save';
   if (methodName === 'updatePortalNotice') return 'notice.update';
@@ -400,8 +407,9 @@ function isPortalQueuedCustomerPatchAlreadyAppliedP489_(methodName, payload, pat
   return true;
 }
 
-function resolveCustomerSupersededSaveConflictsP489_(customerNo) {
+function resolveCustomerSupersededSaveConflictsP489_(customerNo, rowNoFilter) {
   const no = String(customerNo || '').trim();
+  rowNoFilter = Number(rowNoFilter || 0) || 0;
   if (!no) return { ok: true, resolved: 0 };
   const sheet = getPortalSaveQueueSheetP473_();
   const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
@@ -417,6 +425,8 @@ function resolveCustomerSupersededSaveConflictsP489_(customerNo) {
     const status = String(row[(idx['상태'] || 1) - 1] || '').trim();
     if (status !== PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT) continue;
     if (String(row[(idx['고객번호'] || 1) - 1] || '').trim() !== no) continue;
+    const queuedRowNoP524 = idx['rowNo'] ? (Number(row[idx['rowNo'] - 1] || 0) || 0) : 0;
+    if (rowNoFilter && queuedRowNoP524 && queuedRowNoP524 !== rowNoFilter) continue;
     const obj = {};
     headers.forEach(function(h, c) { if (h) obj[h] = row[c]; });
     const methodName = String(obj['methodName'] || 'saveCustomerDetailFast').trim();
@@ -459,6 +469,9 @@ function applyPortalQueuedSaveJobP473_(methodName, payload) {
   if (methodName === 'savePortalSupportProcessThinP474') {
     return savePortalSupportProcessThinCoreP489_(payload);
   }
+  if (methodName === 'savePortalSupportRequesterEditP527') {
+    return savePortalSupportRequesterEditCoreP527_(payload);
+  }
   if (methodName === 'savePortalSupportRequest') {
     return savePortalSupportRequestCoreP210_(payload);
   }
@@ -475,8 +488,8 @@ function applyPortalQueuedSaveJobP473_(methodName, payload) {
 // P521: 자료발송 전 저장큐 차단 내역 상세 조회.
 // - 발송 preflight에서 CONFLICT / FAIL / QUEUED / RETRY / RUNNING 상태를 팝업으로 보여주기 위한 읽기 전용 helper입니다.
 // - 큐 상태를 변경하지 않고, 저장/발송 로직도 실행하지 않습니다.
-function getCustomerSaveQueueBlockingItemsP521(customerNo, limit) {
-  return getCustomerSaveQueueBlockingItemsP521_(customerNo, limit);
+function getCustomerSaveQueueBlockingItemsP521(customerNo, limit, options) {
+  return getCustomerSaveQueueBlockingItemsP521_(customerNo, limit, options);
 }
 
 function trimPortalSaveQueueValueP521_(value, maxLen) {
@@ -538,10 +551,108 @@ function buildPortalSaveQueueFieldSummariesP521_(patch, expected, payload, resul
   });
 }
 
-function getCustomerSaveQueueBlockingItemsP521_(customerNo, limit) {
+
+// P524: 자료발송 preflight 저장큐 오판 방지 helper.
+// - 현재 고객/현재 row에 해당하는 active 상태만 발송 차단 대상으로 봅니다.
+// - DONE/적용완료/비차단 상태, 다른 고객, 다른 row는 차단 대상에서 제외합니다.
+function normalizePortalSaveQueueOptionsP524_(limit, options) {
+  let opt = {};
+  let maxLimit = limit;
+  if (limit && typeof limit === 'object' && !Array.isArray(limit)) {
+    opt = Object.assign({}, limit);
+    maxLimit = opt.limit || opt.maxItems || 10;
+  } else {
+    opt = Object.assign({}, options || {});
+  }
+  opt.limit = Math.max(1, Math.min(Number(maxLimit || opt.limit || 10) || 10, 20));
+  opt.customerNo = String(opt.customerNo || '').trim();
+  opt.rowNo = Number(opt.rowNo || 0) || 0;
+  opt.operationIds = Array.isArray(opt.operationIds) ? opt.operationIds.map(function(v) { return String(v || '').trim(); }).filter(Boolean) : [];
+  opt.operationSet = {};
+  opt.operationIds.forEach(function(id) { opt.operationSet[id] = true; });
+  return opt;
+}
+
+function getPortalSaveQueueBlockingStatusSetP524_() {
+  const set = {};
+  [
+    PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED,
+    PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING,
+    PORTAL_SAVE_QUEUE_P473.STATUS.RETRY,
+    PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT,
+    PORTAL_SAVE_QUEUE_P473.STATUS.FAIL
+  ].forEach(function(st) { set[String(st || '').trim()] = true; });
+  return set;
+}
+
+function parsePortalSaveQueueResultForP524_(row, idx) {
+  if (!idx || !idx['resultJson']) return {};
+  return parsePortalSaveQueueJsonP473_(row[idx['resultJson'] - 1], {});
+}
+
+function hasPortalSaveQueueAppliedMarkerP524_(row, idx, resultJson) {
+  const appliedAt = idx && idx['적용일시'] ? String(row[idx['적용일시'] - 1] || '').trim() : '';
+  if (appliedAt) return true;
+  resultJson = resultJson && typeof resultJson === 'object' ? resultJson : {};
+  return !!(
+    resultJson.forcedApplyP522 ||
+    resultJson.forcedApplyP524 ||
+    resultJson.forceApplied ||
+    resultJson.applied ||
+    resultJson.status === PORTAL_SAVE_QUEUE_P473.STATUS.DONE
+  );
+}
+
+function getPortalSaveQueueIgnoreReasonP524_(row, idx, filter, status, resultJson) {
+  filter = filter || {};
+  const blockingStatuses = filter.blockingStatuses || getPortalSaveQueueBlockingStatusSetP524_();
+  const customerNo = String(filter.customerNo || '').trim();
+  const rowCustomerNo = idx && idx['고객번호'] ? String(row[idx['고객번호'] - 1] || '').trim() : '';
+  if (customerNo && rowCustomerNo !== customerNo) return 'differentCustomer';
+
+  status = String(status || '').trim();
+  if (!blockingStatuses[status]) return 'nonBlockingStatus';
+
+  const rowNoFilter = Number(filter.rowNo || 0) || 0;
+  const queuedRowNo = idx && idx['rowNo'] ? (Number(row[idx['rowNo'] - 1] || 0) || 0) : 0;
+  if (rowNoFilter && queuedRowNo && queuedRowNo !== rowNoFilter) return 'rowMismatch';
+
+  const opCol = idx && idx['작업ID'] ? idx['작업ID'] - 1 : -1;
+  const operationId = opCol >= 0 ? String(row[opCol] || '').trim() : '';
+  if (filter.operationSet && Object.keys(filter.operationSet).length && !filter.operationSet[operationId]) return 'operationNotSelected';
+
+  if (hasPortalSaveQueueAppliedMarkerP524_(row, idx, resultJson)) return 'alreadyApplied';
+  return '';
+}
+
+function addPortalSaveQueueScanIgnoredP524_(scanStats, reason) {
+  reason = String(reason || 'unknown');
+  scanStats.ignored++;
+  scanStats.ignoredByReason[reason] = (scanStats.ignoredByReason[reason] || 0) + 1;
+}
+
+function getCustomerSaveQueueBlockingItemsP521_(customerNo, limit, options) {
   const no = String(customerNo || '').trim();
-  const max = Math.max(1, Math.min(Number(limit || 10) || 10, 20));
-  const out = { ok: true, customerNo: no, totalBlocking: 0, items: [] };
+  const opt = normalizePortalSaveQueueOptionsP524_(limit, options);
+  opt.customerNo = no;
+  const max = opt.limit;
+  const blockingStatuses = getPortalSaveQueueBlockingStatusSetP524_();
+  opt.blockingStatuses = blockingStatuses;
+  const out = {
+    ok: true,
+    customerNo: no,
+    rowNo: opt.rowNo || '',
+    totalBlocking: 0,
+    items: [],
+    scanStats: {
+      scanned: 0,
+      matchedCustomer: 0,
+      matchedRow: 0,
+      ignored: 0,
+      ignoredByReason: {},
+      blocking: 0
+    }
+  };
   if (!no) return out;
   const sheet = getPortalSaveQueueSheetP473_();
   const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
@@ -549,35 +660,41 @@ function getCustomerSaveQueueBlockingItemsP521_(customerNo, limit) {
   if (lastRow < 2 || !idx['고객번호'] || !idx['상태']) return out;
   const width = sheet.getLastColumn();
   const data = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
-  const blockingStatuses = {};
-  [
-    PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED,
-    PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING,
-    PORTAL_SAVE_QUEUE_P473.STATUS.RETRY,
-    PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT,
-    PORTAL_SAVE_QUEUE_P473.STATUS.FAIL
-  ].forEach(function(st) { blockingStatuses[st] = true; });
   const customerCol = idx['고객번호'] - 1;
   const statusCol = idx['상태'] - 1;
+  const rowNoCol = idx['rowNo'] ? idx['rowNo'] - 1 : -1;
 
   for (let i = data.length - 1; i >= 0; i--) {
     const row = data[i];
-    if (String(row[customerCol] || '').trim() !== no) continue;
+    out.scanStats.scanned++;
+    const rowCustomerNo = String(row[customerCol] || '').trim();
     const status = String(row[statusCol] || '').trim();
-    if (!blockingStatuses[status]) continue;
+    const resultJson = parsePortalSaveQueueResultForP524_(row, idx);
+    const ignoreReason = getPortalSaveQueueIgnoreReasonP524_(row, idx, opt, status, resultJson);
+    if (rowCustomerNo === no) {
+      out.scanStats.matchedCustomer++;
+      const queuedRowNoForStats = rowNoCol >= 0 ? (Number(row[rowNoCol] || 0) || 0) : 0;
+      if (!opt.rowNo || !queuedRowNoForStats || queuedRowNoForStats === opt.rowNo) out.scanStats.matchedRow++;
+    }
+    if (ignoreReason) {
+      if (rowCustomerNo === no || ignoreReason !== 'differentCustomer') addPortalSaveQueueScanIgnoredP524_(out.scanStats, ignoreReason);
+      continue;
+    }
+
     out.totalBlocking++;
+    out.scanStats.blocking++;
     if (out.items.length >= max) continue;
 
     const patch = idx['patchJson'] ? parsePortalSaveQueueJsonP473_(row[idx['patchJson'] - 1], {}) : {};
     const expected = idx['expectedValuesJson'] ? parsePortalSaveQueueJsonP473_(row[idx['expectedValuesJson'] - 1], {}) : {};
     const payload = idx['payloadJson'] ? parsePortalSaveQueueJsonP473_(row[idx['payloadJson'] - 1], {}) : {};
-    const resultJson = idx['resultJson'] ? parsePortalSaveQueueJsonP473_(row[idx['resultJson'] - 1], {}) : {};
     const lastError = idx['마지막오류'] ? String(row[idx['마지막오류'] - 1] || '') : '';
 
     out.items.push({
       sheetRow: i + 2,
       registeredAt: idx['등록일시'] ? row[idx['등록일시'] - 1] : '',
       updatedAt: idx['수정일시'] ? row[idx['수정일시'] - 1] : '',
+      appliedAt: idx['적용일시'] ? row[idx['적용일시'] - 1] : '',
       operationId: idx['작업ID'] ? String(row[idx['작업ID'] - 1] || '') : '',
       user: idx['사용자'] ? String(row[idx['사용자'] - 1] || '') : '',
       sessionId: idx['세션ID'] ? String(row[idx['세션ID'] - 1] || '') : '',
@@ -598,7 +715,6 @@ function getCustomerSaveQueueBlockingItemsP521_(customerNo, limit) {
   }
   return out;
 }
-
 
 // P522: 자료발송 전 저장큐 차단 팝업에서 사용자가 승인한 경우,
 // 저장큐에 남은 신규값을 현재 마스터시트에 강제 반영하고 큐 상태를 DONE으로 정리합니다.
@@ -704,7 +820,9 @@ function forceApplyCustomerSaveQueueBlockingItemsP522(customerNo, options) {
     ? ('저장큐 내역 ' + out.applied + '건을 저장했습니다.')
     : ('저장큐 내역 저장 중 실패 ' + out.failed + '건이 있습니다.');
   if (!out.applied && !out.failed) out.message = '현재 고객에 저장할 차단 내역이 없습니다.';
-  out.blockingItems = getCustomerSaveQueueBlockingItemsP521_(no, 10).items;
+  const afterBlockingP524 = getCustomerSaveQueueBlockingItemsP521_(no, 10, { rowNo: rowNoFilter });
+  out.blockingItems = afterBlockingP524.items;
+  out.scanStats = afterBlockingP524.scanStats;
   if (out.blockingItems && out.blockingItems.length) out.ok = false;
   return out;
 }
@@ -752,39 +870,56 @@ function buildPortalForceSavePayloadP522_(methodName, payload, patch, customerNo
   return forced;
 }
 
-function flushCustomerPendingOpsP473(customerNo, timeoutMs) {
-  try { resolveCustomerSupersededSaveConflictsP489_(customerNo); } catch (e) {}
+function flushCustomerPendingOpsP473(customerNo, timeoutMs, rowNo) {
+  try { resolveCustomerSupersededSaveConflictsP489_(customerNo, rowNo); } catch (e) {}
   const started = new Date().getTime();
   const limit = Math.max(1000, Number(timeoutMs || 5000) || 5000);
   let last = null;
   while (new Date().getTime() - started < limit) {
-    const before = getCustomerSaveQueueStatusCountsP489_(customerNo);
+    const before = getCustomerSaveQueueStatusCountsP489_(customerNo, rowNo);
     if (before.fail) {
-      return { ok: false, pending: before.pending, conflict: before.conflict, fail: before.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10).items };
+      return { ok: false, pending: before.pending, conflict: before.conflict, fail: before.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10, { rowNo: rowNo }).items, scanStats: before.scanStats || null };
     }
-    if (!before.pending && !before.conflict) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
+    if (!before.pending && !before.conflict) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last, scanStats: before.scanStats || null };
     last = processSaveQueueP473({ maxJobs: 8, lockWaitMs: 800 });
-    const after = getCustomerSaveQueueStatusCountsP489_(customerNo);
+    const after = getCustomerSaveQueueStatusCountsP489_(customerNo, rowNo);
     if (after.fail) {
-      return { ok: false, pending: after.pending, conflict: after.conflict, fail: after.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10).items };
+      return { ok: false, pending: after.pending, conflict: after.conflict, fail: after.fail, result: last, message: '저장 실패 작업이 남아 있어 진행할 수 없습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10, { rowNo: rowNo }).items, scanStats: after.scanStats || null };
     }
-    if (!after.pending && !after.conflict) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last };
+    if (!after.pending && !after.conflict) return { ok: true, pending: 0, conflict: 0, fail: 0, result: last, scanStats: after.scanStats || null };
     if (after.conflict && !after.pending) {
       if (last && Number(last.processed || 0) > 0) {
         Utilities.sleep(300);
         continue;
       }
-      return { ok: false, pending: 0, conflict: after.conflict, fail: 0, result: last, message: '자동 재기준 저장으로 해결되지 않은 충돌이 남아 있습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10).items };
+      return { ok: false, pending: 0, conflict: after.conflict, fail: 0, result: last, message: '자동 재기준 저장으로 해결되지 않은 충돌이 남아 있습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10, { rowNo: rowNo }).items, scanStats: after.scanStats || null };
     }
     Utilities.sleep(300);
   }
-  const finalCounts = getCustomerSaveQueueStatusCountsP489_(customerNo);
-  return { ok: false, pending: finalCounts.pending, conflict: finalCounts.conflict, fail: finalCounts.fail, result: last, message: '저장 대기 작업이 아직 남아 있습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10).items };
+  const finalCounts = getCustomerSaveQueueStatusCountsP489_(customerNo, rowNo);
+  return { ok: false, pending: finalCounts.pending, conflict: finalCounts.conflict, fail: finalCounts.fail, result: last, message: '저장 대기 작업이 아직 남아 있습니다.', blockingItems: getCustomerSaveQueueBlockingItemsP521_(customerNo, 10, { rowNo: rowNo }).items, scanStats: finalCounts.scanStats || null };
 }
 
-function getCustomerSaveQueueStatusCountsP489_(customerNo) {
+function getCustomerSaveQueueStatusCountsP489_(customerNo, rowNo) {
   const no = String(customerNo || '').trim();
-  const counts = { pending: 0, conflict: 0, fail: 0, done: 0, total: 0 };
+  const rowNoFilter = Number(rowNo || 0) || 0;
+  const counts = {
+    pending: 0,
+    conflict: 0,
+    fail: 0,
+    done: 0,
+    total: 0,
+    ignored: 0,
+    ignoredByReason: {},
+    scanStats: {
+      scanned: 0,
+      matchedCustomer: 0,
+      matchedRow: 0,
+      ignored: 0,
+      ignoredByReason: {},
+      blocking: 0
+    }
+  };
   if (!no) return counts;
   const sheet = getPortalSaveQueueSheetP473_();
   const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
@@ -793,20 +928,41 @@ function getCustomerSaveQueueStatusCountsP489_(customerNo) {
   const data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getDisplayValues();
   const customerCol = idx['고객번호'] - 1;
   const statusCol = idx['상태'] - 1;
+  const rowNoCol = idx['rowNo'] ? idx['rowNo'] - 1 : -1;
+  const opt = {
+    customerNo: no,
+    rowNo: rowNoFilter,
+    blockingStatuses: getPortalSaveQueueBlockingStatusSetP524_()
+  };
   data.forEach(function(row) {
-    if (String(row[customerCol] || '').trim() !== no) return;
+    counts.scanStats.scanned++;
+    const rowCustomerNo = String(row[customerCol] || '').trim();
+    if (rowCustomerNo !== no) return;
+    counts.scanStats.matchedCustomer++;
+    const queuedRowNo = rowNoCol >= 0 ? (Number(row[rowNoCol] || 0) || 0) : 0;
+    if (!rowNoFilter || !queuedRowNo || queuedRowNo === rowNoFilter) counts.scanStats.matchedRow++;
     const st = String(row[statusCol] || '').trim();
+    const resultJson = parsePortalSaveQueueResultForP524_(row, idx);
+    const ignoreReason = getPortalSaveQueueIgnoreReasonP524_(row, idx, opt, st, resultJson);
+    if (ignoreReason) {
+      counts.ignored++;
+      counts.ignoredByReason[ignoreReason] = (counts.ignoredByReason[ignoreReason] || 0) + 1;
+      addPortalSaveQueueScanIgnoredP524_(counts.scanStats, ignoreReason);
+      if (st === PORTAL_SAVE_QUEUE_P473.STATUS.DONE) counts.done++;
+      return;
+    }
     counts.total++;
+    counts.scanStats.blocking++;
     if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY, PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING].indexOf(st) >= 0) counts.pending++;
     else if (st === PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT) counts.conflict++;
     else if (st === PORTAL_SAVE_QUEUE_P473.STATUS.FAIL) counts.fail++;
-    else if (st === PORTAL_SAVE_QUEUE_P473.STATUS.DONE) counts.done++;
   });
   return counts;
 }
 
-function getCustomerPendingSaveQueueCountP473_(customerNo) {
+function getCustomerPendingSaveQueueCountP473_(customerNo, rowNo) {
   const no = String(customerNo || '').trim();
+  const rowNoFilter = Number(rowNo || 0) || 0;
   if (!no) return 0;
   const sheet = getPortalSaveQueueSheetP473_();
   const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
@@ -815,9 +971,12 @@ function getCustomerPendingSaveQueueCountP473_(customerNo) {
   const data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getDisplayValues();
   const customerCol = idx['고객번호'] - 1;
   const statusCol = idx['상태'] - 1;
+  const rowNoCol = idx['rowNo'] ? idx['rowNo'] - 1 : -1;
   let count = 0;
   data.forEach(function(row) {
     if (String(row[customerCol] || '').trim() !== no) return;
+    const queuedRowNo = rowNoCol >= 0 ? (Number(row[rowNoCol] || 0) || 0) : 0;
+    if (rowNoFilter && queuedRowNo && queuedRowNo !== rowNoFilter) return;
     const st = String(row[statusCol] || '').trim();
     if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY, PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING].indexOf(st) >= 0) count++;
   });

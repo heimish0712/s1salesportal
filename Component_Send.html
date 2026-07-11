@@ -2641,6 +2641,90 @@ function summarizePortalSendPreflightValueP520_(value, maxLen) {
   return text.length > limit ? text.slice(0, limit) + '\n…' : text;
 }
 
+// P523: 자료발송 preflight 추적 로그. 동작은 바꾸지 않고 성능로그_DB에 흐름만 남깁니다.
+function summarizePortalSendPreflightItemsP523_(items) {
+  items = Array.isArray(items) ? items : [];
+  const statuses = {};
+  const sources = {};
+  const operationIds = [];
+  const keys = [];
+  items.forEach(function(item) {
+    if (!item) return;
+    const status = String(item.status || '').toUpperCase();
+    if (status) statuses[status] = (statuses[status] || 0) + 1;
+    const source = String(item.source || item.methodName || item.label || item.key || '').trim();
+    if (source) sources[source] = (sources[source] || 0) + 1;
+    const opId = String(item.operationId || item.clientOperationId || '').trim();
+    if (opId && operationIds.indexOf(opId) < 0 && operationIds.length < 12) operationIds.push(opId);
+    const key = String(item.key || item.field || item.label || item.source || '').trim();
+    if (key && keys.indexOf(key) < 0 && keys.length < 16) keys.push(key);
+  });
+  const statusPairs = Object.keys(statuses).sort().map(function(k){ return k + ':' + statuses[k]; });
+  const sourcePairs = Object.keys(sources).sort().map(function(k){ return k + ':' + sources[k]; });
+  return {
+    itemCount: items.length,
+    statuses: statuses,
+    statusText: statusPairs.join(','),
+    sourceText: sourcePairs.join(','),
+    operationIds: operationIds,
+    keys: keys
+  };
+}
+
+function portalSendPreflightLogP523_(eventName, action, payload, extra) {
+  try {
+    payload = payload || {};
+    extra = extra || {};
+    const actionType = String((action && (action.type || action.mode)) || '').toUpperCase();
+    const actionLabel = (typeof getPortalSendActionLabelP520_ === 'function') ? getPortalSendActionLabelP520_(action || {}) : (actionType || '자료발송');
+    const customerNo = normalizeCustomerNoForKey_(payload.customerNo || (payload.detail && payload.detail.customerNo) || (typeof sendSelectedCustomerNoV50 !== 'undefined' ? sendSelectedCustomerNoV50 : '') || '');
+    const rowNo = Number(payload.rowNo || (payload.detail && payload.detail.rowNo) || (typeof sendSelectedRowNoV50 !== 'undefined' ? sendSelectedRowNoV50 : 0) || 0) || 0;
+    const items = Array.isArray(extra.items) ? extra.items : [];
+    const itemSummary = summarizePortalSendPreflightItemsP523_(items);
+    const opId = String(extra.operationId || (action && (action.runId || action.actionId || action.id)) || '').trim();
+    const detailPayload = {
+      rowNo: rowNo,
+      customerNo: customerNo,
+      page: 'send',
+      source: 'sendPreflightP523',
+      methodName: String(eventName || ''),
+      key: actionType || actionLabel,
+      keys: itemSummary.keys.length ? itemSummary.keys : (itemSummary.statusText ? [itemSummary.statusText] : []),
+      count: Number(extra.dirtyCount != null ? extra.dirtyCount : itemSummary.itemCount) || 0,
+      queuedCount: Number(extra.queueBlockCount != null ? extra.queueBlockCount : 0) || 0,
+      clientOperationId: opId,
+      status: String(extra.status || ''),
+      error: String(extra.error || '').slice(0, 500),
+      serverTiming: {
+        actionLabel: actionLabel,
+        actionType: actionType,
+        workspaceId: action && action.wsId || action && action.workspaceId || '',
+        dirtyCount: Number(extra.dirtyCount != null ? extra.dirtyCount : 0) || 0,
+        queueBlockCount: Number(extra.queueBlockCount != null ? extra.queueBlockCount : 0) || 0,
+        itemCount: itemSummary.itemCount,
+        blockedStatuses: itemSummary.statuses,
+        blockedStatusText: itemSummary.statusText,
+        sources: itemSummary.sourceText,
+        operationIds: itemSummary.operationIds,
+        modalAction: String(extra.modalAction || ''),
+        result: String(extra.result || ''),
+        reason: String(extra.reason || ''),
+        message: String(extra.message || '').slice(0, 700),
+        saveQueueScanStats: extra.scanStats || extra.queueScanStats || null,
+        ignoredCount: extra.scanStats && extra.scanStats.ignored != null ? Number(extra.scanStats.ignored || 0) : '',
+        ignoredByReason: extra.scanStats && extra.scanStats.ignoredByReason ? extra.scanStats.ignoredByReason : null
+      }
+    };
+    if (typeof portalPerfLogP460_ === 'function') portalPerfLogP460_(eventName, detailPayload);
+    if (typeof schedulePortalPerfFlushP460_ === 'function') {
+      const urgent = !!detailPayload.error || /blocked|failed|cancel|forceApply|dirtyFound|saveQueue/i.test(String(eventName || ''));
+      schedulePortalPerfFlushP460_(urgent ? 150 : 900);
+    }
+  } catch (e) {
+    try { console.warn('[P523 send preflight log skipped]', eventName, e); } catch (_) {}
+  }
+}
+
 function getPortalSendDirtyDraftItemsP520_(customerNo, rowNo) {
   customerNo = normalizeCustomerNoForKey_(customerNo || '');
   rowNo = Number(rowNo || 0) || 0;
@@ -2770,20 +2854,56 @@ function ensurePortalSendDirtyDraftsSavedP520_(action, payload, ws) {
   const rowNo = Number(payload.rowNo || 0) || 0;
   const actionLabel = getPortalSendActionLabelP520_(action);
   const dirtyItems = getPortalSendDirtyDraftItemsP520_(customerNo, rowNo);
-  if (!dirtyItems.length) return Promise.resolve({ ok: true, skipped: true });
+  if (!dirtyItems.length) {
+    portalSendPreflightLogP523_('send.preflight.clean', action, payload, { status: 'ok', dirtyCount: 0, result: 'noDirtyDraft' });
+    return Promise.resolve({ ok: true, skipped: true });
+  }
+  portalSendPreflightLogP523_('send.preflight.dirtyFound', action, payload, { status: 'blocked', dirtyCount: dirtyItems.length, items: dirtyItems, result: 'confirmRequired' });
   if (dirtyItems.some(function(item) { return item && item.error; })) {
-    return Promise.reject(new Error('저장 안 된 입력값 확인 중 오류가 발생했습니다. 입력값을 직접 저장한 뒤 다시 진행해 주세요.'));
+    const err = new Error('저장 안 된 입력값 확인 중 오류가 발생했습니다. 입력값을 직접 저장한 뒤 다시 진행해 주세요.');
+    portalSendPreflightLogP523_('send.preflight.dirtyCollectError', action, payload, { status: 'error', dirtyCount: dirtyItems.length, items: dirtyItems, error: err.message, result: 'blocked' });
+    return Promise.reject(err);
   }
   return showPortalSendDirtyDraftConfirmP520_(dirtyItems, actionLabel).then(function(confirmed) {
-    if (!confirmed) throw new Error(actionLabel + '을 취소했습니다. 저장 안 된 입력값은 화면에 그대로 유지됩니다.');
+    if (!confirmed) {
+      portalSendPreflightLogP523_('send.preflight.dirtyConfirmCancelled', action, payload, { status: 'cancelled', dirtyCount: dirtyItems.length, items: dirtyItems, result: 'cancelledByUser' });
+      throw new Error(actionLabel + '을 취소했습니다. 저장 안 된 입력값은 화면에 그대로 유지됩니다.');
+    }
+    portalSendPreflightLogP523_('send.preflight.dirtySaveRequested', action, payload, { status: 'ok', dirtyCount: dirtyItems.length, items: dirtyItems, result: 'saveRequested' });
     setSendMessage('저장 안 된 입력값을 먼저 저장하는 중입니다.', false);
-    return savePortalSendDirtyDraftsP520_(dirtyItems, payload);
+    return savePortalSendDirtyDraftsP520_(dirtyItems, payload)
+      .then(function(res) {
+        portalSendPreflightLogP523_('send.preflight.dirtySaveSuccess', action, payload, { status: 'ok', dirtyCount: dirtyItems.length, items: dirtyItems, result: 'saved' });
+        return res;
+      })
+      .catch(function(err) {
+        portalSendPreflightLogP523_('send.preflight.dirtySaveFailed', action, payload, { status: 'error', dirtyCount: dirtyItems.length, items: dirtyItems, error: err && err.message ? err.message : String(err || ''), result: 'blocked' });
+        throw err;
+      });
   });
 }
 
 function ensurePortalSendPreflightP520_(action, payload, ws) {
+  payload = payload || {};
   return ensurePortalSendDirtyDraftsSavedP520_(action, payload, ws)
-    .then(function(){ return ensurePortalSendPendingSavesFlushedP489_(payload && payload.customerNo, payload && payload.rowNo); });
+    .then(function(){
+      return ensurePortalSendPendingSavesFlushedP489_(payload && payload.customerNo, payload && payload.rowNo)
+        .then(function(res) {
+          portalSendPreflightLogP523_('send.preflight.flushSuccess', action, payload, { status: 'ok', result: 'pendingFlushOk' });
+          return res;
+        })
+        .catch(function(err) {
+          const blockingItems = (typeof getPortalSendBlockingItemsFromErrorP521_ === 'function') ? getPortalSendBlockingItemsFromErrorP521_(err) : [];
+          portalSendPreflightLogP523_('send.preflight.flushFailed', action, payload, {
+            status: 'error',
+            error: err && err.message ? err.message : String(err || ''),
+            items: blockingItems,
+            queueBlockCount: blockingItems.length,
+            result: blockingItems.length ? 'saveQueueBlocked' : 'flushFailed'
+          });
+          throw err;
+        });
+    });
 }
 
 
@@ -2939,6 +3059,20 @@ function getPortalSendBlockingItemsFromErrorP521_(err) {
 }
 
 
+function getPortalSendSaveQueueResponseFromErrorP524_(err) {
+  if (!err) return null;
+  if (err.portalSaveQueueResponseP521) return err.portalSaveQueueResponseP521;
+  if (err.portalSaveQueueResponseP524) return err.portalSaveQueueResponseP524;
+  if (err.response && (err.response.blockingItems || err.response.scanStats)) return err.response;
+  return null;
+}
+
+function getPortalSendQueueScanStatsFromErrorP524_(err) {
+  const res = getPortalSendSaveQueueResponseFromErrorP524_(err);
+  return res && res.scanStats ? res.scanStats : null;
+}
+
+
 // P522: 저장큐 차단 팝업에서 사용자가 승인하면 저장하려던 신규값을 강제 저장합니다.
 function getPortalSendBlockingOperationIdsP522_(items) {
   items = normalizePortalSendQueueBlockingItemsP521_(items || []);
@@ -2963,7 +3097,11 @@ function forceApplyPortalSendSaveQueueBlockingItemsP522_(items, payload, actionL
     google.script.run
       .withSuccessHandler(function(res) {
         if (!res || res.ok === false) {
-          reject(new Error((res && res.message) || '저장큐 내역 저장에 실패했습니다.'));
+          const err = new Error((res && res.message) || '저장큐 내역 저장에 실패했습니다.');
+          err.portalSaveQueueBlockingP521 = true;
+          err.portalSaveQueueResponseP521 = res || null;
+          err.portalSaveQueueBlockingItemsP521 = res && Array.isArray(res.blockingItems) ? res.blockingItems : [];
+          reject(err);
           return;
         }
         resolve(res);
@@ -3049,52 +3187,78 @@ function ensurePortalSendPendingSavesFlushedP489_(customerNo, rowNo) {
             resolve(res || { ok: true });
           })
           .withFailureHandler(reject)
-          .flushCustomerPendingOpsP473(customerNo, 5000);
+          .flushCustomerPendingOpsP473(customerNo, 5000, rowNo);
       });
     });
 }
 
 function enqueueSendActionAfterPendingSaveFlushP489_(action, payload, ws) {
+  payload = payload || {};
   const actionLabelP520 = (typeof getPortalSendActionLabelP520_ === 'function') ? getPortalSendActionLabelP520_(action) : '자료발송';
+  portalSendPreflightLogP523_('send.preflight.start', action, payload, { status: 'ok', result: 'started' });
   setSendMessage('현재 고객의 저장 반영 여부를 확인 중입니다.', false);
   const preflightP520 = (typeof ensurePortalSendPreflightP520_ === 'function')
     ? ensurePortalSendPreflightP520_(action, payload, ws)
     : ensurePortalSendPendingSavesFlushedP489_(payload && payload.customerNo, payload && payload.rowNo);
   preflightP520
     .then(function(){
+      portalSendPreflightLogP523_('send.preflight.continueSend', action, payload, { status: 'ok', result: 'preflightPassed' });
       continuePortalSendActionAfterPreflightP522_(action, ws);
     })
     .catch(function(err){
       const msg = err && err.message ? err.message : String(err || '');
       const blockingItemsP521 = (typeof getPortalSendBlockingItemsFromErrorP521_ === 'function') ? getPortalSendBlockingItemsFromErrorP521_(err) : [];
+      if (blockingItemsP521 && blockingItemsP521.length) {
+        portalSendPreflightLogP523_('send.preflight.saveQueueBlocked', action, payload, { status: 'blocked', error: msg, items: blockingItemsP521, queueBlockCount: blockingItemsP521.length, result: 'modalRequired', scanStats: (typeof getPortalSendQueueScanStatsFromErrorP524_ === 'function' ? getPortalSendQueueScanStatsFromErrorP524_(err) : null) });
+      } else {
+        portalSendPreflightLogP523_('send.preflight.blocked', action, payload, { status: 'blocked', error: msg, result: 'blockedWithoutQueueItems' });
+      }
       const finishBlockedP521 = function(blockMsg) {
         const finalMsg = blockMsg || msg;
+        portalSendPreflightLogP523_('send.preflight.blockedFinal', action, payload, { status: 'blocked', error: finalMsg || '', items: blockingItemsP521, queueBlockCount: blockingItemsP521.length || 0, result: 'sendStopped' });
         setSendMessage('현재 고객의 저장 확인이 완료되지 않아 ' + actionLabelP520 + '을 중단했습니다. 저장 상태를 확인한 뒤 다시 진행해 주세요.' + (finalMsg ? ' (' + finalMsg + ')' : ''), true);
         try { if (typeof renderInlineMailProgress_ === 'function') renderInlineMailProgress_(); } catch(e) {}
       };
-      if (blockingItemsP521 && blockingItemsP521.length && typeof showPortalSendSaveQueueBlockingModalP521_ === 'function') {
-        showPortalSendSaveQueueBlockingModalP521_(blockingItemsP521, actionLabelP520, msg).then(function(modalActionP522) {
+      const handleBlockingItemsP524_ = function(items, blockMessage, depth) {
+        items = normalizePortalSendQueueBlockingItemsP521_(items || []);
+        depth = Number(depth || 0) || 0;
+        if (!(items && items.length && typeof showPortalSendSaveQueueBlockingModalP521_ === 'function')) {
+          finishBlockedP521(blockMessage);
+          return;
+        }
+        showPortalSendSaveQueueBlockingModalP521_(items, actionLabelP520, blockMessage || msg).then(function(modalActionP522) {
+          portalSendPreflightLogP523_('send.preflight.saveQueueModalAction', action, payload, { status: modalActionP522 === 'save' ? 'ok' : 'cancelled', modalAction: modalActionP522, items: items, queueBlockCount: items.length, result: modalActionP522 === 'save' ? 'forceApplyRequested' : 'cancelledByUser' });
           if (modalActionP522 !== 'save') {
             finishBlockedP521('사용자가 저장하지 않고 취소했습니다.');
             return;
           }
           setSendMessage('저장큐에 남아 있는 값을 먼저 저장하는 중입니다.', false);
-          forceApplyPortalSendSaveQueueBlockingItemsP522_(blockingItemsP521, payload, actionLabelP520)
-            .then(function(){
+          portalSendPreflightLogP523_('send.preflight.forceApplyRequested', action, payload, { status: 'ok', items: items, queueBlockCount: items.length, result: 'requestSent' });
+          forceApplyPortalSendSaveQueueBlockingItemsP522_(items, payload, actionLabelP520)
+            .then(function(resP522){
+              portalSendPreflightLogP523_('send.preflight.forceApplySuccess', action, payload, { status: 'ok', items: items, queueBlockCount: items.length, result: 'forceApplied', message: resP522 && resP522.message || '', scanStats: resP522 && resP522.scanStats || null });
               setSendMessage('저장 완료 여부를 다시 확인하는 중입니다.', false);
               return ensurePortalSendPendingSavesFlushedP489_(payload && payload.customerNo, payload && payload.rowNo);
             })
             .then(function(){
+              portalSendPreflightLogP523_('send.preflight.continueSend', action, payload, { status: 'ok', items: items, queueBlockCount: items.length, result: 'forceApplyAndFlushPassed' });
               setSendMessage('저장 확인 완료. ' + actionLabelP520 + '을 계속 진행합니다.', false);
               continuePortalSendActionAfterPreflightP522_(action, ws);
             })
             .catch(function(saveErrP522){
+              const remainingItemsP524 = (typeof getPortalSendBlockingItemsFromErrorP521_ === 'function') ? getPortalSendBlockingItemsFromErrorP521_(saveErrP522) : [];
+              const scanStatsP524 = (typeof getPortalSendQueueScanStatsFromErrorP524_ === 'function') ? getPortalSendQueueScanStatsFromErrorP524_(saveErrP522) : null;
+              portalSendPreflightLogP523_('send.preflight.forceApplyFailed', action, payload, { status: 'error', error: saveErrP522 && saveErrP522.message ? saveErrP522.message : String(saveErrP522 || '저장 실패'), items: remainingItemsP524 && remainingItemsP524.length ? remainingItemsP524 : items, queueBlockCount: remainingItemsP524 && remainingItemsP524.length ? remainingItemsP524.length : items.length, result: remainingItemsP524 && remainingItemsP524.length ? 'remainingBlocking' : 'sendStopped', scanStats: scanStatsP524 });
+              if (remainingItemsP524 && remainingItemsP524.length && depth < 2) {
+                portalSendPreflightLogP523_('send.preflight.saveQueueBlockedAfterForceApply', action, payload, { status: 'blocked', error: saveErrP522 && saveErrP522.message ? saveErrP522.message : '', items: remainingItemsP524, queueBlockCount: remainingItemsP524.length, result: 'modalRequiredAgain', scanStats: scanStatsP524 });
+                handleBlockingItemsP524_(remainingItemsP524, saveErrP522 && saveErrP522.message ? saveErrP522.message : '아직 저장 확인이 필요한 내역이 남아 있습니다.', depth + 1);
+                return;
+              }
               finishBlockedP521(saveErrP522 && saveErrP522.message ? saveErrP522.message : String(saveErrP522 || '저장 실패'));
             });
         });
-      } else {
-        finishBlockedP521();
-      }
+      };
+      handleBlockingItemsP524_(blockingItemsP521, msg, 0);
     });
 }
 

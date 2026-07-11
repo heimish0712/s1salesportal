@@ -831,6 +831,194 @@ function savePortalSupportRequestCoreP210_(payload) {
 
 
 /*******************************************************
+ * P527 영업지원요청 요청자 수정 경로
+ * - 처리자가 없고 접수 상태인 기존 요청만 요청자 본인이 업무유형/요청업무를 수정할 수 있습니다.
+ * - 처리중 이후 건은 서버에서도 차단합니다.
+ *******************************************************/
+function normalizePortalSupportActorForRequesterEditP527_(value) {
+  const raw = String(value || '').trim();
+  const compact = (typeof normalizePortalNameForPermission_ === 'function')
+    ? normalizePortalNameForPermission_(raw)
+    : raw.replace(/\s+/g, '').trim();
+  return String(compact || '').replace(/[\(\（][^\)\）]*[\)\）]$/g, '').trim();
+}
+
+function getPortalSupportActorVariantsP527_(value) {
+  const out = [];
+  function add(v) {
+    v = String(v || '').trim();
+    if (!v) return;
+    const compact = (typeof normalizePortalNameForPermission_ === 'function')
+      ? normalizePortalNameForPermission_(v)
+      : v.replace(/\s+/g, '').trim();
+    const stripped = normalizePortalSupportActorForRequesterEditP527_(v);
+    [compact, stripped].forEach(function(x) {
+      x = String(x || '').trim();
+      if (x && out.indexOf(x) < 0) out.push(x);
+    });
+  }
+  add(value);
+  return out;
+}
+
+function isPortalSupportCurrentRequesterP527_(requester, perm) {
+  perm = perm || getPortalCurrentPermission_();
+  const requesterVariants = getPortalSupportActorVariantsP527_(requester);
+  if (!requesterVariants.length) return false;
+  const candidates = [];
+  function add(v) { v = String(v || '').trim(); if (v) candidates.push(v); }
+  try { add(getPortalCurrentUserName_()); } catch (e) {}
+  try { add(getPortalCurrentUserFullLabel_()); } catch (e) {}
+  add(perm && perm.name);
+  add(perm && perm.displayName);
+  add(perm && perm.salesRepName);
+  const currentVariants = [];
+  candidates.forEach(function(v) {
+    getPortalSupportActorVariantsP527_(v).forEach(function(x) {
+      if (x && currentVariants.indexOf(x) < 0) currentVariants.push(x);
+    });
+  });
+  return requesterVariants.some(function(x) { return currentVariants.indexOf(x) >= 0; });
+}
+
+function getPortalSupportRequesterEditStateP527_(item, perm) {
+  item = item || {};
+  perm = perm || getPortalCurrentPermission_();
+  const status = String(item.status || '접수').trim() || '접수';
+  const hasHandler = !!String(item.handler || '').trim();
+  const hasProcessContent = !!String(item.processContent || '').trim();
+  const hasCompletedAt = !!String(item.completedAt || '').trim();
+  const hasAutoSendCheck = !!String(item.autoSendCheck || '').trim();
+  const statusLocked = status && status !== '접수';
+  const processingStarted = hasHandler || hasProcessContent || hasCompletedAt || hasAutoSendCheck || statusLocked;
+  const requesterMatched = isPortalSupportCurrentRequesterP527_(item.requester || '', perm);
+  const canWrite = !!(perm && perm.active !== false && perm.canWriteSupport !== false);
+
+  let reason = '';
+  let message = '';
+  if (!canWrite) {
+    reason = 'NO_WRITE_PERMISSION';
+    message = '영업지원 요청 작성 권한이 없습니다.';
+  } else if (!requesterMatched) {
+    reason = 'NOT_REQUESTER';
+    message = '요청자 본인만 요청내용을 수정할 수 있습니다.';
+  } else if (processingStarted) {
+    reason = 'PROCESSING_STARTED';
+    message = '처리중인 건이라 요청내용 수정이 불가합니다. 처리중인 서무에게 문의하세요.';
+  }
+
+  return {
+    allowed: canWrite && requesterMatched && !processingStarted,
+    requesterMatched: requesterMatched,
+    processingStarted: processingStarted,
+    reason: reason,
+    message: message,
+    status: status,
+    hasHandler: hasHandler,
+    hasProcessContent: hasProcessContent,
+    hasCompletedAt: hasCompletedAt,
+    hasAutoSendCheck: hasAutoSendCheck
+  };
+}
+
+function savePortalSupportRequesterEditP527(payload) {
+  assertPortalCanWriteSupport_();
+  payload = payload || {};
+  try {
+    return savePortalSupportRequesterEditCoreP527_(payload);
+  } catch (err) {
+    if (typeof enqueueSaveFallbackP473_ === 'function' && typeof isPortalServerTransientWriteErrorP473_ === 'function' && isPortalServerTransientWriteErrorP473_(err)) {
+      return enqueueSaveFallbackP473_('savePortalSupportRequesterEditP527', payload, 'SUPPORT_REQUESTER_EDIT_DIRECT_SAVE_FAILED', err);
+    }
+    throw err;
+  }
+}
+
+function savePortalSupportRequesterEditCoreP527_(payload) {
+  payload = payload || {};
+  const perm = getPortalCurrentPermission_();
+  const rowNo = Number(payload.rowNo || 0) || 0;
+  if (rowNo < PORTAL_CONFIG.SUPPORT_DATA_START_ROW) throw new Error('영업지원 요청 행 번호가 올바르지 않습니다.');
+
+  const requestType = String(payload.requestType || '').trim();
+  const requestText = String(payload.requestText || '').trim();
+  if (!requestType) throw new Error('업무유형을 선택하세요.');
+  if (!requestText) throw new Error('요청업무를 입력하세요.');
+
+  const sheet = ensurePortalSupportSheet_();
+  const headerMap = getPortalSupportHeaderMap_(sheet);
+  ensurePortalSupportHeadersForWriteP210_(sheet, headerMap);
+  ensurePortalSupportRowExistsP210_(sheet, rowNo);
+
+  const writeLastCol = getPortalSupportWriteLastColP210_(sheet, headerMap);
+  const existingValues = sheet.getRange(rowNo, 1, 1, writeLastCol).getDisplayValues()[0] || [];
+  const existingItem = buildPortalSupportRowObject_(existingValues, rowNo, headerMap);
+  if (!existingItem || (!existingItem.requestText && !existingItem.customerNo && !existingItem.customerName)) {
+    throw new Error('영업지원 요청을 찾지 못했습니다.');
+  }
+
+  const editState = getPortalSupportRequesterEditStateP527_(existingItem, perm);
+  if (!editState.allowed) {
+    throw new Error(editState.message || '요청내용 수정이 불가합니다.');
+  }
+
+  const beforeMap = {
+    '업무유형': existingItem.requestType || '',
+    '요청업무': existingItem.requestText || ''
+  };
+
+  const requestTypeCol = headerMap['업무유형'] || ensurePortalSupportColumn_(sheet, headerMap, '업무유형');
+  const requestTextCol = headerMap['요청업무'] || ensurePortalSupportColumn_(sheet, headerMap, '요청업무');
+  if (requestTypeCol) sheet.getRange(rowNo, requestTypeCol).setValue(requestType);
+  if (requestTextCol) sheet.getRange(rowNo, requestTextCol).setValue(requestText);
+
+  SpreadsheetApp.flush();
+  try { bumpPortalSupportCacheBustV64_(); } catch (e) {}
+
+  const latestValues = sheet.getRange(rowNo, 1, 1, writeLastCol).getDisplayValues()[0] || [];
+  const item = enrichPortalSupportItemWithMasterCustomerInfoP448_(buildPortalSupportRowObject_(latestValues, rowNo, headerMap));
+
+  try {
+    if (typeof recordPortalFieldChangesP474_ === 'function') {
+      const afterMap = { '업무유형': requestType, '요청업무': requestText };
+      const changed = Object.keys(afterMap).filter(function(h) {
+        return String(beforeMap[h] || '') !== String(afterMap[h] || '');
+      }).map(function(h) {
+        return { key: 'support.requesterEdit.' + h, label: h, oldValue: beforeMap[h], newValue: afterMap[h] };
+      });
+      recordPortalFieldChangesP474_(changed, {
+        rowNo: rowNo,
+        customerNo: item.customerNo || existingItem.customerNo || '',
+        operationId: String(payload.clientRequestId || payload.clientOperationId || ''),
+        source: 'support.requesterEdit',
+        clientSaveSource: 'support.requesterEdit'
+      });
+    }
+  } catch (e) {}
+
+  try {
+    appendPortalActivityLog_({
+      actionType: '영업지원요청수정',
+      screen: '영업지원 요청',
+      customerNo: item.customerNo || '',
+      company: item.customerName || '',
+      summary: '영업지원 요청내용 수정: ' + (item.receiptNo || rowNo),
+      detail: { rowNo: rowNo, receiptNo: item.receiptNo || '', requestType: requestType, requesterEditP527: true }
+    });
+  } catch (e) {}
+
+  return {
+    ok: true,
+    requesterEditP527: true,
+    rowNo: rowNo,
+    receiptNo: item.receiptNo || existingItem.receiptNo || '',
+    message: '영업지원 요청내용이 저장되었습니다.',
+    item: item
+  };
+}
+
+
+/*******************************************************
  * P474 영업지원요청 처리 저장 초경량 경로
  * - 신규 접수는 기존 savePortalSupportRequest 유지
  * - 기존 요청의 처리자/처리내용/완료시각/진행상태/자동발송확인만 빠르게 갱신
