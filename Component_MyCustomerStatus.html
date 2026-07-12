@@ -313,7 +313,17 @@ function renderMyCustomerStatusDbMetaP529_(bundle) {
   const db = bundle && bundle.analysisDb || {};
   if (!db) return '';
   if (db.fastLoad || db.loaded) {
-    return ' · 분석DB 조회 ' + esc(String(db.rows || 0)) + '건' + (db.selectedColumnCount ? ' · 경량컬럼 ' + esc(String(db.selectedColumnCount)) + '개' : '') + (db.blockCount ? ' · 읽기블록 ' + esc(String(db.blockCount)) + '개' : '') + (db.latestAnalyzedAt ? ' · 최신분석 ' + esc(db.latestAnalyzedAt) : '') + (db.message ? ' · ' + esc(db.message) : '');
+    const parts = [];
+    parts.push('현재 마스터 기준 ' + esc(String(db.masterScopedRows || db.rows || 0)) + '건');
+    if (db.analysisMatchedRows != null) parts.push('분석매칭 ' + esc(String(db.analysisMatchedRows || 0)) + '건');
+    if (db.analysisMissingRows != null) parts.push('분석없음 ' + esc(String(db.analysisMissingRows || 0)) + '건');
+    if (db.analysisOnlyRowsExcluded) parts.push('현재 마스터에 없는 분석 제외 ' + esc(String(db.analysisOnlyRowsExcluded)) + '건');
+    if (db.staleStatusRows) parts.push('상태변경 후 추천숨김 ' + esc(String(db.staleStatusRows)) + '건');
+    if (db.selectedColumnCount) parts.push('경량컬럼 ' + esc(String(db.selectedColumnCount)) + '개');
+    if (db.blockCount) parts.push('읽기블록 ' + esc(String(db.blockCount)) + '개');
+    if (db.latestAnalyzedAt) parts.push('최신분석 ' + esc(db.latestAnalyzedAt));
+    if (db.message) parts.push(esc(db.message));
+    return ' · ' + parts.join(' · ');
   }
   if (db.saved) return ' · 분석DB 저장 ' + esc(String(db.rows || 0)) + '건 / 기록 ' + esc(String(db.written || db.totalRows || 0)) + '건(' + esc(db.sheetName || '고객현황분석_DB') + ')';
   if (db.error) return ' · <b>분석DB 저장 실패</b>: ' + esc(db.error);

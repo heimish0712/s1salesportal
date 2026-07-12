@@ -6,7 +6,7 @@
  * - 수주실패/발주완료/계약완료는 영업담당자 판단 우선 보호 상태로 취급
  ***************************************/
 
-const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P541_FAST_LOAD_MEASURED_THIN_COLUMNS';
+const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P543_MASTER_SCOPED_FAST_LOAD';
 const MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 = '고객현황분석_DB';
 const MY_CUSTOMER_STATUS_ANALYSIS_JOB_SHEET_P539 = '고객현황분석작업_DB';
 const MY_CUSTOMER_STATUS_ANALYSIS_JOB_PROCESS_LIMIT_P539 = 200;
@@ -1690,7 +1690,7 @@ function getMyCustomerStatusDashboardFromDbP539_(options) {
       scopeInfo: scopeInfo,
       isAllScope: isAllScope,
       dbResult: dbResult,
-      sourceType: 'ANALYSIS_DB_FAST_COLUMNS',
+      sourceType: 'MASTER_SCOPED_WITH_ANALYSIS_DB_P543',
       sourceMessage: dbResult.message || ''
     });
     perf.buildMs = new Date().getTime() - buildStarted.getTime();
@@ -1698,6 +1698,14 @@ function getMyCustomerStatusDashboardFromDbP539_(options) {
     response.perf = Object.assign({}, perf, {
       rawRows: dbResult.rawRows || 0,
       scopedRows: dbResult.scopedRows || 0,
+      masterRawRows: dbResult.masterRawRows || 0,
+      masterScopedRows: dbResult.masterScopedRows || 0,
+      analysisRawRows: dbResult.analysisRawRows || 0,
+      analysisMatchedRows: dbResult.analysisMatchedRows || 0,
+      analysisMissingRows: dbResult.analysisMissingRows || 0,
+      analysisDuplicateRows: dbResult.analysisDuplicateRows || 0,
+      staleStatusRows: dbResult.staleStatusRows || 0,
+      analysisOnlyRowsExcluded: dbResult.analysisOnlyRowsExcluded || 0,
       selectedColumnCount: dbResult.selectedColumnCount || 0,
       blockCount: dbResult.blockCount || 0
     });
@@ -1707,6 +1715,14 @@ function getMyCustomerStatusDashboardFromDbP539_(options) {
       isAdmin: !!isAllScope,
       rawRows: dbResult.rawRows || 0,
       scopedRows: dbResult.scopedRows || 0,
+      masterRawRows: dbResult.masterRawRows || 0,
+      masterScopedRows: dbResult.masterScopedRows || 0,
+      analysisRawRows: dbResult.analysisRawRows || 0,
+      analysisMatchedRows: dbResult.analysisMatchedRows || 0,
+      analysisMissingRows: dbResult.analysisMissingRows || 0,
+      analysisDuplicateRows: dbResult.analysisDuplicateRows || 0,
+      staleStatusRows: dbResult.staleStatusRows || 0,
+      analysisOnlyRowsExcluded: dbResult.analysisOnlyRowsExcluded || 0,
       selectedColumnCount: dbResult.selectedColumnCount || 0,
       blockCount: dbResult.blockCount || 0,
       missingHeaders: dbResult.missingHeaders || [],
@@ -1745,6 +1761,14 @@ function readMyCustomerStatusAnalysisDbRowsP539_(perm, aliases, isAllScope) {
     rows: [],
     rawRows: 0,
     scopedRows: 0,
+    masterRawRows: 0,
+    masterScopedRows: 0,
+    analysisRawRows: 0,
+    analysisMatchedRows: 0,
+    analysisMissingRows: 0,
+    analysisDuplicateRows: 0,
+    staleStatusRows: 0,
+    analysisOnlyRowsExcluded: 0,
     latestAnalyzedAt: '',
     message: '',
     error: '',
@@ -1754,39 +1778,169 @@ function readMyCustomerStatusAnalysisDbRowsP539_(perm, aliases, isAllScope) {
     blockCount: 0,
     skippedHeavyHeaders: []
   };
+
+  // P543: 화면의 고객 수/범위는 반드시 현재 마스터시트 기준입니다.
+  // 고객현황분석_DB는 고객번호 기준 최신 분석값만 붙이는 캐시로만 사용합니다.
+  const sourceInfo = getMyCustomerStatusSourceRowsP532_(perm, aliases || [], !!isAllScope);
+  const masterRows = (sourceInfo && sourceInfo.rows || []).filter(function(row) {
+    return row && normalizeCustomerNoForKey_(row.customerNo || '');
+  });
+  out.masterRawRows = sourceInfo && sourceInfo.rawTotal || 0;
+  out.masterScopedRows = masterRows.length;
+  out.rawRows = out.masterRawRows;
+  out.scopedRows = masterRows.length;
+
   const ss = getWebAppDbSpreadsheet_();
   const sheet = ss.getSheetByName(MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529);
-  if (!sheet || sheet.getLastRow() < 2) {
-    out.ok = true;
-    out.message = '고객현황분석_DB가 없거나 분석 결과가 없습니다. 분석DB 갱신을 먼저 실행해 주세요.';
-    return out;
-  }
-  const lastRow = sheet.getLastRow();
-  const lastCol = sheet.getLastColumn();
-  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
-  const readResult = readMyCustomerStatusAnalysisFastColumnsP540_(sheet, headers, 2, lastRow - 1);
-  const records = readResult.records || [];
-  const aliasKeys = {};
-  (aliases || []).forEach(function(a) { const k = normalizeMyCustomerStatusNameP528_(a); if (k) aliasKeys[k] = true; });
-  out.rawRows = records.length;
-  out.selectedColumnCount = readResult.selectedColumnCount || 0;
-  out.selectedHeaders = readResult.selectedHeaders || [];
-  out.missingHeaders = readResult.missingHeaders || [];
-  out.blockCount = readResult.blockCount || 0;
-  out.skippedHeavyHeaders = MY_CUSTOMER_STATUS_HEAVY_DB_HEADERS_P540.filter(function(h) { return headers.indexOf(h) >= 0 && out.selectedHeaders.indexOf(h) < 0; });
+  let latestByCustomerNo = {};
 
-  records.forEach(function(rec) {
-    const repKey = normalizeMyCustomerStatusNameP528_(rec['영업담당자'] || '');
-    if (!isAllScope) {
-      if (!repKey || !aliasKeys[repKey]) return;
+  if (sheet && sheet.getLastRow() >= 2) {
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+    const readResult = readMyCustomerStatusAnalysisFastColumnsP540_(sheet, headers, 2, lastRow - 1);
+    const records = readResult.records || [];
+    out.analysisRawRows = records.length;
+    out.selectedColumnCount = readResult.selectedColumnCount || 0;
+    out.selectedHeaders = readResult.selectedHeaders || [];
+    out.missingHeaders = readResult.missingHeaders || [];
+    out.blockCount = readResult.blockCount || 0;
+    out.skippedHeavyHeaders = MY_CUSTOMER_STATUS_HEAVY_DB_HEADERS_P540.filter(function(h) { return headers.indexOf(h) >= 0 && out.selectedHeaders.indexOf(h) < 0; });
+    latestByCustomerNo = buildLatestMyCustomerStatusAnalysisMapP543_(records, out);
+  } else {
+    out.message = '고객현황분석_DB가 없거나 분석 결과가 없습니다. 현재 마스터시트 고객을 기본값으로 표시합니다.';
+  }
+
+  const currentKeys = {};
+  masterRows.forEach(function(masterRow) {
+    const key = normalizeCustomerNoForKey_(masterRow && masterRow.customerNo || '');
+    if (!key) return;
+    currentKeys[key] = true;
+    const rec = latestByCustomerNo[key] || null;
+    if (rec) {
+      out.analysisMatchedRows += 1;
+      out.rows.push(mergeMyCustomerMasterAndAnalysisRecordP543_(masterRow, rec, out));
+    } else {
+      out.analysisMissingRows += 1;
+      out.rows.push(makeMyCustomerStatusMinimalRecordFromMasterP543_(masterRow));
     }
-    out.rows.push(rec);
-    const at = String(rec['분석일시'] || '').trim();
-    if (at && (!out.latestAnalyzedAt || String(at) > String(out.latestAnalyzedAt))) out.latestAnalyzedAt = at;
   });
+
+  Object.keys(latestByCustomerNo).forEach(function(key) {
+    if (!currentKeys[key]) out.analysisOnlyRowsExcluded += 1;
+  });
+
   out.scopedRows = out.rows.length;
-  out.message = '고객현황분석_DB 기준 P541 얇은 컬럼 빠른 조회';
+  if (!out.message) {
+    out.message = 'P543 현재 마스터시트 기준 ' + out.scopedRows + '건 · 분석DB 매칭 ' + out.analysisMatchedRows + '건 · 분석없음 ' + out.analysisMissingRows + '건 · 분석DB 전용 제외 ' + out.analysisOnlyRowsExcluded + '건';
+  }
   return out;
+}
+
+
+function buildLatestMyCustomerStatusAnalysisMapP543_(records, out) {
+  const map = {};
+  out = out || {};
+  (records || []).forEach(function(rec) {
+    const key = normalizeCustomerNoForKey_(rec && rec['고객번호'] || '');
+    if (!key) return;
+    const prev = map[key];
+    if (prev) {
+      out.analysisDuplicateRows = (out.analysisDuplicateRows || 0) + 1;
+      if (!isMyCustomerStatusAnalysisRecordNewerP543_(rec, prev)) return;
+    }
+    map[key] = rec;
+    const at = String(rec['분석일시'] || '').trim();
+    if (at && (!out.latestAnalyzedAt || compareMyCustomerStatusDateTextP543_(at, out.latestAnalyzedAt) > 0)) out.latestAnalyzedAt = at;
+  });
+  return map;
+}
+
+function isMyCustomerStatusAnalysisRecordNewerP543_(a, b) {
+  const cmp = compareMyCustomerStatusDateTextP543_(a && a['분석일시'], b && b['분석일시']);
+  if (cmp !== 0) return cmp > 0;
+  const ar = Number(String(a && a['rowNo'] || '').replace(/,/g, '')) || 0;
+  const br = Number(String(b && b['rowNo'] || '').replace(/,/g, '')) || 0;
+  return ar >= br;
+}
+
+function compareMyCustomerStatusDateTextP543_(a, b) {
+  const da = coerceMyCustomerStatusDateP535_(a);
+  const db = coerceMyCustomerStatusDateP535_(b);
+  const ta = da ? da.getTime() : 0;
+  const tb = db ? db.getTime() : 0;
+  if (ta || tb) return ta === tb ? 0 : (ta > tb ? 1 : -1);
+  const sa = String(a || '').trim();
+  const sb = String(b || '').trim();
+  if (sa === sb) return 0;
+  return sa > sb ? 1 : -1;
+}
+
+function mergeMyCustomerMasterAndAnalysisRecordP543_(masterRow, rec, out) {
+  masterRow = masterRow || {};
+  rec = rec || {};
+  out = out || {};
+  const merged = Object.assign({}, rec);
+  const masterStatus = String(masterRow.status || '').trim();
+  const dbStatus = String(rec['현재상태'] || '').trim();
+  merged['고객번호'] = String(masterRow.customerNo || rec['고객번호'] || '').trim();
+  merged['rowNo'] = String(masterRow.rowNo || rec['rowNo'] || '').trim();
+  merged['회사명'] = String(masterRow.company || rec['회사명'] || '').trim();
+  merged['영업담당자'] = String(masterRow.salesRep || rec['영업담당자'] || '').trim();
+  merged['현재상태'] = masterStatus;
+  // 분석DB가 과거 상태를 기준으로 만든 추천이면 화면에서 즉시 버튼을 숨깁니다.
+  if (masterStatus !== dbStatus) {
+    out.staleStatusRows = (out.staleStatusRows || 0) + 1;
+    merged['추천상태'] = masterStatus;
+    merged['상태변경추천상태'] = '';
+    merged['상태변경추천여부'] = 'N';
+    merged['상태변경추천등급'] = '';
+    merged['추천노출여부'] = 'N';
+    merged['상태변경추천허용'] = 'N';
+    merged['상태추천차단사유'] = '마스터시트 현재상태가 분석DB 작성 당시와 달라 추천을 숨김. 분석DB 갱신 필요. 이전상태=' + (dbStatus || '(공란)') + ', 현재상태=' + (masterStatus || '(공란)');
+  }
+  return merged;
+}
+
+function makeMyCustomerStatusMinimalRecordFromMasterP543_(masterRow) {
+  masterRow = masterRow || {};
+  const status = String(masterRow.status || '').trim();
+  return {
+    '분석일시': '',
+    '고객번호': String(masterRow.customerNo || '').trim(),
+    'rowNo': String(masterRow.rowNo || '').trim(),
+    '회사명': String(masterRow.company || '').trim(),
+    '영업담당자': String(masterRow.salesRep || '').trim(),
+    '현재상태': status,
+    '추천상태': status,
+    '판정유형': '',
+    '신뢰도': '',
+    '우선순위등급': '',
+    '불일치여부': 'N',
+    '분석소스': 'masterOnly',
+    '최근연락일': '',
+    '최근이벤트출처': '',
+    '최근이벤트요약': '',
+    '데이터누락키워드': '',
+    '가능성점수': '',
+    '위험태그': '',
+    '추천액션': '분석DB 갱신 필요',
+    '상태보호여부': isMyCustomerStatusProtectedStatusP530_(status) ? 'Y' : 'N',
+    '상태변경추천허용': 'N',
+    '추천노출여부': 'N',
+    '분석주의등급': '분석없음',
+    '보수판정사유': '현재 마스터시트에는 존재하지만 고객현황분석_DB 최신 분석이 없는 고객입니다.',
+    '상태변경추천상태': '',
+    '상태변경추천여부': 'N',
+    '상태변경추천등급': '',
+    '업무인사이트유형': '분석DB 갱신 필요',
+    '업무인사이트요약': '현재 마스터시트 고객입니다. 분석DB 갱신 후 상세 인사이트가 표시됩니다.',
+    '최신전체이벤트요약': '',
+    '최신판정이벤트요약': '',
+    '최신판정이벤트일자': '',
+    '최신판정이벤트출처': '',
+    '상태추천차단사유': '분석DB 미생성/미매칭'
+  };
 }
 
 function readMyCustomerStatusAnalysisFastColumnsP540_(sheet, headers, startRow, rowCount) {
@@ -1971,7 +2125,7 @@ function buildMyCustomerStatusDashboardResponseFromClientRowsP539_(clientRows, c
       ownTotal: clientRows.length,
       scopedTotal: clientRows.length,
       scope: isAllScope ? 'ALL' : 'OWN',
-      sourceType: ctx.sourceType || 'ANALYSIS_DB',
+      sourceType: ctx.sourceType || 'MASTER_SCOPED_WITH_ANALYSIS_DB',
       sourceMessage: ctx.sourceMessage || ''
     },
     analysisDb: {
@@ -1979,6 +2133,14 @@ function buildMyCustomerStatusDashboardResponseFromClientRowsP539_(clientRows, c
       saved: false,
       rows: clientRows.length,
       rawRows: (ctx.dbResult && ctx.dbResult.rawRows) || 0,
+      masterRawRows: (ctx.dbResult && ctx.dbResult.masterRawRows) || 0,
+      masterScopedRows: (ctx.dbResult && ctx.dbResult.masterScopedRows) || clientRows.length,
+      analysisRawRows: (ctx.dbResult && ctx.dbResult.analysisRawRows) || 0,
+      analysisMatchedRows: (ctx.dbResult && ctx.dbResult.analysisMatchedRows) || 0,
+      analysisMissingRows: (ctx.dbResult && ctx.dbResult.analysisMissingRows) || 0,
+      analysisDuplicateRows: (ctx.dbResult && ctx.dbResult.analysisDuplicateRows) || 0,
+      staleStatusRows: (ctx.dbResult && ctx.dbResult.staleStatusRows) || 0,
+      analysisOnlyRowsExcluded: (ctx.dbResult && ctx.dbResult.analysisOnlyRowsExcluded) || 0,
       sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
       latestAnalyzedAt: (ctx.dbResult && ctx.dbResult.latestAnalyzedAt) || '',
       message: (ctx.dbResult && ctx.dbResult.message) || '고객현황분석_DB 빠른 조회',
