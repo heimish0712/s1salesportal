@@ -1,12 +1,12 @@
 /***************************************
  * S1 Sales Portal - 29_MyCustomerStatusService.gs
- * P534: 나의 고객 현황 - 추천상태 적용 즉시 반영/부분 갱신
+ * P535: 나의 고객 현황 - 분석DB 날짜 안전 저장 보정
  * - 내 고객 기준: 마스터시트 영업담당자 = 현재 로그인 사용자의 영업담당자명
  * - 마스터시트 원본 메모 + 컨택이력_DB + TM 컨택 내용 + 자료발송 스냅샷을 통합 분석
  * - 수주실패/발주완료/계약완료는 영업담당자 판단 우선 보호 상태로 취급
  ***************************************/
 
-const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P534_FAST_RECOMMENDED_STATUS_APPLY';
+const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P535_DATE_SAFE_ANALYSIS_DB_SAVE';
 const MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 = '고객현황분석_DB';
 const MY_CUSTOMER_STATUS_ANALYSIS_WRITE_BATCH_P532 = 120;
 const MY_CUSTOMER_STATUS_DB_EVIDENCE_JSON_LIMIT_P532 = 3500;
@@ -1034,8 +1034,10 @@ function isMyCustomerSignalAfterP529_(a, b) {
 }
 
 function compareMyCustomerEventsP529_(a, b) {
-  const at = a && a.date ? a.date.getTime() : 0;
-  const bt = b && b.date ? b.date.getTime() : 0;
+  const ad = coerceMyCustomerStatusDateP535_(a && a.date);
+  const bd = coerceMyCustomerStatusDateP535_(b && b.date);
+  const at = ad ? ad.getTime() : 0;
+  const bt = bd ? bd.getTime() : 0;
   if (at !== bt) return at - bt;
   return (Number(a && a.order || 0) || 0) - (Number(b && b.order || 0) || 0);
 }
@@ -1133,9 +1135,11 @@ function safePortalDateP528_(year, month, day) {
 }
 
 function daysBetweenPortalDatesP528_(a, b) {
-  if (!a || !b) return null;
-  const da = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
-  const db = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime();
+  const ad = coerceMyCustomerStatusDateP535_(a);
+  const bd = coerceMyCustomerStatusDateP535_(b);
+  if (!ad || !bd) return null;
+  const da = new Date(ad.getFullYear(), ad.getMonth(), ad.getDate()).getTime();
+  const db = new Date(bd.getFullYear(), bd.getMonth(), bd.getDate()).getTime();
   return Math.floor((db - da) / 86400000);
 }
 
@@ -1152,14 +1156,61 @@ function shortenMyCustomerStatusTextP528_(text, maxLen) {
   return text.length > maxLen ? text.slice(0, maxLen - 1) + '…' : text;
 }
 
-function formatMyCustomerStatusDateP528_(date) {
-  if (!date) return '';
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+function coerceMyCustomerStatusDateP535_(value) {
+  if (!value) return null;
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) return value;
+  if (typeof value === 'number') {
+    const numDate = new Date(value);
+    if (!isNaN(numDate.getTime())) return numDate;
+    return null;
+  }
+
+  const text = String(value || '').trim();
+  if (!text) return null;
+
+  function makeDate_(year, month, day, hour, minute, second, ampm) {
+    year = Number(year || 0);
+    month = Number(month || 0);
+    day = Number(day || 0);
+    if (!year || !month || !day) return null;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    let h = Number(hour || 0) || 0;
+    const mi = Number(minute || 0) || 0;
+    const se = Number(second || 0) || 0;
+    ampm = String(ampm || '').trim();
+    if (ampm === '오후' && h < 12) h += 12;
+    if (ampm === '오전' && h === 12) h = 0;
+    return new Date(year, month - 1, day, h, mi, se);
+  }
+
+  let m = text.match(/^(20\d{2})[-.\/]\s*(\d{1,2})[-.\/]\s*(\d{1,2})(?:[ T]+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?)?(?:.*)?$/);
+  if (m) return makeDate_(m[1], m[2], m[3], m[4], m[5], m[6], '');
+
+  m = text.match(/^(20\d{2})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})\s*(?:일)?\s*(오전|오후)?\s*(?:(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?)?(?:.*)?$/);
+  if (m) return makeDate_(m[1], m[2], m[3], m[5], m[6], m[7], m[4]);
+
+  const loose = parseLoosePortalDateP528_(text);
+  if (loose) return loose;
+
+  if (/^20\d{2}-\d{1,2}-\d{1,2}T/.test(text)) {
+    const iso = new Date(text);
+    if (!isNaN(iso.getTime())) return iso;
+  }
+  return null;
 }
 
-function formatMyCustomerStatusDateTimeP528_(date) {
-  if (!date) return '';
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+function formatMyCustomerStatusDateP528_(value) {
+  if (!value) return '';
+  const date = coerceMyCustomerStatusDateP535_(value);
+  if (date) return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return String(value || '').trim();
+}
+
+function formatMyCustomerStatusDateTimeP528_(value) {
+  if (!value) return '';
+  const date = coerceMyCustomerStatusDateP535_(value);
+  if (date) return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  return String(value || '').trim();
 }
 
 function objectToSortedStatusCountArrayP528_(obj) {
