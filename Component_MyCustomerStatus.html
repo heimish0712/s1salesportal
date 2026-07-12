@@ -1,5 +1,5 @@
 <script>
-// P534: 나의 고객 현황 - 추천상태 적용 즉시 반영 + compact 펼침/정렬
+// P537: 나의 고객 현황 - 추천상태 적용 즉시 반영 + compact 펼침/정렬 + AI 애매건 분석 큐
 let myCustomerStatusBundleP528 = null;
 let myCustomerStatusLoadingP528 = false;
 let myCustomerStatusActiveViewP528 = 'all';
@@ -107,12 +107,19 @@ function renderMyCustomerStatusPageP528_() {
   let html = '';
   html += '<div class="my-status-shell-p528">';
   html += '<div class="my-status-toolbar-p528">';
-  html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: ' + esc(scopeText) + ' · 분석방식: 상태추천/업무인사이트 분리 · 화면응답 경량화</div></div>';
-  html += '<div class="my-status-actions-p528"><button class="secondary" onclick="loadMyCustomerStatusPageP528(true)">새로고침</button><button class="secondary" onclick="switchPage(\'myCustomerFolder\')">나의 고객 폴더</button></div>';
+  html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: ' + esc(scopeText) + ' · 분석방식: 상태추천/업무인사이트 분리 · 화면응답 경량화 · AI 애매건 보조분석</div></div>';
+  html += '<div class="my-status-actions-p528">';
+  html += '<button class="secondary" onclick="loadMyCustomerStatusPageP528(true)">새로고침</button>';
+  html += '<button class="secondary" onclick="switchPage(\'myCustomerFolder\')">나의 고객 폴더</button>';
+  html += '<button class="secondary" onclick="setupMyCustomerAiP537_()">AI DB 준비</button>';
+  html += '<button class="secondary" onclick="createMyCustomerAiQueueP537_()">AI 애매건 큐 생성</button>';
+  html += '<button class="secondary" onclick="processMyCustomerAiQueueP537_()">AI 큐 10건 처리</button>';
+  html += '<button class="secondary" onclick="installMyCustomerAiTriggerP537_()">AI 5분 트리거</button>';
+  html += '</div>';
   html += '</div>';
 
   const idx = bundle.index || {};
-  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 범위 ' + esc(owner.scope || 'OWN') + ' · 원천 ' + esc(idx.sourceType || 'MASTER') + ' · 마스터대상 ' + esc(String(idx.sourceTotal || 0)) + '건' + (owner.scopeReason ? ' · 권한판정 ' + esc(owner.scopeReason) : '') + (idx.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + '</div>';
+  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 범위 ' + esc(owner.scope || 'OWN') + ' · 원천 ' + esc(idx.sourceType || 'MASTER') + ' · 마스터대상 ' + esc(String(idx.sourceTotal || 0)) + '건' + (owner.scopeReason ? ' · 권한판정 ' + esc(owner.scopeReason) : '') + (idx.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + renderMyCustomerAiMetaP537_(bundle) + '</div>';
 
   html += '<div class="my-status-cards-p528">';
   html += renderMyCustomerStatusCardP528_(owner.scope === 'ALL' ? '전체 고객' : '전체 내 고객', cards.total, 'all', '', owner.scope === 'ALL' ? 'admin 전체 고객' : '담당자 기준 전체 고객');
@@ -150,6 +157,19 @@ function renderMyCustomerStatusDbMetaP529_(bundle) {
   if (db.saved) return ' · 분석DB 저장 ' + esc(String(db.rows || 0)) + '건 / 기록 ' + esc(String(db.written || db.totalRows || 0)) + '건(' + esc(db.sheetName || '고객현황분석_DB') + ')';
   if (db.error) return ' · <b>분석DB 저장 실패</b>: ' + esc(db.error);
   return '';
+}
+
+function renderMyCustomerAiMetaP537_(bundle) {
+  const ai = bundle && bundle.ai || null;
+  if (!ai) return '';
+  if (ai.ok === false) return ' · <b>AI분석 상태 조회 실패</b>: ' + esc(ai.error || '');
+  const q = ai.queue || {};
+  const by = q.byStatus || {};
+  const queued = Number(by.QUEUED || 0) || 0;
+  const retry = Number(by.RETRY || 0) || 0;
+  const done = Number(by.DONE || 0) || 0;
+  const fail = Number(by.FAIL || 0) || 0;
+  return ' · AI큐 ' + esc(String(q.total || 0)) + '건(Q ' + esc(String(queued)) + ' / R ' + esc(String(retry)) + ' / D ' + esc(String(done)) + ' / F ' + esc(String(fail)) + ')' + (ai.triggerStatus ? ' · AI트리거 ' + esc(ai.triggerStatus) : '');
 }
 
 function renderMyCustomerStatusCardP528_(label, value, view, viewValue, desc) {
@@ -708,6 +728,60 @@ function runMyCustomerStatusScopeDebugP532_() {
       box.innerHTML = '<div class="my-status-error-p528">범위 진단 실패: ' + esc(err && err.message ? err.message : String(err || '')) + '</div>';
     })
     .debugMyCustomerStatusScopeP532();
+}
+
+
+
+function setupMyCustomerAiP537_() {
+  if (!confirm('고객AI분석_DB / 고객AI분석큐_DB 시트를 준비할까요?')) return;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) return alert('AI DB 준비 실패: ' + (res && (res.error || res.message) || 'unknown'));
+      alert('AI DB 준비 완료\n- ' + (res.analysisSheet || '고객AI분석_DB') + ': ' + (res.analysisRows || 0) + '건\n- ' + (res.queueSheet || '고객AI분석큐_DB') + ': ' + (res.queueRows || 0) + '건');
+      if (res.url) window.open(res.url, '_blank');
+    })
+    .withFailureHandler(function(err) { alert('AI DB 준비 실패: ' + (err && err.message ? err.message : String(err || ''))); })
+    .setupMyCustomerAiAnalysisSheetsP537();
+}
+
+function createMyCustomerAiQueueP537_() {
+  const raw = prompt('AI 애매건 분석 큐를 몇 건까지 생성할까요?\n기본 120건, 최대 500건입니다.', '120');
+  if (raw == null) return;
+  const limit = Math.max(1, Math.min(500, Number(raw || 120) || 120));
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) return alert('AI 큐 생성 실패: ' + (res && (res.error || res.message) || 'unknown'));
+      alert('AI 애매건 큐 생성 완료\n생성: ' + (res.created || 0) + '건\n후보: ' + (res.candidates || 0) + '건\n범위: ' + (res.scope || '-') + '\n\nAPI 호출은 아직 하지 않았습니다.');
+      loadMyCustomerStatusPageP528(true);
+    })
+    .withFailureHandler(function(err) { alert('AI 큐 생성 실패: ' + (err && err.message ? err.message : String(err || ''))); })
+    .createMyCustomerAiAnalysisQueueP537({ limit: limit });
+}
+
+function processMyCustomerAiQueueP537_() {
+  const raw = prompt('AI 분석 큐를 몇 건 처리할까요?\n테스트는 5~10건 권장입니다.\nScript Properties에 OPENAI_API_KEY가 있어야 합니다.', '10');
+  if (raw == null) return;
+  const limit = Math.max(1, Math.min(50, Number(raw || 10) || 10));
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) return alert('AI 큐 처리 실패: ' + (res && (res.error || res.message) || 'unknown'));
+      alert('AI 큐 처리 완료\n처리: ' + (res.processed || 0) + '건\n완료: ' + (res.done || 0) + '건\n재시도: ' + (res.retry || 0) + '건\n실패: ' + (res.fail || 0) + '건');
+      loadMyCustomerStatusPageP528(true);
+    })
+    .withFailureHandler(function(err) { alert('AI 큐 처리 실패: ' + (err && err.message ? err.message : String(err || ''))); })
+    .processMyCustomerAiAnalysisQueueP537({ limit: limit });
+}
+
+function installMyCustomerAiTriggerP537_() {
+  if (!confirm('고객AI분석큐 5분 자동 처리 트리거를 설치할까요?\n중복 트리거는 새로 만들지 않습니다.')) return;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) return alert('AI 트리거 설치 실패: ' + (res && (res.error || res.message) || 'unknown'));
+      alert('AI 트리거 확인 완료\n함수: ' + (res.functionName || '-') + '\n기존: ' + (res.existing || 0) + '개\n신규설치: ' + (res.installed ? 'Y' : 'N'));
+      loadMyCustomerStatusPageP528(true);
+    })
+    .withFailureHandler(function(err) { alert('AI 트리거 설치 실패: ' + (err && err.message ? err.message : String(err || ''))); })
+    .installMyCustomerAiAnalysisQueueTriggerP537();
 }
 
 </script>

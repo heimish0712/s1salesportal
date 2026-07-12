@@ -283,8 +283,8 @@ function getContactHistoryByCustomer_(customerNo, rowNo) {
   headers.forEach((h, i) => { if (h) map[h] = i; });
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
-  const keyCustomerNo = String(customerNo || '').trim();
-  const keyRowNo = String(rowNo || '').trim();
+  const keyCustomerNo = normalizeContactHistoryCustomerKeyP538_(customerNo);
+  const keyRowNo = normalizeContactHistoryRowKeyP538_(rowNo);
 
   const rows = values
     .map(row => {
@@ -292,7 +292,7 @@ function getContactHistoryByCustomer_(customerNo, rowNo) {
       const oldType = cellByHeader_(row, map, '컨택방식');
       const oldResult = cellByHeader_(row, map, '통화결과');
       const oldNextDate = cellByHeader_(row, map, '다음연락일');
-      return {
+      const item = {
         historyId: cellByHeader_(row, map, '이력ID'),
         customerNo: cellByHeader_(row, map, '고객번호'),
         company: cellByHeader_(row, map, '회사명'),
@@ -311,16 +311,49 @@ function getContactHistoryByCustomer_(customerNo, rowNo) {
         nextActionAuthor: cellByHeader_(row, map, '다음액션담당자'),
         masterApplied: cellByHeader_(row, map, '마스터메모반영')
       };
+      item.__matchMode = getContactHistoryMatchModeP538_(item, keyCustomerNo, keyRowNo);
+      return item;
     })
-    .filter(item => {
-      if (keyCustomerNo && String(item.customerNo || '').trim() === keyCustomerNo) return true;
-      if (keyRowNo && String(item.rowNo || '').trim() === keyRowNo) return true;
-      return false;
-    })
+    .filter(item => !!item.__matchMode)
     .reverse()
-    .slice(0, PORTAL_CONFIG.CONTACT_HISTORY_MAX_PER_CUSTOMER || 30);
+    .slice(0, PORTAL_CONFIG.CONTACT_HISTORY_MAX_PER_CUSTOMER || 30)
+    .map(item => {
+      delete item.__matchMode;
+      return item;
+    });
 
   return rows;
+}
+
+/**
+ * P538: 컨택이력은 반드시 고객번호를 1차 키로 매칭합니다.
+ * 마스터행(rowNo)은 과거 데이터처럼 컨택이력_DB의 고객번호가 비어 있는 경우에만 legacy fallback으로 씁니다.
+ * 고객번호가 존재하는 컨택이력은 마스터행이 우연히 같아도 다른 고객에게 절대 붙이지 않습니다.
+ */
+function getContactHistoryMatchModeP538_(item, keyCustomerNo, keyRowNo) {
+  const itemCustomerNo = normalizeContactHistoryCustomerKeyP538_(item && item.customerNo);
+  const itemRowNo = normalizeContactHistoryRowKeyP538_(item && item.rowNo);
+  if (keyCustomerNo) {
+    if (itemCustomerNo) return itemCustomerNo === keyCustomerNo ? 'customerNo' : '';
+    if (keyRowNo && itemRowNo && itemRowNo === keyRowNo) return 'legacyRowNoNoCustomerNo';
+    return '';
+  }
+  if (keyRowNo && !itemCustomerNo && itemRowNo && itemRowNo === keyRowNo) return 'legacyRowNoNoCustomerNo';
+  return '';
+}
+
+function normalizeContactHistoryCustomerKeyP538_(value) {
+  return String(value == null ? '' : value)
+    .replace(/ /g, ' ')
+    .replace(/\.0+$/g, '')
+    .trim();
+}
+
+function normalizeContactHistoryRowKeyP538_(value) {
+  return String(value == null ? '' : value)
+    .replace(/ /g, ' ')
+    .replace(/\.0+$/g, '')
+    .trim();
 }
 
 function ensureContactHistorySheet_(ss) {

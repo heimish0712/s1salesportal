@@ -143,7 +143,8 @@ function getMyCustomerStatusDashboardP528(options) {
       },
       rows: clientRows,
       lists: {},
-      responseMode: 'SLIM_ROWS_ONLY_P532_MASTER_SOURCE'
+      responseMode: 'SLIM_ROWS_ONLY_P532_MASTER_SOURCE',
+      ai: (typeof getMyCustomerAiAnalysisHealthP537 === 'function' ? getMyCustomerAiAnalysisHealthP537({ light: true }) : null)
     };
   } catch (err) {
     const msg = err && err.message ? err.message : String(err || '');
@@ -491,7 +492,10 @@ function enrichMyCustomerStatusRowFromMasterP529_(indexRow, masterMap) {
 }
 
 function getMyCustomerContactHistoryMapP529_(ownRows) {
-  const result = { byCustomerNo: {}, byRowNo: {}, count: 0 };
+  // P538: 컨택이력_DB의 실제 연결키는 `고객번호`입니다.
+  // `마스터행`은 과거 고객번호 공란 데이터에만 쓰는 legacy fallback이며,
+  // 고객번호가 있는 컨택이력을 rowNo 기준으로 다른 고객에게 붙이면 안 됩니다.
+  const result = { byCustomerNo: {}, byRowNo: {}, count: 0, excludedCustomerNoMismatch: 0, legacyRowFallbackCount: 0 };
   const customerKeys = {};
   const rowKeys = {};
   (ownRows || []).forEach(function(row) {
@@ -513,7 +517,12 @@ function getMyCustomerContactHistoryMapP529_(ownRows) {
     values.forEach(function(row, i) {
       const cno = normalizeCustomerNoForKey_(cellByHeaderIndex_(row, map, ['고객번호']));
       const rn = String(cellByHeaderIndex_(row, map, ['마스터행', 'rowNo']) || '').trim();
-      if (!(cno && customerKeys[cno]) && !(rn && rowKeys[rn])) return;
+      const customerNoMatched = !!(cno && customerKeys[cno]);
+      const legacyRowMatched = !!(!cno && rn && rowKeys[rn]);
+      if (!customerNoMatched && !legacyRowMatched) {
+        if (cno && rn && rowKeys[rn]) result.excludedCustomerNoMismatch += 1;
+        return;
+      }
       const createdAt = cellByHeaderIndex_(row, map, ['작성일시', '일시', '등록일시']);
       const content = cellByHeaderIndex_(row, map, ['컨택내용', '메모']);
       const note = cellByHeaderIndex_(row, map, ['특이사항', '비고']);
@@ -533,15 +542,18 @@ function getMyCustomerContactHistoryMapP529_(ownRows) {
         actor: author,
         order: 100000 + i
       });
-      if (cno) {
+      if (customerNoMatched) {
         if (!result.byCustomerNo[cno]) result.byCustomerNo[cno] = [];
         result.byCustomerNo[cno].push(ev);
+        result.count += 1;
+        return;
       }
-      if (rn) {
+      if (legacyRowMatched) {
         if (!result.byRowNo[rn]) result.byRowNo[rn] = [];
         result.byRowNo[rn].push(ev);
+        result.legacyRowFallbackCount += 1;
+        result.count += 1;
       }
-      result.count += 1;
     });
   } catch (err) {
     try { Logger.log('나의 고객 현황 컨택이력_DB 조회 실패: ' + (err && err.stack || err)); } catch (e) {}
@@ -646,10 +658,9 @@ function buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap, contractCom
   const sentAt = String(row.sentAt || row.lastSent || '');
   const customerNo = normalizeCustomerNoForKey_(row.customerNo || '');
   const rowNoKey = String(row.rowNo || '');
-  const contactEvents = [].concat(
-    customerNo && contactMap.byCustomerNo[customerNo] ? contactMap.byCustomerNo[customerNo] : [],
-    rowNoKey && contactMap.byRowNo[rowNoKey] ? contactMap.byRowNo[rowNoKey] : []
-  );
+  const contactEventsByCustomerNo = customerNo && contactMap.byCustomerNo[customerNo] ? contactMap.byCustomerNo[customerNo] : [];
+  const legacyContactEventsByRowNo = (!contactEventsByCustomerNo.length && rowNoKey && contactMap.byRowNo[rowNoKey]) ? contactMap.byRowNo[rowNoKey] : [];
+  const contactEvents = [].concat(contactEventsByCustomerNo, legacyContactEventsByRowNo);
   const dedupedContactEvents = dedupeMyCustomerEventsP529_(contactEvents);
   const events = buildMyCustomerCombinedEventsP529_(row, memo, dedupedContactEvents);
   const latestAnyEvent = getLatestMyCustomerMemoEventP528_(events);
