@@ -532,11 +532,33 @@ function normalizeMyCustomerAiApiResultP537_(apiRes) {
 function extractOpenAiResponseTextP537_(apiRes) {
   if (!apiRes) return '';
   if (apiRes.output_text) return String(apiRes.output_text || '');
+
   const out = [];
+  const seen = {};
+  function pushText_(value) {
+    const text = String(value || '').trim();
+    if (!text) return;
+    // P545: Responses API output_text items can expose both `type=output_text` and `text`.
+    // Do not append the same JSON body twice, because `{"..."}\n{"..."}` is invalid JSON.
+    if (seen[text]) return;
+    seen[text] = true;
+    out.push(text);
+  }
+
   (apiRes.output || []).forEach(function(item) {
     (item.content || []).forEach(function(c) {
-      if (c && c.text) out.push(c.text);
-      if (c && c.type === 'output_text' && c.text) out.push(c.text);
+      if (!c) return;
+      if (c.type === 'output_text' && c.text) {
+        pushText_(c.text);
+        return;
+      }
+      if (c.text) {
+        pushText_(c.text);
+        return;
+      }
+      if (typeof c === 'string') {
+        pushText_(c);
+      }
     });
   });
   if (out.length) return out.join('\n');
@@ -647,13 +669,23 @@ function parseOpenAiStructuredJsonP544_(text) {
   let src = String(text || '').trim();
   src = src.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
   let parsed = null;
+
   try { parsed = JSON.parse(src); } catch (err1) {
-    const start = src.indexOf('{');
-    const end = src.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try { parsed = JSON.parse(src.slice(start, end + 1)); } catch (err2) {}
+    const firstObject = extractFirstJsonObjectMyCustomerAiP545_(src);
+    if (firstObject) {
+      try { parsed = JSON.parse(firstObject); } catch (err2) {}
+    }
+
+    // Last-resort fallback for old logs or non-standard wrappers.
+    if (!parsed) {
+      const start = src.indexOf('{');
+      const end = src.lastIndexOf('}');
+      if (start >= 0 && end > start) {
+        try { parsed = JSON.parse(src.slice(start, end + 1)); } catch (err3) {}
+      }
     }
   }
+
   if (!parsed) {
     const e = new Error('OpenAI JSON 결과 파싱 실패: ' + src.slice(0, 700));
     e.aiStatus = 'FAIL_PARSE';
@@ -661,6 +693,44 @@ function parseOpenAiStructuredJsonP544_(text) {
     throw e;
   }
   return parsed;
+}
+
+function extractFirstJsonObjectMyCustomerAiP545_(src) {
+  src = String(src || '');
+  const start = src.indexOf('{');
+  if (start < 0) return '';
+
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = start; i < src.length; i++) {
+    const ch = src.charAt(i);
+
+    if (inString) {
+      if (escapeNext) {
+        escapeNext = false;
+      } else if (ch === '\\') {
+        escapeNext = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return src.slice(start, i + 1);
+      }
+    }
+  }
+  return '';
 }
 
 function slimMyCustomerAiEventP544_(ev, maxLen) {
