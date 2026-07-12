@@ -3378,6 +3378,12 @@ function openCustomerDetailEditFromExpand_(rowNo) {
   const customerNo = rowSummary.customerNo || '';
   openDetailSafe_(rowNo, customerNo, { forceEdit: true });
 }
+function isUnsafeMyCustomerStatusMemoSummaryCacheP542_(detail) {
+  if (!detail) return false;
+  const source = String(detail.__source || detail.__cacheSource || '').trim();
+  return !!((source === 'myCustomerStatus' || detail.__myCustomerStatusSummaryP542) && !detail.__masterBacked && (detail.__summary || detail.__lite));
+}
+
 function saveExpandedCustomerMemo(rowNo) {
   rowNo = Number(rowNo) || 0;
   if (!rowNo) return;
@@ -3392,6 +3398,10 @@ function saveExpandedCustomerMemo(rowNo) {
   let memoValue = memoEl.value || '';
   const prevRow = findCustomerRowSummaryByRowNo_(rowNo);
   const cachedForMemo = getCustomerDetailCache_(rowNo, prevRow && prevRow.customerNo);
+  if (isUnsafeMyCustomerStatusMemoSummaryCacheP542_(cachedForMemo)) {
+    toast('마스터시트 전체 메모를 아직 불러오지 못했습니다. 상세를 다시 펼친 뒤 저장해 주세요.');
+    return;
+  }
   const prevDetail = cachedForMemo ? JSON.parse(JSON.stringify(cachedForMemo)) : null;
   const targetCustomerNo = String((prevDetail && prevDetail.customerNo) || (prevRow && prevRow.customerNo) || memoEl.getAttribute('data-customer-no') || '').trim();
   let prevMemo = prevRow ? (prevRow.memo || '') : (prevDetail ? prevDetail.memo || '' : '');
@@ -3523,6 +3533,9 @@ function saveExpandedCustomerMemoBeforeSendP520_(rowNo, customerNo, options) {
   } catch (err) {}
   if (!prevMemo) {
     const cachedForMemo = getCustomerDetailCache_(rowNo, cno);
+    if (isUnsafeMyCustomerStatusMemoSummaryCacheP542_(cachedForMemo)) {
+      return Promise.reject(new Error('마스터시트 전체 메모를 아직 불러오지 못했습니다. 상세를 다시 펼친 뒤 저장해 주세요.'));
+    }
     prevMemo = el && el.getAttribute('data-original') || (cachedForMemo && cachedForMemo.memo) || (rowSummary && rowSummary.memo) || '';
   }
   if (normalizeExpandedMemoCompareP494C_(memoValue) === normalizeExpandedMemoCompareP494C_(prevMemo)) {

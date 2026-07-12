@@ -501,21 +501,54 @@ function renderMyCustomerStatusExpandedDetailP533_(row) {
   if (!rowNo) return '<div class="customer-expand-loading">행 번호가 없어 상세를 펼칠 수 없습니다.</div>';
   if (typeof renderCustomerExpandedContent_ !== 'function') return '<div class="customer-expand-loading">고객상세검색 펼침 렌더러를 찾지 못했습니다.</div>';
   if (typeof getCustomerDetailCache_ === 'function' && typeof setCustomerDetailCache_ === 'function' && typeof buildCustomerDetailFromRowSummary_ === 'function') {
+    clearUnsafeMyCustomerStatusExpandSummaryCacheP542_(rowNo, customerNo);
     const cached = getCustomerDetailCache_(rowNo, customerNo);
-    if (!cached) setCustomerDetailCache_(buildCustomerDetailFromRowSummary_(row, rowNo), { source: 'myCustomerStatus', skipStorage: true, allowIndexPatch: false, allowPagePatch: false });
+    if (!cached) {
+      const summaryDetail = buildCustomerDetailFromRowSummary_(row, rowNo);
+      summaryDetail.memo = '';
+      summaryDetail.memoPreview = '';
+      summaryDetail.__myCustomerStatusSummaryP542 = true;
+      setCustomerDetailCache_(summaryDetail, { source: 'myCustomerStatus', skipStorage: true, allowStorageWrite: false, allowIndexPatch: false, allowPagePatch: false, force: false });
+    }
   }
   return renderCustomerExpandedContent_(rowNo, row);
 }
 
 function prepareMyCustomerStatusRowForCustomerExpandP533_(row) {
   row = Object.assign({}, row || {});
-  const a = row.analysis || {};
   row.rowNo = Number(row.rowNo || 0) || 0;
   row.customerNo = row.customerNo || '';
   row.company = row.company || '';
-  row.memo = row.memo || row.memoSummary || a.latestDecisionEventText || a.latestAnyEventText || '';
+  // P542: 나의 고객 현황의 분석요약/판정근거는 절대 마스터시트 메모 textarea에 주입하지 않습니다.
+  // 고객상세검색 펼침 렌더러는 row.memo가 있으면 즉시 편집 가능한 메모로 간주하므로,
+  // 실제 마스터 상세가 도착하기 전에는 memo/memoPreview를 비워 readonly 로딩 상태로 둡니다.
+  row.memo = '';
+  row.memoPreview = '';
   row.lastSent = row.lastSent || row.lastSendDate || row.sentAt || '';
+  row.__myCustomerStatusSummaryP542 = true;
   return row;
+}
+
+function clearUnsafeMyCustomerStatusExpandSummaryCacheP542_(rowNo, customerNo) {
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = String(customerNo || '');
+  if (!rowNo || typeof getCustomerDetailCache_ !== 'function') return;
+  const cached = getCustomerDetailCache_(rowNo, customerNo);
+  if (!cached) return;
+  const source = String(cached.__source || cached.__cacheSource || '').trim();
+  const unsafeSummary = (source === 'myCustomerStatus' || cached.__myCustomerStatusSummaryP542) && !cached.__masterBacked;
+  if (!unsafeSummary) return;
+  try {
+    if (typeof customerDetailInlineCache !== 'undefined' && customerDetailInlineCache) {
+      if (typeof makeCustomerDetailCacheKey_ === 'function') {
+        const key = makeCustomerDetailCacheKey_(rowNo, customerNo || cached.customerNo || '');
+        if (key) delete customerDetailInlineCache[key];
+      }
+      delete customerDetailInlineCache['ROW:' + rowNo];
+      delete customerDetailInlineCache[rowNo];
+      delete customerDetailInlineCache[String(rowNo)];
+    }
+  } catch (err) {}
 }
 
 function getMyCustomerStatusRowKeyP533_(rowNo, customerNo) {
