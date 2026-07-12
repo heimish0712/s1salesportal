@@ -1,5 +1,5 @@
 <script>
-// P530: 나의 고객 현황 - 보수적 상태 분석 + 보호 상태 화면
+// P531: 나의 고객 현황 - 상태변경추천/업무인사이트 분리 + 경량 응답 화면
 let myCustomerStatusBundleP528 = null;
 let myCustomerStatusLoadingP528 = false;
 let myCustomerStatusActiveViewP528 = 'all';
@@ -22,7 +22,8 @@ function loadMyCustomerStatusPageP528(force) {
     .withSuccessHandler(function(res) {
       myCustomerStatusLoadingP528 = false;
       if (!res || res.ok === false) {
-        area.innerHTML = '<div class="my-status-error-p528">나의 고객 현황을 불러오지 못했습니다.</div>';
+        const msg = res && (res.stage || res.error) ? ('단계: ' + (res.stage || '-') + '<br>오류: ' + esc(res.error || '응답 없음')) : '응답이 비어 있습니다.';
+        area.innerHTML = '<div class="my-status-error-p528"><b>나의 고객 현황을 불러오지 못했습니다.</b><br>' + msg + '</div>';
         return;
       }
       myCustomerStatusBundleP528 = res;
@@ -58,7 +59,7 @@ function renderMyCustomerStatusPageP528_() {
   let html = '';
   html += '<div class="my-status-shell-p528">';
   html += '<div class="my-status-toolbar-p528">';
-  html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: 마스터시트 영업담당자 = ' + esc(owner.name || owner.displayName || '-') + ' · 분석방식: 마스터메모+TM/컨택이력 보수 분석</div></div>';
+  html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: 마스터시트 영업담당자 = ' + esc(owner.name || owner.displayName || '-') + ' · 분석방식: 상태변경추천/업무인사이트 분리 · 경량 응답</div></div>';
   html += '<div class="my-status-actions-p528"><button class="secondary" onclick="loadMyCustomerStatusPageP528(true)">새로고침</button><button class="secondary" onclick="switchPage(\'myCustomerFolder\')">나의 고객 폴더</button></div>';
   html += '</div>';
 
@@ -68,10 +69,12 @@ function renderMyCustomerStatusPageP528_() {
   html += renderMyCustomerStatusCardP528_('전체 내 고객', cards.total, 'all', '', '담당자 기준 전체 고객');
   html += renderMyCustomerStatusCardP528_('진행중', cards.active, 'active', '', '수주실패/발주완료/계약완료 제외');
   html += renderMyCustomerStatusCardP528_('상태지정필요', cards.needStatus, 'needStatus', '', '진행현황 정리 필요');
-  html += renderMyCustomerStatusCardP528_('상태변경 추천', cards.mismatch, 'mismatch', '', '보호상태 제외·확실한 건만');
+  html += renderMyCustomerStatusCardP528_('상태변경 추천', cards.stateRecommendation || cards.mismatch, 'mismatch', '', '상태지정필요/공란 중 확실한 건만');
   html += renderMyCustomerStatusCardP528_('최근 7일 연락', cards.recent7, 'recent7', '', '최신 메모 날짜 기준');
   html += renderMyCustomerStatusCardP528_('14일 이상 미접촉', cards.noContact14, 'noContact14', '', '진행중 고객 기준');
   html += renderMyCustomerStatusCardP528_('자료발송 후 미후속', cards.sentNoFollow, 'sentNoFollow', '', '발송 후 확인 필요');
+  html += renderMyCustomerStatusCardP528_('연락장애/담당자확인', cards.contactIssue, 'contactIssue', '', '연락경로 보강 필요');
+  html += renderMyCustomerStatusCardP528_('계약/발주 확인필요', cards.contractCheck, 'contractCheck', '', '자동 상태변경 제외');
   html += renderMyCustomerStatusCardP528_('종결/보호상태 참고', cards.terminal, 'terminal', '', '수주실패·발주완료·계약완료 보호');
   html += renderMyCustomerStatusCardP528_('계약 가능성 높음', cards.highPotential, 'highPotential', '', '점수 6점 이상');
   html += renderMyCustomerStatusCardP528_('데이터 누락', cards.dataMissing, 'dataMissing', '', '영업 필수값 확인');
@@ -115,12 +118,13 @@ function renderMyCustomerStatusDistributionP528_(items) {
 }
 
 function renderMyCustomerStatusTopIssuesP528_(bundle) {
-  const list = ((bundle && bundle.lists && bundle.lists.mismatch) || []).slice(0, 5);
-  let html = '<div class="my-status-panel-head-p528"><div><b>상태변경 추천 TOP 5</b><span>수주실패·발주완료·계약완료는 제외하고 확실한 건만 표시합니다.</span></div><button type="button" class="secondary" onclick="setMyCustomerStatusViewP528_(\'mismatch\',\'\')">전체보기</button></div>';
-  if (!list.length) return html + '<div class="my-status-empty-p528">상태변경 추천 건이 없습니다.</div>';
+  const rows = ((bundle && bundle.rows) || []).filter(function(row) { return row && row.analysis && row.analysis.stateChangeRecommendation; }).slice(0, 5);
+  let html = '<div class="my-status-panel-head-p528"><div><b>상태변경 추천 TOP 5</b><span>상태지정필요/공란 중 확실한 건만 표시합니다. 자료발송·계약확인은 인사이트로만 분리됩니다.</span></div><button type="button" class="secondary" onclick="setMyCustomerStatusViewP528_(\'mismatch\',\'\')">전체보기</button></div>';
+  if (!rows.length) return html + '<div class="my-status-empty-p528">상태변경 추천 건이 없습니다.</div>';
   html += '<div class="my-status-issue-list-p528">';
-  list.forEach(function(row) {
-    html += '<div class="my-status-issue-p528"><b>' + esc(row.company || '-') + '</b><span>' + esc(row.status || '(공란)') + ' → ' + esc(row.analysis.recommendedStatus || '-') + '</span><em>' + esc(row.analysis.reason || '') + '</em></div>';
+  rows.forEach(function(row) {
+    const a = row.analysis || {};
+    html += '<div class="my-status-issue-p528"><b>' + esc(row.company || '-') + '</b><span>' + esc(row.status || '(공란)') + ' → ' + esc(a.stateChangeRecommendedStatus || a.recommendedStatus || '-') + '</span><em>' + esc(a.insightSummary || a.reason || '') + '</em></div>';
   });
   html += '</div>';
   return html;
@@ -128,8 +132,9 @@ function renderMyCustomerStatusTopIssuesP528_(bundle) {
 
 function renderMyCustomerStatusListToolbarP528_() {
   const tabs = [
-    ['all','전체'], ['mismatch','상태변경 추천'], ['recent7','최근 연락'], ['noContact14','장기 미접촉'],
-    ['sentNoFollow','자료발송 후 미후속'], ['terminal','종결/보호 참고'], ['highPotential','계약 가능성 높음'], ['dataMissing','데이터 누락'], ['active','진행중'], ['needStatus','상태지정필요']
+    ['all','전체'], ['mismatch','상태변경 추천'], ['sentNoFollow','자료발송 후 미후속'], ['contactIssue','연락장애/담당자확인'],
+    ['contractCheck','계약/발주 확인필요'], ['longTerm','장기 재접촉'], ['recent7','최근 연락'], ['noContact14','장기 미접촉'],
+    ['terminal','종결/보호 참고'], ['highPotential','계약 가능성 높음'], ['dataMissing','데이터 누락'], ['active','진행중'], ['needStatus','상태지정필요']
   ];
   let html = '<div class="my-status-tabs-p528">';
   tabs.forEach(function(t) {
@@ -147,7 +152,7 @@ function renderMyCustomerStatusListBodyP528_() {
   const pageRows = rows.slice(start, start + myCustomerStatusPageSizeP528);
   let html = '<div class="my-status-list-meta-p528">표시 ' + esc(String(total ? start + 1 : 0)) + '-' + esc(String(Math.min(start + pageRows.length, total))) + '건 / 총 ' + esc(String(total)) + '건</div>';
   if (!pageRows.length) return html + '<div class="my-status-empty-p528">표시할 고객이 없습니다.</div>';
-  html += '<div class="my-status-table-wrap-p528"><table class="my-status-table-p528"><thead><tr><th>고객</th><th>현재상태</th><th>분석</th><th>최근연락</th><th>메모 근거</th><th>액션</th></tr></thead><tbody>';
+  html += '<div class="my-status-table-wrap-p528"><table class="my-status-table-p528"><thead><tr><th>고객</th><th>현재상태</th><th>상태추천/인사이트</th><th>최근연락</th><th>판정 근거</th><th>액션</th></tr></thead><tbody>';
   pageRows.forEach(function(row) { html += renderMyCustomerStatusRowP528_(row); });
   html += '</tbody></table></div>';
   html += renderMyCustomerStatusPagerP528_(total);
@@ -163,15 +168,15 @@ function renderMyCustomerStatusRowP528_(row) {
   if (a.statusProtected) {
     analysisHtml += '<div><span class="my-status-rec-p528">보호 ' + esc(row.status || '-') + '</span> <span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span></div>';
     analysisHtml += '<div class="muted">상태변경 추천 제외</div>';
-  } else if (a.recommendationVisible && a.recommendedStatus) {
-    analysisHtml += '<div><span class="my-status-rec-p528">추천 ' + esc(a.recommendedStatus) + '</span> <span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span></div>';
+  } else if (a.stateChangeRecommendation && (a.stateChangeRecommendedStatus || a.recommendedStatus)) {
+    const rec = a.stateChangeRecommendedStatus || a.recommendedStatus;
+    analysisHtml += '<div><span class="my-status-rec-p528">상태추천 ' + esc(rec) + '</span> <span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span></div>';
     analysisHtml += '<div class="my-status-warning-text-p528">' + esc(a.mismatchType || '상태변경 추천') + '</div>';
-  } else if (a.recommendedStatus) {
-    analysisHtml += '<div><span class="my-status-rec-p528">참고 ' + esc(a.recommendedStatus) + '</span> <span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span></div>';
-    if (a.mismatchType) analysisHtml += '<div class="muted">' + esc(a.mismatchType) + '</div>';
   } else {
-    analysisHtml += '<span class="muted">추천 없음</span>';
+    analysisHtml += '<div><span class="my-status-rec-p528">상태유지</span> <span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span></div>';
+    if (a.recommendationBlockedReason) analysisHtml += '<div class="muted">' + esc(a.recommendationBlockedReason) + '</div>';
   }
+  if (a.insightType) analysisHtml += '<div class="my-status-insight-p531"><b>' + esc(a.insightType) + '</b><span>' + esc(a.insightSummary || '') + '</span></div>';
   if (a.potentialScore) analysisHtml += '<div class="my-status-potential-p528">가능성점수 ' + esc(String(a.potentialScore)) + '</div>';
   if (a.sourceLabels && a.sourceLabels.length) analysisHtml += '<div class="my-status-source-p529">근거: ' + esc(a.sourceLabels.join(', ')) + '</div>';
   if (a.matchedKeywords) analysisHtml += renderMyCustomerStatusKeywordBadgesP529_(a.matchedKeywords);
@@ -181,17 +186,20 @@ function renderMyCustomerStatusRowP528_(row) {
   actions += '<button type="button" class="secondary" onclick="openDetailSafe_(' + rowNo + ',\'' + escAttr(customerNo) + '\')">상세</button>';
   actions += '<button type="button" class="secondary" onclick="openContactHistoryModal(' + rowNo + ',\'' + escAttr(customerNo) + '\')">컨택</button>';
   actions += '<button type="button" class="secondary" onclick="openSendForCustomer(' + rowNo + ')">발송</button>';
-  if (a.canApplyRecommendation && a.recommendedStatus) {
-    actions += '<button type="button" onclick="applyMyCustomerRecommendedStatusP528_(' + rowNo + ',\'' + escAttr(customerNo) + '\',\'' + escAttr(a.recommendedStatus) + '\',\'' + escAttr(row.status || '') + '\')">추천상태 적용</button>';
+  if (a.canApplyRecommendation && (a.stateChangeRecommendedStatus || a.recommendedStatus)) {
+    const rec = a.stateChangeRecommendedStatus || a.recommendedStatus;
+    actions += '<button type="button" onclick="applyMyCustomerRecommendedStatusP528_(' + rowNo + ',\'' + escAttr(customerNo) + '\',\'' + escAttr(rec) + '\',\'' + escAttr(row.status || '') + '\')">추천상태 적용</button>';
   }
   actions += '</div>';
 
+  const evidenceText = a.latestDecisionEventText || row.memoSummary || '';
+  const evidenceSource = a.latestDecisionEventSource || a.latestEventSource || '';
   return '<tr>' +
     '<td><b>' + esc(row.company || '-') + '</b><div class="muted">#' + esc(customerNo || '-') + ' · ' + esc(row.vendor || '-') + '</div><div class="muted">' + esc(row.contact || '') + ' ' + esc(row.phone || row.directPhone || '') + '</div></td>' +
     '<td><span class="status">' + esc(row.status || '(공란)') + '</span></td>' +
     '<td>' + analysisHtml + '</td>' +
     '<td>' + esc(row.lastContactDate || '-') + '<div class="muted">' + (a.lastContactDays == null ? '날짜 없음' : esc(String(a.lastContactDays)) + '일 전') + '</div></td>' +
-    '<td><div class="my-status-memo-p528">' + esc(row.memoSummary || '') + '</div><div class="muted">' + esc(a.latestEventSource ? ('출처: ' + a.latestEventSource) : '') + '</div><div class="muted">' + esc(a.reason || '') + '</div></td>' +
+    '<td><div class="my-status-memo-p528">' + esc(evidenceText || '') + '</div><div class="muted">' + esc(evidenceSource ? ('판정출처: ' + evidenceSource) : '') + '</div><div class="muted">' + esc(a.reason || '') + '</div></td>' +
     '<td>' + actions + '</td>' +
     '</tr>';
 }
@@ -202,6 +210,7 @@ function renderMyCustomerStatusKeywordBadgesP529_(matched) {
   const items = [];
   if (matched.thirdPartyContract && matched.thirdPartyContract.length) items.push(['bad', '타사계약', matched.thirdPartyContract.slice(0, 3).join(', ')]);
   if (matched.fail && matched.fail.length) items.push(['bad', '부정', matched.fail.slice(0, 3).join(', ')]);
+  if (matched.contactIssue && matched.contactIssue.length) items.push(['warn', '연락장애', matched.contactIssue.slice(0, 3).join(', ')]);
   if (matched.complete && matched.complete.length) items.push(['good', '우리계약', matched.complete.slice(0, 3).join(', ')]);
   if (matched.unknownComplete && matched.unknownComplete.length) items.push(['warn', '주체불명', matched.unknownComplete.slice(0, 3).join(', ')]);
   if (matched.order && matched.order.length) items.push(['good', '계약진행', matched.order.slice(0, 3).join(', ')]);
@@ -226,13 +235,16 @@ function getMyCustomerStatusRowsForViewP528_() {
   const view = myCustomerStatusActiveViewP528;
   const val = String(myCustomerStatusActiveValueP528 || '');
   if (view === 'status') rows = rows.filter(function(r) { return String(r.status || '(공란)') === val; });
-  else if (view === 'mismatch') rows = (bundle.lists && bundle.lists.mismatch || []).slice();
-  else if (view === 'recent7') rows = (bundle.lists && bundle.lists.recent7 || []).slice();
-  else if (view === 'noContact14') rows = (bundle.lists && bundle.lists.noContact14 || []).slice();
-  else if (view === 'sentNoFollow') rows = (bundle.lists && bundle.lists.sentNoFollow || []).slice();
-  else if (view === 'highPotential') rows = (bundle.lists && bundle.lists.highPotential || []).slice();
-  else if (view === 'terminal') rows = (bundle.lists && bundle.lists.terminal || []).slice();
-  else if (view === 'dataMissing') rows = (bundle.lists && bundle.lists.dataMissing || []).slice();
+  else if (view === 'mismatch') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.stateChangeRecommendation); });
+  else if (view === 'recent7') rows = rows.filter(function(r) { return r.analysis && r.analysis.lastContactDays != null && r.analysis.lastContactDays <= 7; });
+  else if (view === 'noContact14') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.longNoContact); });
+  else if (view === 'sentNoFollow') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.sentNoFollow); });
+  else if (view === 'contactIssue') rows = rows.filter(function(r) { return r.analysis && r.analysis.insightType === '연락장애/담당자확인'; });
+  else if (view === 'contractCheck') rows = rows.filter(function(r) { return r.analysis && r.analysis.insightType === '계약/발주 확인필요'; });
+  else if (view === 'longTerm') rows = rows.filter(function(r) { return r.analysis && r.analysis.insightType === '장기 재접촉'; });
+  else if (view === 'highPotential') rows = rows.filter(function(r) { return r.analysis && Number(r.analysis.potentialScore || 0) >= 6; });
+  else if (view === 'terminal') rows = rows.filter(function(r) { return !!(r.analysis && (r.analysis.terminalCandidate || r.analysis.statusProtected)); });
+  else if (view === 'dataMissing') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.dataMissing); });
   else if (view === 'active') rows = rows.filter(function(r) { return r.status !== '수주실패' && r.status !== '발주완료' && r.status !== '계약완료'; });
   else if (view === 'needStatus') rows = rows.filter(function(r) { return !String(r.status || '').trim() || String(r.status || '').indexOf('상태지정') >= 0; });
 
@@ -240,7 +252,7 @@ function getMyCustomerStatusRowsForViewP528_() {
   if (kw) {
     rows = rows.filter(function(r) {
       const a = r.analysis || {};
-      return [r.customerNo, r.company, r.status, r.vendor, r.memoSummary, a.recommendedStatus, a.reason, a.nextAction, (a.sourceLabels||[]).join(' '), JSON.stringify(a.matchedKeywords||{})].join(' ').toLowerCase().indexOf(kw) >= 0;
+      return [r.customerNo, r.company, r.status, r.vendor, r.memoSummary, a.recommendedStatus, a.stateChangeRecommendedStatus, a.insightType, a.insightSummary, a.reason, a.nextAction, a.latestDecisionEventText, (a.sourceLabels||[]).join(' '), JSON.stringify(a.matchedKeywords||{})].join(' ').toLowerCase().indexOf(kw) >= 0;
     });
   }
   return rows;
@@ -277,8 +289,8 @@ function moveMyCustomerStatusPageP528_(delta) {
 
 function applyMyCustomerRecommendedStatusP528_(rowNo, customerNo, newStatus, expectedStatus) {
   if (!rowNo || !customerNo || !newStatus) return toast('상태 변경 대상이 올바르지 않습니다.');
-  if (!confirm('진행현황을 [' + expectedStatus + '] → [' + newStatus + ']로 변경할까요?\n\n보수 분석 추천값입니다. 수주실패/발주완료/계약완료 보호 상태는 자동추천 대상이 아니며, 실제 고객 상황을 확인한 뒤 적용해 주세요.')) return;
-  const opId = 'MY_STATUS_P530_' + String(customerNo) + '_' + String(rowNo) + '_' + Date.now();
+  if (!confirm('진행현황을 [' + expectedStatus + '] → [' + newStatus + ']로 변경할까요?\n\nP531 상태변경 추천값입니다. 상태지정필요/공란 고객 중 확실한 수주실패·견적제출완료만 적용합니다.')) return;
+  const opId = 'MY_STATUS_P531_' + String(customerNo) + '_' + String(rowNo) + '_' + Date.now();
   google.script.run
     .withSuccessHandler(function(res) {
       toast('진행현황을 변경했습니다.');
