@@ -1,13 +1,20 @@
 /***************************************
  * S1 Sales Portal - 29_MyCustomerStatusService.gs
- * P536: 나의 고객 현황 - 실무 상태정의 기반 상태추천 보정
+ * P539: 나의 고객 현황 - 분석DB 사전생성/빠른 조회 구조
  * - 내 고객 기준: 마스터시트 영업담당자 = 현재 로그인 사용자의 영업담당자명
  * - 마스터시트 원본 메모 + 컨택이력_DB + TM 컨택 내용 + 자료발송 스냅샷을 통합 분석
  * - 수주실패/발주완료/계약완료는 영업담당자 판단 우선 보호 상태로 취급
  ***************************************/
 
-const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P536_BUSINESS_STATUS_TRANSITION_RULES';
+const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P539_ANALYSIS_DB_FAST_LOAD';
 const MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 = '고객현황분석_DB';
+const MY_CUSTOMER_STATUS_ANALYSIS_JOB_SHEET_P539 = '고객현황분석작업_DB';
+const MY_CUSTOMER_STATUS_ANALYSIS_JOB_PROCESS_LIMIT_P539 = 200;
+const MY_CUSTOMER_STATUS_ANALYSIS_JOB_HEADERS_P539 = [
+  '등록일시', '수정일시', '작업ID', '요청자', '범위', '상태', '전체건수', '처리건수', '성공건수',
+  '스킵건수', '실패건수', 'nextOffset', 'limit', 'ownerAliasesJson', 'ownerEmail', 'scopeReason',
+  'resultJson', '마지막오류', '완료일시'
+];
 const MY_CUSTOMER_STATUS_ANALYSIS_WRITE_BATCH_P532 = 120;
 const MY_CUSTOMER_STATUS_DB_EVIDENCE_JSON_LIMIT_P532 = 3500;
 const MY_CUSTOMER_STATUS_DB_EVENTS_JSON_LIMIT_P532 = 5000;
@@ -27,7 +34,18 @@ const MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529 = [
   '이벤트분류요약', '제외이벤트요약', '상태추천차단사유'
 ];
 
+
 function getMyCustomerStatusDashboardP528(options) {
+  options = options || {};
+  // P539: 기본 화면 진입은 분석을 새로 하지 않고 고객현황분석_DB만 빠르게 읽습니다.
+  // 분석DB 갱신은 start/process job 함수로 분리합니다.
+  if (options.directAnalyze === true || options.forceAnalyze === true) {
+    return getMyCustomerStatusDashboardFreshP539_(Object.assign({}, options, { persist: options.persist !== false }));
+  }
+  return getMyCustomerStatusDashboardFromDbP539_(options);
+}
+
+function getMyCustomerStatusDashboardFreshP539_(options) {
   options = options || {};
   const started = new Date();
   let stage = 'start';
@@ -1626,6 +1644,515 @@ function buildMyCustomerAnalysisDbRowP529_(row, analyzedAtText, headers) {
   };
   return headers.map(function(h) { return rec[h] == null ? '' : rec[h]; });
 }
+
+
+function getMyCustomerStatusDashboardFromDbP539_(options) {
+  options = options || {};
+  const started = new Date();
+  let stage = 'start';
+  try {
+    stage = 'permission';
+    const perm = getPortalCurrentPermission_();
+    const aliases = buildMyCustomerStatusOwnerAliasesP528_(perm);
+    const scopeInfo = resolveMyCustomerStatusScopeP532_(perm);
+    const isAllScope = !!scopeInfo.isAllScope;
+
+    stage = 'readAnalysisDb';
+    const dbResult = readMyCustomerStatusAnalysisDbRowsP539_(perm, aliases, isAllScope);
+    const clientRows = dbResult.rows.map(buildMyCustomerStatusClientRowFromDbP539_);
+
+    stage = 'buildFastResponse';
+    return buildMyCustomerStatusDashboardResponseFromClientRowsP539_(clientRows, {
+      started: started,
+      perm: perm,
+      aliases: aliases,
+      scopeInfo: scopeInfo,
+      isAllScope: isAllScope,
+      dbResult: dbResult,
+      sourceType: 'ANALYSIS_DB',
+      sourceMessage: dbResult.message || ''
+    });
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err || '');
+    return {
+      ok: false,
+      version: MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528,
+      stage: stage,
+      error: msg,
+      message: msg,
+      stack: err && err.stack ? String(err.stack).slice(0, 2000) : '',
+      generatedAt: formatMyCustomerStatusDateTimeP528_(started),
+      elapsedMs: new Date().getTime() - started.getTime(),
+      responseMode: 'FAST_DB_LOAD_FAILED_P539'
+    };
+  }
+}
+
+function readMyCustomerStatusAnalysisDbRowsP539_(perm, aliases, isAllScope) {
+  const out = {
+    ok: true,
+    sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
+    rows: [],
+    rawRows: 0,
+    scopedRows: 0,
+    latestAnalyzedAt: '',
+    message: '',
+    error: ''
+  };
+  const ss = getWebAppDbSpreadsheet_();
+  const sheet = ss.getSheetByName(MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529);
+  if (!sheet || sheet.getLastRow() < 2) {
+    out.ok = true;
+    out.message = '고객현황분석_DB가 없거나 분석 결과가 없습니다. 분석DB 갱신을 먼저 실행해 주세요.';
+    return out;
+  }
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+  const headerMap = {};
+  headers.forEach(function(h, i) { if (h) headerMap[h] = i; });
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  const aliasKeys = {};
+  (aliases || []).forEach(function(a) { const k = normalizeMyCustomerStatusNameP528_(a); if (k) aliasKeys[k] = true; });
+  out.rawRows = values.length;
+
+  values.forEach(function(arr) {
+    const rec = {};
+    headers.forEach(function(h, i) { if (h) rec[h] = arr[i]; });
+    const repKey = normalizeMyCustomerStatusNameP528_(rec['영업담당자'] || '');
+    if (!isAllScope) {
+      if (!repKey || !aliasKeys[repKey]) return;
+    }
+    out.rows.push(rec);
+    const at = String(rec['분석일시'] || '').trim();
+    if (at && (!out.latestAnalyzedAt || String(at) > String(out.latestAnalyzedAt))) out.latestAnalyzedAt = at;
+  });
+  out.scopedRows = out.rows.length;
+  out.message = '고객현황분석_DB 기준 빠른 조회';
+  return out;
+}
+
+function buildMyCustomerStatusClientRowFromDbP539_(rec) {
+  rec = rec || {};
+  function yn(v) { return String(v || '').trim().toUpperCase() === 'Y'; }
+  function n(v) { const x = Number(String(v || '').replace(/,/g, '')); return isNaN(x) ? 0 : x; }
+  function split(v) { return String(v || '').split(/[,|]/).map(function(x) { return String(x || '').trim(); }).filter(Boolean); }
+  const status = String(rec['현재상태'] || '').trim();
+  const recommended = String(rec['추천상태'] || status || '').trim();
+  const changeStatus = String(rec['상태변경추천상태'] || '').trim();
+  const changeYn = yn(rec['상태변경추천여부']) && yn(rec['추천노출여부']) && !!changeStatus;
+  const lastContact = String(rec['최근연락일'] || rec['최신판정이벤트일자'] || '').trim();
+  const lastContactDays = lastContact ? daysBetweenPortalDatesP528_(coerceMyCustomerStatusDateP535_(lastContact), new Date()) : null;
+  const missingFields = split(rec['데이터누락키워드'] || '');
+  const tags = split(rec['위험태그'] || '');
+  const sourceLabels = split(rec['분석소스'] || '');
+  const matchedKeywords = {
+    thirdPartyContract: split(rec['타사계약여부'] === 'Y' ? '타사계약' : ''),
+    fail: split(rec['강한부정키워드'] || ''),
+    complete: split(rec['강한긍정키워드'] || ''),
+    order: split(rec['계약진행키워드'] || ''),
+    quote: split(rec['자료발송키워드'] || ''),
+    long: split(rec['장기추진키워드'] || ''),
+    data: missingFields
+  };
+  const insightType = String(rec['업무인사이트유형'] || rec['판정유형'] || '').trim();
+  const insightSummary = String(rec['업무인사이트요약'] || rec['추천액션'] || '').trim();
+  return {
+    rowNo: n(rec['rowNo']),
+    customerNo: String(rec['고객번호'] || '').trim(),
+    company: String(rec['회사명'] || '').trim(),
+    salesRep: String(rec['영업담당자'] || '').trim(),
+    status: status,
+    vendor: '',
+    contact: '',
+    phone: '',
+    directPhone: '',
+    email: '',
+    finalQuote: '',
+    lastSent: '',
+    sentAt: '',
+    sendStatus: '',
+    orderNo: '',
+    memoSummary: shortenMyCustomerStatusTextP528_(String(rec['최근이벤트요약'] || rec['최신판정이벤트요약'] || rec['업무인사이트요약'] || ''), 180),
+    lastContactDate: lastContact,
+    analysis: {
+      recommendedStatus: recommended || status,
+      statusChangeRecommendedStatus: changeYn ? changeStatus : '',
+      statusChangeRecommendation: changeYn,
+      statusChangeRecommendationGrade: String(rec['상태변경추천등급'] || rec['판정유형'] || '').trim(),
+      mismatch: changeYn,
+      mismatchType: changeYn ? String(rec['상태변경추천등급'] || '').trim() : '',
+      confidence: n(rec['신뢰도']),
+      priorityRank: String(rec['우선순위등급'] || '').trim(),
+      insightType: insightType,
+      insightSummary: shortenMyCustomerStatusTextP528_(insightSummary, 180),
+      reason: shortenMyCustomerStatusTextP528_(String(rec['보수판정사유'] || insightSummary || ''), 180),
+      nextAction: shortenMyCustomerStatusTextP528_(String(rec['추천액션'] || ''), 180),
+      lastContactDays: lastContactDays,
+      longNoContact: (lastContactDays == null || Number(lastContactDays) >= 14) && ['수주실패','발주완료','계약완료'].indexOf(status) < 0,
+      sentNoFollow: insightType === '자료발송후미후속' || insightType === '견적후속필요',
+      potentialScore: n(rec['가능성점수']),
+      tags: tags,
+      latestMemoText: shortenMyCustomerStatusTextP528_(String(rec['최근이벤트요약'] || ''), 220),
+      latestEventSource: String(rec['최근이벤트출처'] || '').trim(),
+      latestAnyEventText: shortenMyCustomerStatusTextP528_(String(rec['최신전체이벤트요약'] || rec['최근이벤트요약'] || ''), 220),
+      latestAnyEventSource: String(rec['최근이벤트출처'] || '').trim(),
+      latestDecisionEventText: shortenMyCustomerStatusTextP528_(String(rec['최신판정이벤트요약'] || rec['최근이벤트요약'] || ''), 220),
+      latestDecisionEventDate: String(rec['최신판정이벤트일자'] || lastContact || '').trim(),
+      latestDecisionEventSource: String(rec['최신판정이벤트출처'] || rec['최근이벤트출처'] || '').trim(),
+      matchedKeywords: matchedKeywords,
+      sourceLabels: sourceLabels,
+      missingFields: missingFields,
+      dataMissing: missingFields.length > 0 || insightType === '데이터확인필요',
+      statusProtected: yn(rec['상태보호여부']),
+      stateChangeAllowed: yn(rec['상태변경추천허용']),
+      canApplyRecommendation: changeYn,
+      recommendationVisible: changeYn,
+      terminalCandidate: yn(rec['상태보호여부']) || ['수주실패','발주완료','계약완료'].indexOf(status) >= 0,
+      contractCompleteType: String(rec['계약완료구분'] || '').trim(),
+      contractCompletionInfo: {},
+      thirdPartyContract: yn(rec['타사계약여부']),
+      analysisCautionLevel: String(rec['분석주의등급'] || '').trim(),
+      conservativeReason: String(rec['보수판정사유'] || '').trim(),
+      statusRecommendationBlockedReason: String(rec['상태추천차단사유'] || '').trim()
+    }
+  };
+}
+
+function buildMyCustomerStatusDashboardResponseFromClientRowsP539_(clientRows, ctx) {
+  clientRows = Array.isArray(clientRows) ? clientRows : [];
+  ctx = ctx || {};
+  const started = ctx.started || new Date();
+  const perm = ctx.perm || {};
+  const scopeInfo = ctx.scopeInfo || { isAllScope: false };
+  const isAllScope = !!ctx.isAllScope;
+  const statusCounts = {};
+  clientRows.forEach(function(row) {
+    const key = row.status || '(공란)';
+    statusCounts[key] = (statusCounts[key] || 0) + 1;
+  });
+  const cards = computeMyCustomerStatusCardsFromClientRowsP539_(clientRows);
+  return {
+    ok: true,
+    version: MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528,
+    generatedAt: formatMyCustomerStatusDateTimeP528_(started),
+    elapsedMs: new Date().getTime() - started.getTime(),
+    owner: {
+      name: isAllScope ? '전체 고객' : (perm.salesRepName || perm.name || ''),
+      displayName: isAllScope ? ((perm.displayName || perm.name || perm.email || '') + ' · ADMIN 전체') : (perm.displayName || perm.name || perm.email || ''),
+      email: perm.email || '',
+      aliases: ctx.aliases || [],
+      scope: isAllScope ? 'ALL' : 'OWN',
+      isAdmin: !!isAllScope,
+      scopeReason: scopeInfo.reason || '',
+      scopeDebug: scopeInfo.debug || ''
+    },
+    index: {
+      sourceTotal: (ctx.dbResult && ctx.dbResult.rawRows) || clientRows.length,
+      ownTotal: clientRows.length,
+      scopedTotal: clientRows.length,
+      scope: isAllScope ? 'ALL' : 'OWN',
+      sourceType: ctx.sourceType || 'ANALYSIS_DB',
+      sourceMessage: ctx.sourceMessage || ''
+    },
+    analysisDb: {
+      loaded: true,
+      saved: false,
+      rows: clientRows.length,
+      rawRows: (ctx.dbResult && ctx.dbResult.rawRows) || 0,
+      sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
+      latestAnalyzedAt: (ctx.dbResult && ctx.dbResult.latestAnalyzedAt) || '',
+      message: (ctx.dbResult && ctx.dbResult.message) || '고객현황분석_DB 빠른 조회',
+      fastLoad: true
+    },
+    job: getMyCustomerStatusAnalysisJobStatusP539({ light: true }),
+    statusOptions: (PORTAL_CONFIG.STATUS_OPTIONS || []).slice(),
+    statusCounts: objectToSortedStatusCountArrayP528_(statusCounts),
+    cards: cards,
+    rows: clientRows,
+    lists: {},
+    responseMode: 'FAST_ANALYSIS_DB_ROWS_ONLY_P539',
+    ai: (typeof getMyCustomerAiAnalysisHealthP537 === 'function' ? getMyCustomerAiAnalysisHealthP537({ light: true }) : null)
+  };
+}
+
+function computeMyCustomerStatusCardsFromClientRowsP539_(rows) {
+  const cards = { total: rows.length, active: 0, needStatus: 0, mismatch: 0, recent7: 0, noContact14: 0, sentNoFollow: 0, highPotential: 0, dataMissing: 0, terminal: 0, contactIssue: 0, contractCheck: 0, longReconnect: 0 };
+  rows.forEach(function(row) {
+    const st = String(row.status || '').trim();
+    const a = row.analysis || {};
+    if (['수주실패','발주완료','계약완료'].indexOf(st) < 0) cards.active++;
+    if (!st || st.indexOf('상태지정') >= 0) cards.needStatus++;
+    if (a.statusChangeRecommendation) cards.mismatch++;
+    if (a.lastContactDays != null && Number(a.lastContactDays) <= 7) cards.recent7++;
+    if (a.longNoContact) cards.noContact14++;
+    if (a.sentNoFollow || a.insightType === '자료발송후미후속' || a.insightType === '견적후속필요') cards.sentNoFollow++;
+    if (Number(a.potentialScore || 0) >= 6) cards.highPotential++;
+    if (a.dataMissing) cards.dataMissing++;
+    if (a.terminalCandidate || a.statusProtected) cards.terminal++;
+    if (a.insightType === '연락장애/담당자확인') cards.contactIssue++;
+    if (a.insightType === '계약/발주확인필요') cards.contractCheck++;
+    if (a.insightType === '장기재접촉') cards.longReconnect++;
+  });
+  return cards;
+}
+
+function ensureMyCustomerStatusAnalysisJobSheetP539_() {
+  const ss = getWebAppDbSpreadsheet_();
+  let sheet = ss.getSheetByName(MY_CUSTOMER_STATUS_ANALYSIS_JOB_SHEET_P539);
+  if (!sheet) {
+    sheet = ss.insertSheet(MY_CUSTOMER_STATUS_ANALYSIS_JOB_SHEET_P539);
+    sheet.getRange(1, 1, 1, MY_CUSTOMER_STATUS_ANALYSIS_JOB_HEADERS_P539.length).setValues([MY_CUSTOMER_STATUS_ANALYSIS_JOB_HEADERS_P539]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, MY_CUSTOMER_STATUS_ANALYSIS_JOB_HEADERS_P539.length).setFontWeight('bold').setBackground('#f2f4f7');
+    return sheet;
+  }
+  ensureSheetHeaders_(sheet, MY_CUSTOMER_STATUS_ANALYSIS_JOB_HEADERS_P539);
+  return sheet;
+}
+
+function startMyCustomerStatusAnalysisJobP539(options) {
+  options = options || {};
+  const perm = getPortalCurrentPermission_();
+  const aliases = buildMyCustomerStatusOwnerAliasesP528_(perm);
+  const scopeInfo = resolveMyCustomerStatusScopeP532_(perm);
+  const requestedScope = String(options.scope || '').toUpperCase();
+  const allScope = requestedScope === 'ALL' ? !!scopeInfo.isAllScope : (requestedScope === 'OWN' ? false : !!scopeInfo.isAllScope);
+  if (requestedScope === 'ALL' && !scopeInfo.isAllScope) throw new Error('전체 고객 분석DB 갱신은 admin/관리자만 실행할 수 있습니다.');
+  const sourceInfo = getMyCustomerStatusSourceRowsP532_(perm, aliases, allScope);
+  const total = (sourceInfo.rows || []).length;
+  const sheet = ensureMyCustomerStatusAnalysisJobSheetP539_();
+  const nowText = formatMyCustomerStatusDateTimeP528_(new Date());
+  const jobId = 'MCSA-JOB-' + Utilities.getUuid().slice(0, 8) + '-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMddHHmmss');
+  const requester = String(perm.email || perm.name || Session.getActiveUser().getEmail() || '').trim();
+  const limit = Math.max(20, Math.min(500, Number(options.limit || MY_CUSTOMER_STATUS_ANALYSIS_JOB_PROCESS_LIMIT_P539) || MY_CUSTOMER_STATUS_ANALYSIS_JOB_PROCESS_LIMIT_P539));
+  const rec = {
+    '등록일시': nowText,
+    '수정일시': nowText,
+    '작업ID': jobId,
+    '요청자': requester,
+    '범위': allScope ? 'ALL' : 'OWN',
+    '상태': total ? 'QUEUED' : 'DONE',
+    '전체건수': total,
+    '처리건수': 0,
+    '성공건수': 0,
+    '스킵건수': 0,
+    '실패건수': 0,
+    'nextOffset': 0,
+    'limit': limit,
+    'ownerAliasesJson': safeStringifyMyCustomerStatusP529_(aliases || [], 5000),
+    'ownerEmail': String(perm.email || '').trim(),
+    'scopeReason': scopeInfo.reason || '',
+    'resultJson': safeStringifyMyCustomerStatusP529_({ sourceTotal: sourceInfo.rawTotal || 0, scopedTotal: total, createdBy: requester }, 3000),
+    '마지막오류': '',
+    '완료일시': total ? '' : nowText
+  };
+  const rowValues = MY_CUSTOMER_STATUS_ANALYSIS_JOB_HEADERS_P539.map(function(h) { return rec[h] == null ? '' : rec[h]; });
+  sheet.appendRow(rowValues);
+  return { ok: true, jobId: jobId, scope: rec['범위'], total: total, status: rec['상태'], limit: limit, sheetName: MY_CUSTOMER_STATUS_ANALYSIS_JOB_SHEET_P539, message: '분석DB 갱신 작업을 생성했습니다. 처리 버튼 또는 5분 트리거로 chunk 처리하세요.' };
+}
+
+function getMyCustomerStatusAnalysisJobRowsP539_() {
+  const sheet = ensureMyCustomerStatusAnalysisJobSheetP539_();
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+  const idx = {};
+  headers.forEach(function(h, i) { if (h) idx[h] = i; });
+  const rows = [];
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+    values.forEach(function(arr, i) {
+      const rec = { __rowNo: 2 + i, __arr: arr, __headers: headers, __idx: idx, __sheet: sheet };
+      headers.forEach(function(h, j) { if (h) rec[h] = arr[j]; });
+      rows.push(rec);
+    });
+  }
+  return rows;
+}
+
+function processMyCustomerStatusAnalysisJobP539(options) {
+  options = options || {};
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: false, error: '고객현황분석작업_DB 처리 lock을 획득하지 못했습니다. 잠시 후 다시 시도해 주세요.' };
+  try {
+    const jobs = getMyCustomerStatusAnalysisJobRowsP539_();
+    let job = null;
+    const requestedJobId = String(options.jobId || '').trim();
+    for (let i = jobs.length - 1; i >= 0; i--) {
+      const st = String(jobs[i]['상태'] || '').trim();
+      if (requestedJobId && jobs[i]['작업ID'] !== requestedJobId) continue;
+      if (['QUEUED','RUNNING','RETRY'].indexOf(st) >= 0) { job = jobs[i]; break; }
+    }
+    if (!job) return { ok: true, processed: 0, done: 0, message: '처리할 고객현황 분석 작업이 없습니다.' };
+    return processMyCustomerStatusAnalysisJobRowP539_(job, options);
+  } finally {
+    try { lock.releaseLock(); } catch (err) {}
+  }
+}
+
+function processMyCustomerStatusAnalysisJobTriggerP539() {
+  return processMyCustomerStatusAnalysisJobP539({ trigger: true, limit: MY_CUSTOMER_STATUS_ANALYSIS_JOB_PROCESS_LIMIT_P539 });
+}
+
+function processMyCustomerStatusAnalysisJobRowP539_(job, options) {
+  options = options || {};
+  const sheet = job.__sheet;
+  const headers = job.__headers;
+  const idx = job.__idx;
+  function setJob(header, value) {
+    if (idx[header] == null) return;
+    sheet.getRange(job.__rowNo, idx[header] + 1).setValue(value == null ? '' : value);
+  }
+  const now = new Date();
+  const nowText = formatMyCustomerStatusDateTimeP528_(now);
+  const limit = Math.max(10, Math.min(500, Number(options.limit || job['limit'] || MY_CUSTOMER_STATUS_ANALYSIS_JOB_PROCESS_LIMIT_P539) || MY_CUSTOMER_STATUS_ANALYSIS_JOB_PROCESS_LIMIT_P539));
+  setJob('상태', 'RUNNING');
+  setJob('수정일시', nowText);
+  setJob('마지막오류', '');
+
+  try {
+    const isAllScope = String(job['범위'] || '').toUpperCase() === 'ALL';
+    const aliases = parseMyCustomerStatusJsonP539_(job['ownerAliasesJson'], []);
+    const sourceInfo = getMyCustomerStatusSourceRowsForJobP539_(isAllScope, aliases);
+    const rows = sourceInfo.rows || [];
+    const total = rows.length;
+    const offset = Math.max(0, Number(job['nextOffset'] || 0) || 0);
+    const chunk = rows.slice(offset, offset + limit);
+    const contactMap = getMyCustomerContactHistoryMapP529_(chunk);
+    const contractCompleteMap = getMyCustomerContractCompleteMapP536_();
+    const analyzedAt = new Date();
+    const analyzed = [];
+    let failed = 0;
+    chunk.forEach(function(row) {
+      try { analyzed.push(buildMyCustomerStatusAnalyzedRowP528_(row, analyzedAt, contactMap, contractCompleteMap)); }
+      catch (err) { failed += 1; try { Logger.log('고객현황 chunk 분석 실패: ' + (err && err.stack || err)); } catch (e) {} }
+    });
+    const upsert = upsertMyCustomerStatusAnalysisRowsP539_(analyzed, formatMyCustomerStatusDateTimeP528_(analyzedAt));
+    const processed = offset + chunk.length;
+    const done = processed >= total;
+    const prevSuccess = Number(job['성공건수'] || 0) || 0;
+    const prevFail = Number(job['실패건수'] || 0) || 0;
+    setJob('전체건수', total);
+    setJob('처리건수', processed);
+    setJob('성공건수', prevSuccess + analyzed.length);
+    setJob('실패건수', prevFail + failed);
+    setJob('nextOffset', done ? total : processed);
+    setJob('수정일시', nowText);
+    setJob('상태', done ? 'DONE' : 'QUEUED');
+    setJob('resultJson', safeStringifyMyCustomerStatusP529_({ lastChunk: chunk.length, analyzed: analyzed.length, failed: failed, upsert: upsert, total: total, processed: processed }, 5000));
+    if (done) setJob('완료일시', nowText);
+    return { ok: true, jobId: job['작업ID'], status: done ? 'DONE' : 'QUEUED', total: total, processed: processed, chunk: chunk.length, analyzed: analyzed.length, failed: failed, upsert: upsert, nextOffset: done ? total : processed };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err || '');
+    setJob('상태', 'RETRY');
+    setJob('수정일시', nowText);
+    setJob('마지막오류', msg);
+    return { ok: false, jobId: job['작업ID'], error: msg, stack: err && err.stack ? String(err.stack).slice(0, 1500) : '' };
+  }
+}
+
+function getMyCustomerStatusSourceRowsForJobP539_(isAllScope, aliases) {
+  const info = { rows: [], rawTotal: 0, sourceType: 'MASTER_JOB', message: '' };
+  const masterObjects = getMasterObjects_();
+  info.rawTotal = masterObjects.length;
+  const allRows = masterObjects.map(function(obj) { return makeMyCustomerStatusRowFromMasterObjectP532_(obj); }).filter(function(row) {
+    return row && row.rowNo && normalizeCustomerNoForKey_(row.customerNo || '');
+  });
+  if (isAllScope) {
+    info.rows = allRows;
+    info.message = '고객현황분석작업_DB: 전체 고객';
+  } else {
+    info.rows = allRows.filter(function(row) { return isMyCustomerStatusOwnRowP528_(row, aliases || []); });
+    info.message = '고객현황분석작업_DB: 영업담당자 범위';
+  }
+  return info;
+}
+
+function upsertMyCustomerStatusAnalysisRowsP539_(rows, analyzedAtText) {
+  rows = Array.isArray(rows) ? rows : [];
+  const sheet = ensureMyCustomerStatusAnalysisSheetP529_();
+  const lastCol = Math.max(sheet.getLastColumn(), MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529.length);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+  const idx = {};
+  headers.forEach(function(h, i) { if (h) idx[h] = i; });
+  const existingMap = {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+    values.forEach(function(arr, i) {
+      const key = makeMyCustomerStatusAnalysisKeyP539_(arr[idx['rowNo']], arr[idx['고객번호']]);
+      if (key) existingMap[key] = 2 + i;
+    });
+  }
+  const appendRows = [];
+  let updated = 0;
+  rows.forEach(function(row) {
+    const arr = buildMyCustomerAnalysisDbRowP529_(row, analyzedAtText, headers);
+    const key = makeMyCustomerStatusAnalysisKeyP539_(row.rowNo, row.customerNo);
+    const sheetRow = key && existingMap[key];
+    if (sheetRow) {
+      sheet.getRange(sheetRow, 1, 1, lastCol).setValues([arr]);
+      updated += 1;
+    } else {
+      appendRows.push(arr);
+    }
+  });
+  if (appendRows.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, appendRows.length, lastCol).setValues(appendRows);
+  }
+  try { SpreadsheetApp.flush(); } catch (err) {}
+  return { updated: updated, appended: appendRows.length, total: rows.length, sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 };
+}
+
+function makeMyCustomerStatusAnalysisKeyP539_(rowNo, customerNo) {
+  const rn = String(rowNo || '').trim();
+  const cn = normalizeCustomerNoForKey_(customerNo || '');
+  if (!rn && !cn) return '';
+  return rn + ':' + cn;
+}
+
+function parseMyCustomerStatusJsonP539_(value, fallback) {
+  try { return JSON.parse(String(value || '')); } catch (err) { return fallback; }
+}
+
+function getMyCustomerStatusAnalysisJobStatusP539(options) {
+  options = options || {};
+  try {
+    const rows = getMyCustomerStatusAnalysisJobRowsP539_();
+    const byStatus = {};
+    let latest = null;
+    rows.forEach(function(r) {
+      const st = String(r['상태'] || '(공란)').trim();
+      byStatus[st] = (byStatus[st] || 0) + 1;
+      if (!latest || String(r['등록일시'] || '') > String(latest['등록일시'] || '')) latest = r;
+    });
+    const triggers = ScriptApp.getProjectTriggers().filter(function(t) { return t.getHandlerFunction && t.getHandlerFunction() === 'processMyCustomerStatusAnalysisJobTriggerP539'; });
+    return {
+      ok: true,
+      sheetName: MY_CUSTOMER_STATUS_ANALYSIS_JOB_SHEET_P539,
+      totalJobs: rows.length,
+      byStatus: byStatus,
+      triggerCount: triggers.length,
+      triggerStatus: triggers.length === 1 ? '정상' : (triggers.length > 1 ? '중복 ' + triggers.length + '개' : '미설치'),
+      latest: latest ? {
+        jobId: latest['작업ID'] || '', scope: latest['범위'] || '', status: latest['상태'] || '', total: Number(latest['전체건수'] || 0) || 0,
+        processed: Number(latest['처리건수'] || 0) || 0, success: Number(latest['성공건수'] || 0) || 0, fail: Number(latest['실패건수'] || 0) || 0,
+        nextOffset: Number(latest['nextOffset'] || 0) || 0, updatedAt: latest['수정일시'] || '', error: latest['마지막오류'] || ''
+      } : null
+    };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err || '') };
+  }
+}
+
+function installMyCustomerStatusAnalysisJobTriggerP539() {
+  const fn = 'processMyCustomerStatusAnalysisJobTriggerP539';
+  const existing = ScriptApp.getProjectTriggers().filter(function(t) { return t.getHandlerFunction && t.getHandlerFunction() === fn; });
+  if (!existing.length) ScriptApp.newTrigger(fn).timeBased().everyMinutes(5).create();
+  return { ok: true, functionName: fn, existing: existing.length, installed: !existing.length };
+}
+
 
 
 function canMyCustomerStatusViewAllP531_(perm) {

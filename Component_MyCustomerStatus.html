@@ -1,5 +1,5 @@
 <script>
-// P537: 나의 고객 현황 - 추천상태 적용 즉시 반영 + compact 펼침/정렬 + AI 애매건 분석 큐
+// P539: 나의 고객 현황 - 분석DB 빠른 조회 + 별도 chunk 갱신 작업
 let myCustomerStatusBundleP528 = null;
 let myCustomerStatusLoadingP528 = false;
 let myCustomerStatusActiveViewP528 = 'all';
@@ -21,7 +21,7 @@ function loadMyCustomerStatusPageP528(force) {
   if (myCustomerStatusLoadingP528) return;
   myCustomerStatusLoadingP528 = true;
   if (!myCustomerStatusBundleP528 || force) {
-    area.innerHTML = '<div class="loading">나의 고객 현황을 분석하는 중입니다.</div>';
+    area.innerHTML = '<div class="loading">고객현황분석_DB에서 나의 고객 현황을 불러오는 중입니다.</div>';
   } else {
     renderMyCustomerStatusPageP528_();
   }
@@ -59,7 +59,7 @@ function loadMyCustomerStatusPageP528(force) {
         stack: err && err.stack ? String(err.stack).slice(0, 2000) : ''
       });
     })
-    .getMyCustomerStatusDashboardP528({ force: !!force });
+    .getMyCustomerStatusDashboardP528({ fast: true, force: !!force });
 }
 
 function resetMyCustomerStatusPageP528_() {
@@ -110,16 +110,19 @@ function renderMyCustomerStatusPageP528_() {
   html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: ' + esc(scopeText) + ' · 분석방식: 상태추천/업무인사이트 분리 · 화면응답 경량화 · AI 애매건 보조분석</div></div>';
   html += '<div class="my-status-actions-p528">';
   html += '<button class="secondary" onclick="loadMyCustomerStatusPageP528(true)">새로고침</button>';
+  html += '<button class="primary" onclick="startMyCustomerStatusAnalysisJobP539_()">분석DB 갱신</button>';
+  html += '<button class="secondary" onclick="processMyCustomerStatusAnalysisJobP539_()">분석작업 200건 처리</button>';
+  html += '<button class="secondary" onclick="showMyCustomerStatusAnalysisJobStatusP539_()">갱신상태</button>';
+  html += '<button class="secondary" onclick="installMyCustomerStatusAnalysisTriggerP539_()">분석 5분 트리거</button>';
   html += '<button class="secondary" onclick="switchPage(\'myCustomerFolder\')">나의 고객 폴더</button>';
   html += '<button class="secondary" onclick="setupMyCustomerAiP537_()">AI DB 준비</button>';
   html += '<button class="secondary" onclick="createMyCustomerAiQueueP537_()">AI 애매건 큐 생성</button>';
   html += '<button class="secondary" onclick="processMyCustomerAiQueueP537_()">AI 큐 10건 처리</button>';
-  html += '<button class="secondary" onclick="installMyCustomerAiTriggerP537_()">AI 5분 트리거</button>';
   html += '</div>';
   html += '</div>';
 
   const idx = bundle.index || {};
-  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 범위 ' + esc(owner.scope || 'OWN') + ' · 원천 ' + esc(idx.sourceType || 'MASTER') + ' · 마스터대상 ' + esc(String(idx.sourceTotal || 0)) + '건' + (owner.scopeReason ? ' · 권한판정 ' + esc(owner.scopeReason) : '') + (idx.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + renderMyCustomerAiMetaP537_(bundle) + '</div>';
+  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 범위 ' + esc(owner.scope || 'OWN') + ' · 원천 ' + esc(idx.sourceType || 'ANALYSIS_DB') + ' · DB대상 ' + esc(String(idx.sourceTotal || 0)) + '건' + (owner.scopeReason ? ' · 권한판정 ' + esc(owner.scopeReason) : '') + (idx.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + renderMyCustomerStatusJobMetaP539_(bundle) + renderMyCustomerAiMetaP537_(bundle) + '</div>';
 
   html += '<div class="my-status-cards-p528">';
   html += renderMyCustomerStatusCardP528_(owner.scope === 'ALL' ? '전체 고객' : '전체 내 고객', cards.total, 'all', '', owner.scope === 'ALL' ? 'admin 전체 고객' : '담당자 기준 전체 고객');
@@ -154,9 +157,21 @@ function renderMyCustomerStatusPageP528_() {
 function renderMyCustomerStatusDbMetaP529_(bundle) {
   const db = bundle && bundle.analysisDb || {};
   if (!db) return '';
+  if (db.fastLoad || db.loaded) {
+    return ' · 분석DB 조회 ' + esc(String(db.rows || 0)) + '건' + (db.latestAnalyzedAt ? ' · 최신분석 ' + esc(db.latestAnalyzedAt) : '') + (db.message ? ' · ' + esc(db.message) : '');
+  }
   if (db.saved) return ' · 분석DB 저장 ' + esc(String(db.rows || 0)) + '건 / 기록 ' + esc(String(db.written || db.totalRows || 0)) + '건(' + esc(db.sheetName || '고객현황분석_DB') + ')';
   if (db.error) return ' · <b>분석DB 저장 실패</b>: ' + esc(db.error);
   return '';
+}
+
+function renderMyCustomerStatusJobMetaP539_(bundle) {
+  const job = bundle && bundle.job || null;
+  if (!job) return '';
+  if (job.ok === false) return ' · <b>분석작업 상태 조회 실패</b>: ' + esc(job.error || '');
+  const latest = job.latest || null;
+  if (!latest) return ' · 분석작업 없음' + (job.triggerStatus ? ' · 트리거 ' + esc(job.triggerStatus) : '');
+  return ' · 분석작업 ' + esc(latest.status || '-') + ' ' + esc(String(latest.processed || 0)) + '/' + esc(String(latest.total || 0)) + '건' + (job.triggerStatus ? ' · 트리거 ' + esc(job.triggerStatus) : '') + (latest.error ? ' · 오류 ' + esc(latest.error) : '');
 }
 
 function renderMyCustomerAiMetaP537_(bundle) {
@@ -730,6 +745,74 @@ function runMyCustomerStatusScopeDebugP532_() {
     .debugMyCustomerStatusScopeP532();
 }
 
+
+
+function startMyCustomerStatusAnalysisJobP539_() {
+  const bundle = myCustomerStatusBundleP528 || {};
+  const owner = bundle.owner || {};
+  const isAdmin = owner.scope === 'ALL' || owner.isAdmin;
+  const scope = isAdmin && confirm('admin 전체 고객 기준으로 고객현황분석_DB 갱신 작업을 만들까요?\n취소하면 내 담당 고객 기준으로 작업을 만듭니다.') ? 'ALL' : 'OWN';
+  const rawLimit = prompt('한 번에 처리할 고객 수를 입력하세요.\n권장: 200건 / 최대 500건', '200');
+  if (rawLimit == null) return;
+  const limit = Math.max(20, Math.min(500, Number(rawLimit || 200) || 200));
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) return alert('분석DB 갱신 작업 생성 실패: ' + (res && (res.error || res.message) || 'unknown'));
+      alert('분석DB 갱신 작업 생성 완료\n작업ID: ' + (res.jobId || '-') + '\n범위: ' + (res.scope || '-') + '\n대상: ' + (res.total || 0) + '건\n\n이제 [분석작업 200건 처리]를 누르거나 5분 트리거를 설치해 주세요.');
+      showMyCustomerStatusAnalysisJobStatusP539_(true);
+    })
+    .withFailureHandler(function(err) { alert('분석DB 갱신 작업 생성 실패: ' + (err && err.message ? err.message : String(err || ''))); })
+    .startMyCustomerStatusAnalysisJobP539({ scope: scope, limit: limit });
+}
+
+function processMyCustomerStatusAnalysisJobP539_() {
+  const raw = prompt('분석작업을 몇 건 처리할까요?\n권장: 200건 / 최대 500건', '200');
+  if (raw == null) return;
+  const limit = Math.max(10, Math.min(500, Number(raw || 200) || 200));
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) return alert('분석작업 처리 실패: ' + (res && (res.error || res.message) || 'unknown'));
+      alert('분석작업 처리 완료\n작업ID: ' + (res.jobId || '-') + '\n상태: ' + (res.status || '-') + '\n처리: ' + (res.processed || 0) + '/' + (res.total || 0) + '건\n이번 chunk: ' + (res.chunk || 0) + '건\nDB 반영: ' + JSON.stringify(res.upsert || {}));
+      loadMyCustomerStatusPageP528(true);
+    })
+    .withFailureHandler(function(err) { alert('분석작업 처리 실패: ' + (err && err.message ? err.message : String(err || ''))); })
+    .processMyCustomerStatusAnalysisJobP539({ limit: limit });
+}
+
+function showMyCustomerStatusAnalysisJobStatusP539_(silent) {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) return alert('분석작업 상태 조회 실패: ' + (res && (res.error || res.message) || 'unknown'));
+      const latest = res.latest || {};
+      const msg = '고객현황 분석작업 상태\n' +
+        '- 전체 작업: ' + (res.totalJobs || 0) + '건\n' +
+        '- 상태별: ' + JSON.stringify(res.byStatus || {}) + '\n' +
+        '- 트리거: ' + (res.triggerStatus || '-') + '\n\n' +
+        '최근 작업\n' +
+        '- 작업ID: ' + (latest.jobId || '-') + '\n' +
+        '- 범위: ' + (latest.scope || '-') + '\n' +
+        '- 상태: ' + (latest.status || '-') + '\n' +
+        '- 처리: ' + (latest.processed || 0) + '/' + (latest.total || 0) + '건\n' +
+        '- 성공: ' + (latest.success || 0) + ' / 실패: ' + (latest.fail || 0) + '\n' +
+        '- 수정: ' + (latest.updatedAt || '-') + (latest.error ? '\n- 오류: ' + latest.error : '');
+      if (!silent) alert(msg);
+      loadMyCustomerStatusPageP528(true);
+    })
+    .withFailureHandler(function(err) { alert('분석작업 상태 조회 실패: ' + (err && err.message ? err.message : String(err || ''))); })
+    .getMyCustomerStatusAnalysisJobStatusP539({});
+}
+
+function installMyCustomerStatusAnalysisTriggerP539_() {
+  if (!confirm('고객현황분석작업_DB 5분 자동 처리 트리거를 설치할까요?\n중복 트리거는 새로 만들지 않습니다.')) return;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) return alert('분석작업 트리거 설치 실패: ' + (res && (res.error || res.message) || 'unknown'));
+      alert('분석작업 트리거 확인 완료\n함수: ' + (res.functionName || '-') + '\n기존: ' + (res.existing || 0) + '개\n신규설치: ' + (res.installed ? 'Y' : 'N'));
+      loadMyCustomerStatusPageP528(true);
+    })
+    .withFailureHandler(function(err) { alert('분석작업 트리거 설치 실패: ' + (err && err.message ? err.message : String(err || ''))); })
+    .installMyCustomerStatusAnalysisJobTriggerP539();
+}
 
 
 function setupMyCustomerAiP537_() {
