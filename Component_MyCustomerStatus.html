@@ -1,5 +1,5 @@
 <script>
-// P531: 나의 고객 현황 - 상태변경추천/업무인사이트 분리 + 경량 응답 화면
+// P534: 나의 고객 현황 - 추천상태 적용 즉시 반영 + compact 펼침/정렬
 let myCustomerStatusBundleP528 = null;
 let myCustomerStatusLoadingP528 = false;
 let myCustomerStatusActiveViewP528 = 'all';
@@ -7,6 +7,13 @@ let myCustomerStatusActiveValueP528 = '';
 let myCustomerStatusKeywordP528 = '';
 let myCustomerStatusPageP528 = 0;
 let myCustomerStatusPageSizeP528 = 50;
+// P533: 기본 행은 분석 요약으로 압축하고, 더블클릭 시 고객상세검색 하단 펼침 UI를 재사용합니다.
+let myCustomerStatusSortKeyP533 = '';
+let myCustomerStatusSortDirP533 = '';
+let myCustomerStatusExpandedKeyP533 = '';
+let myCustomerStatusExpandedRowNoP533 = 0;
+let myCustomerStatusExpandedCustomerNoP533 = '';
+let myCustomerStatusExpandedLoadingP533 = {};
 
 function loadMyCustomerStatusPageP528(force) {
   const area = document.getElementById('myCustomerStatusAreaP528');
@@ -22,17 +29,35 @@ function loadMyCustomerStatusPageP528(force) {
     .withSuccessHandler(function(res) {
       myCustomerStatusLoadingP528 = false;
       if (!res || res.ok === false) {
-        const msg = res && (res.stage || res.error) ? ('단계: ' + (res.stage || '-') + '<br>오류: ' + esc(res.error || '응답 없음')) : '응답이 비어 있습니다.';
-        area.innerHTML = '<div class="my-status-error-p528"><b>나의 고객 현황을 불러오지 못했습니다.</b><br>' + msg + '</div>';
+        area.innerHTML = renderMyCustomerStatusLoadErrorP531_(res || { error: 'empty response' });
         return;
       }
       myCustomerStatusBundleP528 = res;
       myCustomerStatusPageP528 = 0;
-      renderMyCustomerStatusPageP528_();
+      if (force) {
+        myCustomerStatusExpandedKeyP533 = '';
+        myCustomerStatusExpandedRowNoP533 = 0;
+        myCustomerStatusExpandedCustomerNoP533 = '';
+      }
+      try {
+        renderMyCustomerStatusPageP528_();
+      } catch (renderErr) {
+        area.innerHTML = renderMyCustomerStatusLoadErrorP531_({
+          stage: 'clientRender',
+          error: renderErr && renderErr.message ? renderErr.message : String(renderErr || ''),
+          stack: renderErr && renderErr.stack ? String(renderErr.stack).slice(0, 2000) : '',
+          responseMode: res && res.responseMode,
+          rows: res && res.rows ? res.rows.length : 0
+        });
+      }
     })
     .withFailureHandler(function(err) {
       myCustomerStatusLoadingP528 = false;
-      area.innerHTML = '<div class="my-status-error-p528">나의 고객 현황 로딩 실패: ' + esc(err && err.message ? err.message : String(err || '')) + '</div>';
+      area.innerHTML = renderMyCustomerStatusLoadErrorP531_({
+        stage: 'serverCallFailure',
+        error: err && err.message ? err.message : String(err || ''),
+        stack: err && err.stack ? String(err.stack).slice(0, 2000) : ''
+      });
     })
     .getMyCustomerStatusDashboardP528({ force: !!force });
 }
@@ -43,7 +68,29 @@ function resetMyCustomerStatusPageP528_() {
   myCustomerStatusActiveValueP528 = '';
   myCustomerStatusKeywordP528 = '';
   myCustomerStatusPageP528 = 0;
+  myCustomerStatusExpandedKeyP533 = '';
+  myCustomerStatusExpandedRowNoP533 = 0;
+  myCustomerStatusExpandedCustomerNoP533 = '';
+  myCustomerStatusExpandedLoadingP533 = {};
   loadMyCustomerStatusPageP528(true);
+}
+
+function renderMyCustomerStatusLoadErrorP531_(res) {
+  res = res || {};
+  const msg = res.error || res.message || res.reason || '';
+  let html = '<div class="my-status-error-p528"><b>나의 고객 현황을 불러오지 못했습니다.</b>';
+  html += '<div class="muted">서버 응답이 실패로 돌아왔습니다. 아래 단계/오류를 확인해 주세요.</div>';
+  if (res.version) html += '<div>분석버전: ' + esc(res.version) + '</div>';
+  if (res.stage) html += '<div>실패 단계: ' + esc(res.stage) + '</div>';
+  if (msg) html += '<div>오류: ' + esc(msg) + '</div>';
+  if (res.responseMode) html += '<div>응답모드: ' + esc(res.responseMode) + '</div>';
+  if (res.rows != null) html += '<div>응답 row 수: ' + esc(String(res.rows)) + '</div>';
+  if (res.elapsedMs != null) html += '<div>소요시간: ' + esc(String(res.elapsedMs)) + 'ms</div>';
+  if (res.stack) html += '<details><summary>오류 상세</summary><pre>' + esc(res.stack) + '</pre></details>';
+  html += '<div class="my-status-actions-p528"><button class="primary" onclick="loadMyCustomerStatusPageP528(true)">다시 불러오기</button><button class="secondary" onclick="runMyCustomerStatusScopeDebugP532_()">범위 진단</button></div>';
+  html += '<div id="myCustomerStatusDebugP532"></div>';
+  html += '</div>';
+  return html;
 }
 
 function renderMyCustomerStatusPageP528_() {
@@ -56,25 +103,28 @@ function renderMyCustomerStatusPageP528_() {
   }
   const cards = bundle.cards || {};
   const owner = bundle.owner || {};
+  const scopeText = owner.scope === 'ALL' ? 'ADMIN 전체 고객' : ('마스터시트 영업담당자 = ' + (owner.name || owner.displayName || '-'));
   let html = '';
   html += '<div class="my-status-shell-p528">';
   html += '<div class="my-status-toolbar-p528">';
-  html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: 마스터시트 영업담당자 = ' + esc(owner.name || owner.displayName || '-') + ' · 분석방식: 상태변경추천/업무인사이트 분리 · 경량 응답</div></div>';
+  html += '<div><div class="my-status-title-p528">나의 고객 현황</div><div class="my-status-sub-p528">기준: ' + esc(scopeText) + ' · 분석방식: 상태추천/업무인사이트 분리 · 화면응답 경량화</div></div>';
   html += '<div class="my-status-actions-p528"><button class="secondary" onclick="loadMyCustomerStatusPageP528(true)">새로고침</button><button class="secondary" onclick="switchPage(\'myCustomerFolder\')">나의 고객 폴더</button></div>';
   html += '</div>';
 
-  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 검색인덱스 ' + esc((bundle.index && bundle.index.builtAt) || '-') + (bundle.index && bundle.index.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + '</div>';
+  const idx = bundle.index || {};
+  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 범위 ' + esc(owner.scope || 'OWN') + ' · 원천 ' + esc(idx.sourceType || 'MASTER') + ' · 마스터대상 ' + esc(String(idx.sourceTotal || 0)) + '건' + (owner.scopeReason ? ' · 권한판정 ' + esc(owner.scopeReason) : '') + (idx.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + '</div>';
 
   html += '<div class="my-status-cards-p528">';
-  html += renderMyCustomerStatusCardP528_('전체 내 고객', cards.total, 'all', '', '담당자 기준 전체 고객');
+  html += renderMyCustomerStatusCardP528_(owner.scope === 'ALL' ? '전체 고객' : '전체 내 고객', cards.total, 'all', '', owner.scope === 'ALL' ? 'admin 전체 고객' : '담당자 기준 전체 고객');
   html += renderMyCustomerStatusCardP528_('진행중', cards.active, 'active', '', '수주실패/발주완료/계약완료 제외');
   html += renderMyCustomerStatusCardP528_('상태지정필요', cards.needStatus, 'needStatus', '', '진행현황 정리 필요');
-  html += renderMyCustomerStatusCardP528_('상태변경 추천', cards.stateRecommendation || cards.mismatch, 'mismatch', '', '상태지정필요/공란 중 확실한 건만');
-  html += renderMyCustomerStatusCardP528_('최근 7일 연락', cards.recent7, 'recent7', '', '최신 메모 날짜 기준');
+  html += renderMyCustomerStatusCardP528_('상태변경 추천', cards.mismatch, 'mismatch', '', '확실한 건만 버튼 노출');
+  html += renderMyCustomerStatusCardP528_('자료발송 후 미후속', cards.sentNoFollow, 'sentNoFollow', '', '상태변경 아님, 후속연락');
+  html += renderMyCustomerStatusCardP528_('연락장애/담당자확인', cards.contactIssue, 'contactIssue', '', '전화연결/직통/담당자 문제');
+  html += renderMyCustomerStatusCardP528_('계약/발주 확인필요', cards.contractCheck, 'contractCheck', '', '자동 상태추천 제외');
+  html += renderMyCustomerStatusCardP528_('장기 재접촉', cards.longReconnect, 'longReconnect', '', '예산/내년/보류 신호');
+  html += renderMyCustomerStatusCardP528_('최근 7일 연락', cards.recent7, 'recent7', '', '최신 판정 이벤트 기준');
   html += renderMyCustomerStatusCardP528_('14일 이상 미접촉', cards.noContact14, 'noContact14', '', '진행중 고객 기준');
-  html += renderMyCustomerStatusCardP528_('자료발송 후 미후속', cards.sentNoFollow, 'sentNoFollow', '', '발송 후 확인 필요');
-  html += renderMyCustomerStatusCardP528_('연락장애/담당자확인', cards.contactIssue, 'contactIssue', '', '연락경로 보강 필요');
-  html += renderMyCustomerStatusCardP528_('계약/발주 확인필요', cards.contractCheck, 'contractCheck', '', '자동 상태변경 제외');
   html += renderMyCustomerStatusCardP528_('종결/보호상태 참고', cards.terminal, 'terminal', '', '수주실패·발주완료·계약완료 보호');
   html += renderMyCustomerStatusCardP528_('계약 가능성 높음', cards.highPotential, 'highPotential', '', '점수 6점 이상');
   html += renderMyCustomerStatusCardP528_('데이터 누락', cards.dataMissing, 'dataMissing', '', '영업 필수값 확인');
@@ -97,7 +147,7 @@ function renderMyCustomerStatusPageP528_() {
 function renderMyCustomerStatusDbMetaP529_(bundle) {
   const db = bundle && bundle.analysisDb || {};
   if (!db) return '';
-  if (db.saved) return ' · 분석DB 저장 ' + esc(String(db.rows || 0)) + '건(' + esc(db.sheetName || '고객현황분석_DB') + ')';
+  if (db.saved) return ' · 분석DB 저장 ' + esc(String(db.rows || 0)) + '건 / 기록 ' + esc(String(db.written || db.totalRows || 0)) + '건(' + esc(db.sheetName || '고객현황분석_DB') + ')';
   if (db.error) return ' · <b>분석DB 저장 실패</b>: ' + esc(db.error);
   return '';
 }
@@ -118,13 +168,13 @@ function renderMyCustomerStatusDistributionP528_(items) {
 }
 
 function renderMyCustomerStatusTopIssuesP528_(bundle) {
-  const rows = ((bundle && bundle.rows) || []).filter(function(row) { return row && row.analysis && row.analysis.stateChangeRecommendation; }).slice(0, 5);
-  let html = '<div class="my-status-panel-head-p528"><div><b>상태변경 추천 TOP 5</b><span>상태지정필요/공란 중 확실한 건만 표시합니다. 자료발송·계약확인은 인사이트로만 분리됩니다.</span></div><button type="button" class="secondary" onclick="setMyCustomerStatusViewP528_(\'mismatch\',\'\')">전체보기</button></div>';
+  const rows = ((bundle && bundle.rows) || []).filter(function(row) { return row.analysis && row.analysis.statusChangeRecommendation; }).slice(0, 5);
+  let html = '<div class="my-status-panel-head-p528"><div><b>상태변경 추천 TOP 5</b><span>상태지정필요/공란 중 확실한 수주실패·견적제출완료만 표시합니다.</span></div><button type="button" class="secondary" onclick="setMyCustomerStatusViewP528_(\'mismatch\',\'\')">전체보기</button></div>';
   if (!rows.length) return html + '<div class="my-status-empty-p528">상태변경 추천 건이 없습니다.</div>';
   html += '<div class="my-status-issue-list-p528">';
   rows.forEach(function(row) {
     const a = row.analysis || {};
-    html += '<div class="my-status-issue-p528"><b>' + esc(row.company || '-') + '</b><span>' + esc(row.status || '(공란)') + ' → ' + esc(a.stateChangeRecommendedStatus || a.recommendedStatus || '-') + '</span><em>' + esc(a.insightSummary || a.reason || '') + '</em></div>';
+    html += '<div class="my-status-issue-p528"><b>' + esc(row.company || '-') + '</b><span>' + esc(row.status || '(공란)') + ' → ' + esc(a.statusChangeRecommendedStatus || a.recommendedStatus || '-') + '</span><em>' + esc(a.insightSummary || a.reason || '') + '</em></div>';
   });
   html += '</div>';
   return html;
@@ -133,7 +183,7 @@ function renderMyCustomerStatusTopIssuesP528_(bundle) {
 function renderMyCustomerStatusListToolbarP528_() {
   const tabs = [
     ['all','전체'], ['mismatch','상태변경 추천'], ['sentNoFollow','자료발송 후 미후속'], ['contactIssue','연락장애/담당자확인'],
-    ['contractCheck','계약/발주 확인필요'], ['longTerm','장기 재접촉'], ['recent7','최근 연락'], ['noContact14','장기 미접촉'],
+    ['contractCheck','계약/발주 확인필요'], ['longReconnect','장기 재접촉'], ['recent7','최근 연락'], ['noContact14','장기 미접촉'],
     ['terminal','종결/보호 참고'], ['highPotential','계약 가능성 높음'], ['dataMissing','데이터 누락'], ['active','진행중'], ['needStatus','상태지정필요']
   ];
   let html = '<div class="my-status-tabs-p528">';
@@ -141,7 +191,7 @@ function renderMyCustomerStatusListToolbarP528_() {
     html += '<button type="button" class="' + (myCustomerStatusActiveViewP528 === t[0] ? 'active' : '') + '" onclick="setMyCustomerStatusViewP528_(\'' + t[0] + '\',\'\')">' + esc(t[1]) + '</button>';
   });
   html += '</div>';
-  html += '<div class="my-status-list-tools-p528"><input value="' + escAttr(myCustomerStatusKeywordP528) + '" placeholder="회사명, 고객번호, 메모, 상태 검색" oninput="updateMyCustomerStatusKeywordP528_(this.value)"><select onchange="changeMyCustomerStatusPageSizeP528_(this.value)"><option value="30" ' + (myCustomerStatusPageSizeP528===30?'selected':'') + '>30건</option><option value="50" ' + (myCustomerStatusPageSizeP528===50?'selected':'') + '>50건</option><option value="100" ' + (myCustomerStatusPageSizeP528===100?'selected':'') + '>100건</option></select></div>';
+  html += '<div class="my-status-list-tools-p528"><input value="' + escAttr(myCustomerStatusKeywordP528) + '" placeholder="회사명, 고객번호, 메모, 상태, 인사이트 검색" oninput="updateMyCustomerStatusKeywordP528_(this.value)"><select onchange="changeMyCustomerStatusPageSizeP528_(this.value)"><option value="30" ' + (myCustomerStatusPageSizeP528===30?'selected':'') + '>30건</option><option value="50" ' + (myCustomerStatusPageSizeP528===50?'selected':'') + '>50건</option><option value="100" ' + (myCustomerStatusPageSizeP528===100?'selected':'') + '>100건</option></select></div>';
   return html;
 }
 
@@ -150,13 +200,26 @@ function renderMyCustomerStatusListBodyP528_() {
   const total = rows.length;
   const start = myCustomerStatusPageP528 * myCustomerStatusPageSizeP528;
   const pageRows = rows.slice(start, start + myCustomerStatusPageSizeP528);
-  let html = '<div class="my-status-list-meta-p528">표시 ' + esc(String(total ? start + 1 : 0)) + '-' + esc(String(Math.min(start + pageRows.length, total))) + '건 / 총 ' + esc(String(total)) + '건</div>';
+  let html = '<div class="my-status-list-meta-p528">표시 ' + esc(String(total ? start + 1 : 0)) + '-' + esc(String(Math.min(start + pageRows.length, total))) + '건 / 총 ' + esc(String(total)) + '건<span class="my-status-meta-tip-p533">행을 더블클릭하면 고객상세검색과 같은 상세 영역이 아래에 펼쳐집니다. 헤더 클릭 시 정렬됩니다.</span></div>';
   if (!pageRows.length) return html + '<div class="my-status-empty-p528">표시할 고객이 없습니다.</div>';
-  html += '<div class="my-status-table-wrap-p528"><table class="my-status-table-p528"><thead><tr><th>고객</th><th>현재상태</th><th>상태추천/인사이트</th><th>최근연락</th><th>판정 근거</th><th>액션</th></tr></thead><tbody>';
+  html += '<div class="my-status-table-wrap-p528"><table class="my-status-table-p528 my-status-table-compact-p533"><thead><tr>';
+  html += renderMyCustomerStatusSortableThP533_('customer', '고객');
+  html += renderMyCustomerStatusSortableThP533_('status', '현재상태');
+  html += renderMyCustomerStatusSortableThP533_('analysis', '상태추천/인사이트');
+  html += renderMyCustomerStatusSortableThP533_('recent', '최근연락');
+  html += renderMyCustomerStatusSortableThP533_('evidence', '판정근거');
+  html += '<th>액션</th></tr></thead><tbody>';
   pageRows.forEach(function(row) { html += renderMyCustomerStatusRowP528_(row); });
   html += '</tbody></table></div>';
   html += renderMyCustomerStatusPagerP528_(total);
   return html;
+}
+
+function renderMyCustomerStatusSortableThP533_(key, label) {
+  const active = myCustomerStatusSortKeyP533 === key;
+  const dir = active ? myCustomerStatusSortDirP533 : '';
+  const mark = !active ? '↕' : (dir === 'asc' ? '▲' : '▼');
+  return '<th class="my-status-sort-th-p533 ' + (active ? 'is-active' : '') + '" onclick="setMyCustomerStatusSortP533_(\'' + escAttr(key) + '\')"><button type="button">' + esc(label) + '<span>' + esc(mark) + '</span></button></th>';
 }
 
 function renderMyCustomerStatusRowP528_(row) {
@@ -164,53 +227,263 @@ function renderMyCustomerStatusRowP528_(row) {
   const a = row.analysis || {};
   const rowNo = Number(row.rowNo || 0) || 0;
   const customerNo = String(row.customerNo || '');
-  let analysisHtml = '';
-  if (a.statusProtected) {
-    analysisHtml += '<div><span class="my-status-rec-p528">보호 ' + esc(row.status || '-') + '</span> <span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span></div>';
-    analysisHtml += '<div class="muted">상태변경 추천 제외</div>';
-  } else if (a.stateChangeRecommendation && (a.stateChangeRecommendedStatus || a.recommendedStatus)) {
-    const rec = a.stateChangeRecommendedStatus || a.recommendedStatus;
-    analysisHtml += '<div><span class="my-status-rec-p528">상태추천 ' + esc(rec) + '</span> <span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span></div>';
-    analysisHtml += '<div class="my-status-warning-text-p528">' + esc(a.mismatchType || '상태변경 추천') + '</div>';
-  } else {
-    analysisHtml += '<div><span class="my-status-rec-p528">상태유지</span> <span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span></div>';
-    if (a.recommendationBlockedReason) analysisHtml += '<div class="muted">' + esc(a.recommendationBlockedReason) + '</div>';
-  }
-  if (a.insightType) analysisHtml += '<div class="my-status-insight-p531"><b>' + esc(a.insightType) + '</b><span>' + esc(a.insightSummary || '') + '</span></div>';
-  if (a.potentialScore) analysisHtml += '<div class="my-status-potential-p528">가능성점수 ' + esc(String(a.potentialScore)) + '</div>';
-  if (a.sourceLabels && a.sourceLabels.length) analysisHtml += '<div class="my-status-source-p529">근거: ' + esc(a.sourceLabels.join(', ')) + '</div>';
-  if (a.matchedKeywords) analysisHtml += renderMyCustomerStatusKeywordBadgesP529_(a.matchedKeywords);
-  if (a.missingFields && a.missingFields.length) analysisHtml += '<div class="my-status-missing-p528">누락: ' + esc(a.missingFields.join(', ')) + '</div>';
+  const key = getMyCustomerStatusRowKeyP533_(rowNo, customerNo);
+  const isExpanded = !!key && key === myCustomerStatusExpandedKeyP533;
+  const rowClass = 'my-status-main-row-p533' + (isExpanded ? ' is-expanded' : '');
 
-  let actions = '<div class="my-status-row-actions-p528">';
-  actions += '<button type="button" class="secondary" onclick="openDetailSafe_(' + rowNo + ',\'' + escAttr(customerNo) + '\')">상세</button>';
-  actions += '<button type="button" class="secondary" onclick="openContactHistoryModal(' + rowNo + ',\'' + escAttr(customerNo) + '\')">컨택</button>';
-  actions += '<button type="button" class="secondary" onclick="openSendForCustomer(' + rowNo + ')">발송</button>';
-  if (a.canApplyRecommendation && (a.stateChangeRecommendedStatus || a.recommendedStatus)) {
-    const rec = a.stateChangeRecommendedStatus || a.recommendedStatus;
-    actions += '<button type="button" onclick="applyMyCustomerRecommendedStatusP528_(' + rowNo + ',\'' + escAttr(customerNo) + '\',\'' + escAttr(rec) + '\',\'' + escAttr(row.status || '') + '\')">추천상태 적용</button>';
+  const analysisBrief = buildMyCustomerStatusBriefAnalysisP533_(row, a);
+  const evidenceText = a.latestDecisionEventText || row.memoSummary || '';
+  const evidenceSource = a.latestDecisionEventSource || a.latestEventSource || '';
+  const evidenceTitle = [evidenceSource, evidenceText, a.latestAnyEventText && a.latestAnyEventText !== evidenceText ? ('최근전체: ' + a.latestAnyEventText) : '', a.nextAction || ''].filter(Boolean).join('\n');
+
+  let actions = '<div class="my-status-row-actions-p528 my-status-row-actions-compact-p533">';
+  actions += '<button type="button" class="secondary" onclick="event.stopPropagation(); openDetailSafe_(' + rowNo + ',\'' + escAttr(customerNo) + '\')">상세</button>';
+  actions += '<button type="button" class="secondary" onclick="event.stopPropagation(); openContactHistoryModal(' + rowNo + ',\'' + escAttr(customerNo) + '\')">컨택</button>';
+  actions += '<button type="button" class="secondary" onclick="event.stopPropagation(); openSendForCustomer(' + rowNo + ')">발송</button>';
+  if (a.canApplyRecommendation && a.statusChangeRecommendedStatus) {
+    actions += '<button type="button" onclick="event.stopPropagation(); applyMyCustomerRecommendedStatusP528_(' + rowNo + ',\'' + escAttr(customerNo) + '\',\'' + escAttr(a.statusChangeRecommendedStatus) + '\',\'' + escAttr(row.status || '') + '\')">추천상태 적용</button>';
   }
   actions += '</div>';
 
-  const evidenceText = a.latestDecisionEventText || row.memoSummary || '';
-  const evidenceSource = a.latestDecisionEventSource || a.latestEventSource || '';
-  return '<tr>' +
-    '<td><b>' + esc(row.company || '-') + '</b><div class="muted">#' + esc(customerNo || '-') + ' · ' + esc(row.vendor || '-') + '</div><div class="muted">' + esc(row.contact || '') + ' ' + esc(row.phone || row.directPhone || '') + '</div></td>' +
-    '<td><span class="status">' + esc(row.status || '(공란)') + '</span></td>' +
-    '<td>' + analysisHtml + '</td>' +
-    '<td>' + esc(row.lastContactDate || '-') + '<div class="muted">' + (a.lastContactDays == null ? '날짜 없음' : esc(String(a.lastContactDays)) + '일 전') + '</div></td>' +
-    '<td><div class="my-status-memo-p528">' + esc(evidenceText || '') + '</div><div class="muted">' + esc(evidenceSource ? ('판정출처: ' + evidenceSource) : '') + '</div><div class="muted">' + esc(a.reason || '') + '</div></td>' +
+  let html = '<tr class="' + rowClass + '" data-row-no="' + escAttr(String(rowNo)) + '" data-customer-no="' + escAttr(customerNo) + '" ondblclick="toggleMyCustomerStatusExpandP533_(event,' + rowNo + ',\'' + escAttr(customerNo) + '\')">' +
+    '<td class="my-status-customer-cell-p533"><b>' + esc(row.company || '-') + '</b><div class="muted">#' + esc(customerNo || '-') + ' · ' + esc(row.vendor || '-') + ' · ' + esc(row.salesRep || '') + '</div><div class="muted line-one-p533">' + esc(row.contact || '') + ' ' + esc(row.phone || row.directPhone || '') + '</div></td>' +
+    '<td class="my-status-state-cell-p533"><span class="status">' + esc(row.status || '(공란)') + '</span></td>' +
+    '<td class="my-status-analysis-cell-p533" title="' + escAttr(analysisBrief.title || '') + '">' + analysisBrief.html + '</td>' +
+    '<td class="my-status-recent-cell-p533">' + esc(row.lastContactDate || '-') + '<div class="muted">' + (a.lastContactDays == null ? '날짜 없음' : esc(String(a.lastContactDays)) + '일 전') + '</div></td>' +
+    '<td class="my-status-evidence-cell-p533" title="' + escAttr(evidenceTitle) + '"><div class="my-status-evidence-line-p533">' + esc(evidenceText || '-') + '</div><div class="muted line-one-p533">' + esc(evidenceSource ? ('판정근거: ' + evidenceSource) : '') + '</div></td>' +
     '<td>' + actions + '</td>' +
     '</tr>';
+
+  if (isExpanded) html += renderMyCustomerStatusExpandedRowP533_(row);
+  return html;
 }
 
+function buildMyCustomerStatusBriefAnalysisP533_(row, a) {
+  a = a || {};
+  const chips = [];
+  let titleParts = [];
+  let summary = '';
+  if (a.statusChangeRecommendation && a.statusChangeRecommendedStatus) {
+    chips.push('<span class="my-status-rec-p528 is-action-p533">상태추천 ' + esc(a.statusChangeRecommendedStatus) + '</span>');
+    summary = a.statusChangeRecommendationGrade || '상태변경 추천';
+    titleParts.push('상태변경 추천: ' + (a.statusChangeRecommendedStatus || ''));
+  } else if (a.statusProtected) {
+    chips.push('<span class="my-status-rec-p528 is-protected-p533">상태유지</span>');
+    summary = a.insightSummary || a.reason || '종결/보호 상태라 자동 추천하지 않음';
+    titleParts.push('보호 상태: ' + (row.status || ''));
+  } else if (a.insightType || a.insightSummary) {
+    chips.push('<span class="my-status-rec-p528 is-insight-p533">' + esc(a.insightType || '인사이트') + '</span>');
+    summary = a.insightSummary || a.reason || '';
+    titleParts.push('인사이트: ' + (a.insightType || ''));
+  } else {
+    chips.push('<span class="my-status-rec-p528 is-neutral-p533">특이없음</span>');
+    summary = a.reason || '';
+  }
+  if (a.confidence != null) chips.push('<span class="my-status-score-p528">신뢰 ' + esc(String(a.confidence || 0)) + '</span>');
+  if (a.potentialScore) chips.push('<span class="my-status-potential-p528 compact-p533">가능성 ' + esc(String(a.potentialScore)) + '</span>');
+  if (a.missingFields && a.missingFields.length) chips.push('<span class="my-status-mini-warn-p533">누락 ' + esc(String(a.missingFields.length)) + '</span>');
+  if (a.statusRecommendationBlockedReason) titleParts.push('차단: ' + a.statusRecommendationBlockedReason);
+  if (a.sourceLabels && a.sourceLabels.length) titleParts.push('근거: ' + a.sourceLabels.join(', '));
+  if (summary) titleParts.push(summary);
+  if (a.nextAction) titleParts.push('액션: ' + a.nextAction);
+  return {
+    html: '<div class="my-status-analysis-compact-p533"><div class="my-status-chip-line-p533">' + chips.join(' ') + '</div>' + (summary ? '<div class="my-status-summary-line-p533">' + esc(summary) + '</div>' : '') + '</div>',
+    title: titleParts.join('\n')
+  };
+}
+
+function renderMyCustomerStatusExpandedRowP533_(row) {
+  const rowNo = Number(row && row.rowNo || 0) || 0;
+  const customerNo = String(row && row.customerNo || '');
+  let content = '';
+  try {
+    content = renderMyCustomerStatusExpandedDetailP533_(row);
+  } catch (err) {
+    content = '<div class="customer-expand-loading">고객 상세 펼침을 렌더링하지 못했습니다.<br>' + esc(err && err.message ? err.message : String(err || '')) + '</div>';
+  }
+  return '<tr class="customer-expand-row my-status-expand-row-p533" id="myStatusExpandRow_' + escAttr(String(rowNo)) + '" data-customer-no="' + escAttr(customerNo) + '"><td colspan="6" id="myStatusExpandCell_' + escAttr(String(rowNo)) + '">' + content + '</td></tr>';
+}
+
+function renderMyCustomerStatusExpandedDetailP533_(row) {
+  row = prepareMyCustomerStatusRowForCustomerExpandP533_(row || {});
+  const rowNo = Number(row.rowNo || 0) || 0;
+  const customerNo = String(row.customerNo || '');
+  if (!rowNo) return '<div class="customer-expand-loading">행 번호가 없어 상세를 펼칠 수 없습니다.</div>';
+  if (typeof renderCustomerExpandedContent_ !== 'function') return '<div class="customer-expand-loading">고객상세검색 펼침 렌더러를 찾지 못했습니다.</div>';
+  if (typeof getCustomerDetailCache_ === 'function' && typeof setCustomerDetailCache_ === 'function' && typeof buildCustomerDetailFromRowSummary_ === 'function') {
+    const cached = getCustomerDetailCache_(rowNo, customerNo);
+    if (!cached) setCustomerDetailCache_(buildCustomerDetailFromRowSummary_(row, rowNo), { source: 'myCustomerStatus', skipStorage: true, allowIndexPatch: false, allowPagePatch: false });
+  }
+  return renderCustomerExpandedContent_(rowNo, row);
+}
+
+function prepareMyCustomerStatusRowForCustomerExpandP533_(row) {
+  row = Object.assign({}, row || {});
+  const a = row.analysis || {};
+  row.rowNo = Number(row.rowNo || 0) || 0;
+  row.customerNo = row.customerNo || '';
+  row.company = row.company || '';
+  row.memo = row.memo || row.memoSummary || a.latestDecisionEventText || a.latestAnyEventText || '';
+  row.lastSent = row.lastSent || row.lastSendDate || row.sentAt || '';
+  return row;
+}
+
+function getMyCustomerStatusRowKeyP533_(rowNo, customerNo) {
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = String(customerNo || '').trim();
+  return rowNo + ':' + customerNo;
+}
+
+function findMyCustomerStatusRowP533_(rowNo, customerNo) {
+  const key = getMyCustomerStatusRowKeyP533_(rowNo, customerNo);
+  const rows = (myCustomerStatusBundleP528 && myCustomerStatusBundleP528.rows) || [];
+  for (let i = 0; i < rows.length; i++) {
+    if (getMyCustomerStatusRowKeyP533_(rows[i].rowNo, rows[i].customerNo) === key) return rows[i];
+  }
+  return null;
+}
+
+function isMyCustomerStatusInteractiveTargetP533_(target) {
+  try {
+    return !!(target && target.closest && target.closest('button,a,input,textarea,select,label,.my-status-row-actions-p528,.customer-expand-panel'));
+  } catch (err) { return false; }
+}
+
+function toggleMyCustomerStatusExpandP533_(event, rowNo, customerNo) {
+  if (isMyCustomerStatusInteractiveTargetP533_(event && event.target)) return;
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = String(customerNo || '');
+  if (!rowNo) return;
+  const key = getMyCustomerStatusRowKeyP533_(rowNo, customerNo);
+  if (myCustomerStatusExpandedKeyP533 === key) {
+    myCustomerStatusExpandedKeyP533 = '';
+    myCustomerStatusExpandedRowNoP533 = 0;
+    myCustomerStatusExpandedCustomerNoP533 = '';
+    renderMyCustomerStatusListOnlyP533_();
+    return;
+  }
+  myCustomerStatusExpandedKeyP533 = key;
+  myCustomerStatusExpandedRowNoP533 = rowNo;
+  myCustomerStatusExpandedCustomerNoP533 = customerNo;
+  const row = findMyCustomerStatusRowP533_(rowNo, customerNo) || { rowNo: rowNo, customerNo: customerNo };
+  try { primeMyCustomerStatusExpandCacheP533_(row); } catch (err) {}
+  renderMyCustomerStatusListOnlyP533_();
+  fetchMyCustomerStatusExpandedDetailP533_(rowNo, customerNo);
+}
+
+function primeMyCustomerStatusExpandCacheP533_(row) {
+  row = prepareMyCustomerStatusRowForCustomerExpandP533_(row || {});
+  if (typeof getCustomerDetailCache_ !== 'function' || typeof setCustomerDetailCache_ !== 'function' || typeof buildCustomerDetailFromRowSummary_ !== 'function') return;
+  const rowNo = Number(row.rowNo || 0) || 0;
+  const customerNo = String(row.customerNo || '');
+  if (!rowNo) return;
+  const cached = getCustomerDetailCache_(rowNo, customerNo);
+  if (!cached) setCustomerDetailCache_(buildCustomerDetailFromRowSummary_(row, rowNo), { source: 'myCustomerStatus', skipStorage: true, allowIndexPatch: false, allowPagePatch: false });
+}
+
+function fetchMyCustomerStatusExpandedDetailP533_(rowNo, customerNo) {
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = String(customerNo || '');
+  if (!rowNo || typeof fetchCustomerDetailFromServer_ !== 'function') return;
+  const key = getMyCustomerStatusRowKeyP533_(rowNo, customerNo);
+  myCustomerStatusExpandedLoadingP533[key] = true;
+  fetchCustomerDetailFromServer_(rowNo, function(detail) {
+    delete myCustomerStatusExpandedLoadingP533[key];
+    if (myCustomerStatusExpandedKeyP533 !== key) return;
+    refreshMyCustomerStatusExpandedCellP533_(rowNo, customerNo);
+  }, function(err) {
+    delete myCustomerStatusExpandedLoadingP533[key];
+    if (myCustomerStatusExpandedKeyP533 !== key) return;
+    const cell = document.getElementById('myStatusExpandCell_' + rowNo);
+    if (cell) cell.innerHTML = '<div class="customer-expand-loading">상세정보를 불러오지 못했습니다.<br>' + esc(err && err.message ? err.message : String(err || '')) + '</div>';
+  }, { customerNo: customerNo });
+}
+
+function refreshMyCustomerStatusExpandedCellP533_(rowNo, customerNo) {
+  const cell = document.getElementById('myStatusExpandCell_' + (Number(rowNo) || 0));
+  if (!cell) return;
+  const row = findMyCustomerStatusRowP533_(rowNo, customerNo) || { rowNo: rowNo, customerNo: customerNo };
+  try {
+    cell.innerHTML = renderMyCustomerStatusExpandedDetailP533_(row);
+  } catch (err) {
+    cell.innerHTML = '<div class="customer-expand-loading">고객 상세 펼침을 다시 그리지 못했습니다.<br>' + esc(err && err.message ? err.message : String(err || '')) + '</div>';
+  }
+}
+
+function renderMyCustomerStatusListOnlyP533_() {
+  const body = document.getElementById('myCustomerStatusListBodyP528');
+  if (body) body.innerHTML = renderMyCustomerStatusListBodyP528_();
+}
+
+function setMyCustomerStatusSortP533_(key) {
+  key = String(key || '');
+  if (!key) return;
+  if (myCustomerStatusSortKeyP533 === key) {
+    myCustomerStatusSortDirP533 = myCustomerStatusSortDirP533 === 'asc' ? 'desc' : 'asc';
+  } else {
+    myCustomerStatusSortKeyP533 = key;
+    myCustomerStatusSortDirP533 = key === 'recent' ? 'desc' : 'asc';
+  }
+  myCustomerStatusPageP528 = 0;
+  renderMyCustomerStatusListOnlyP533_();
+}
+
+function sortMyCustomerStatusRowsP533_(rows) {
+  rows = rows || [];
+  const key = myCustomerStatusSortKeyP533;
+  const dir = myCustomerStatusSortDirP533 || 'asc';
+  if (!key) return rows;
+  const withIndex = rows.map(function(r, idx) { return { row: r, idx: idx }; });
+  withIndex.sort(function(x, y) {
+    const av = getMyCustomerStatusSortValueP533_(x.row, key);
+    const bv = getMyCustomerStatusSortValueP533_(y.row, key);
+    let cmp = compareMyCustomerStatusValuesP533_(av, bv, key);
+    if (cmp === 0) cmp = x.idx - y.idx;
+    return dir === 'desc' ? -cmp : cmp;
+  });
+  return withIndex.map(function(x) { return x.row; });
+}
+
+function getMyCustomerStatusSortValueP533_(row, key) {
+  row = row || {};
+  const a = row.analysis || {};
+  if (key === 'customer') return [row.company || '', Number(row.customerNo) || 0, row.customerNo || ''].join(' ');
+  if (key === 'status') return [row.status || '', row.company || ''].join(' ');
+  if (key === 'analysis') return [a.statusChangeRecommendation ? '0' : (a.insightType ? '1' : (a.statusProtected ? '2' : '3')), a.statusChangeRecommendedStatus || '', a.insightType || '', String(999 - (Number(a.confidence) || 0)), row.company || ''].join(' ');
+  if (key === 'recent') return parseMyCustomerStatusDateMsP533_(row.lastContactDate || a.latestDecisionEventDate || a.lastContactDate || '');
+  if (key === 'evidence') return [a.latestDecisionEventText || row.memoSummary || '', row.company || ''].join(' ');
+  return row.company || '';
+}
+
+function compareMyCustomerStatusValuesP533_(a, b, key) {
+  if (key === 'recent') {
+    const an = Number(a) || 0;
+    const bn = Number(b) || 0;
+    if (!an && !bn) return 0;
+    if (!an) return 1;
+    if (!bn) return -1;
+    return an - bn;
+  }
+  return String(a || '').localeCompare(String(b || ''), 'ko-KR', { numeric: true, sensitivity: 'base' });
+}
+
+function parseMyCustomerStatusDateMsP533_(value) {
+  value = String(value || '').trim();
+  if (!value) return 0;
+  let m = value.match(/^(20\d{2})[-.\/]\s*(\d{1,2})[-.\/]\s*(\d{1,2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+  m = value.match(/^(\d{2})[-.\/]\s*(\d{1,2})[-.\/]\s*(\d{1,2})/);
+  if (m) return new Date(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+  const t = Date.parse(value.replace(/\./g, '-'));
+  return isNaN(t) ? 0 : t;
+}
 
 function renderMyCustomerStatusKeywordBadgesP529_(matched) {
   matched = matched || {};
   const items = [];
   if (matched.thirdPartyContract && matched.thirdPartyContract.length) items.push(['bad', '타사계약', matched.thirdPartyContract.slice(0, 3).join(', ')]);
   if (matched.fail && matched.fail.length) items.push(['bad', '부정', matched.fail.slice(0, 3).join(', ')]);
-  if (matched.contactIssue && matched.contactIssue.length) items.push(['warn', '연락장애', matched.contactIssue.slice(0, 3).join(', ')]);
+  if (matched.contactBlocker && matched.contactBlocker.length) items.push(['warn', '연락장애', matched.contactBlocker.slice(0, 3).join(', ')]);
   if (matched.complete && matched.complete.length) items.push(['good', '우리계약', matched.complete.slice(0, 3).join(', ')]);
   if (matched.unknownComplete && matched.unknownComplete.length) items.push(['warn', '주체불명', matched.unknownComplete.slice(0, 3).join(', ')]);
   if (matched.order && matched.order.length) items.push(['good', '계약진행', matched.order.slice(0, 3).join(', ')]);
@@ -235,15 +508,15 @@ function getMyCustomerStatusRowsForViewP528_() {
   const view = myCustomerStatusActiveViewP528;
   const val = String(myCustomerStatusActiveValueP528 || '');
   if (view === 'status') rows = rows.filter(function(r) { return String(r.status || '(공란)') === val; });
-  else if (view === 'mismatch') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.stateChangeRecommendation); });
+  else if (view === 'mismatch') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.statusChangeRecommendation); });
   else if (view === 'recent7') rows = rows.filter(function(r) { return r.analysis && r.analysis.lastContactDays != null && r.analysis.lastContactDays <= 7; });
   else if (view === 'noContact14') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.longNoContact); });
-  else if (view === 'sentNoFollow') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.sentNoFollow); });
-  else if (view === 'contactIssue') rows = rows.filter(function(r) { return r.analysis && r.analysis.insightType === '연락장애/담당자확인'; });
-  else if (view === 'contractCheck') rows = rows.filter(function(r) { return r.analysis && r.analysis.insightType === '계약/발주 확인필요'; });
-  else if (view === 'longTerm') rows = rows.filter(function(r) { return r.analysis && r.analysis.insightType === '장기 재접촉'; });
-  else if (view === 'highPotential') rows = rows.filter(function(r) { return r.analysis && Number(r.analysis.potentialScore || 0) >= 6; });
-  else if (view === 'terminal') rows = rows.filter(function(r) { return !!(r.analysis && (r.analysis.terminalCandidate || r.analysis.statusProtected)); });
+  else if (view === 'sentNoFollow') rows = rows.filter(function(r) { const a = r.analysis || {}; return !!a.sentNoFollow || a.insightType === '자료발송후미후속' || a.insightType === '견적후속필요'; });
+  else if (view === 'contactIssue') rows = rows.filter(function(r) { return (r.analysis || {}).insightType === '연락장애/담당자확인'; });
+  else if (view === 'contractCheck') rows = rows.filter(function(r) { return (r.analysis || {}).insightType === '계약/발주확인필요'; });
+  else if (view === 'longReconnect') rows = rows.filter(function(r) { return (r.analysis || {}).insightType === '장기재접촉'; });
+  else if (view === 'highPotential') rows = rows.filter(function(r) { return (r.analysis || {}).potentialScore >= 6; });
+  else if (view === 'terminal') rows = rows.filter(function(r) { const a = r.analysis || {}; return !!a.terminalCandidate || !!a.statusProtected; });
   else if (view === 'dataMissing') rows = rows.filter(function(r) { return !!(r.analysis && r.analysis.dataMissing); });
   else if (view === 'active') rows = rows.filter(function(r) { return r.status !== '수주실패' && r.status !== '발주완료' && r.status !== '계약완료'; });
   else if (view === 'needStatus') rows = rows.filter(function(r) { return !String(r.status || '').trim() || String(r.status || '').indexOf('상태지정') >= 0; });
@@ -252,9 +525,15 @@ function getMyCustomerStatusRowsForViewP528_() {
   if (kw) {
     rows = rows.filter(function(r) {
       const a = r.analysis || {};
-      return [r.customerNo, r.company, r.status, r.vendor, r.memoSummary, a.recommendedStatus, a.stateChangeRecommendedStatus, a.insightType, a.insightSummary, a.reason, a.nextAction, a.latestDecisionEventText, (a.sourceLabels||[]).join(' '), JSON.stringify(a.matchedKeywords||{})].join(' ').toLowerCase().indexOf(kw) >= 0;
+      return [
+        r.customerNo, r.company, r.status, r.vendor, r.salesRep, r.memoSummary,
+        a.recommendedStatus, a.statusChangeRecommendedStatus, a.insightType, a.insightSummary,
+        a.reason, a.nextAction, a.latestDecisionEventText, a.latestAnyEventText,
+        (a.sourceLabels||[]).join(' '), JSON.stringify(a.matchedKeywords||{})
+      ].join(' ').toLowerCase().indexOf(kw) >= 0;
     });
   }
+  rows = sortMyCustomerStatusRowsP533_(rows);
   return rows;
 }
 
@@ -262,12 +541,14 @@ function setMyCustomerStatusViewP528_(view, value) {
   myCustomerStatusActiveViewP528 = view || 'all';
   myCustomerStatusActiveValueP528 = value || '';
   myCustomerStatusPageP528 = 0;
+  myCustomerStatusExpandedKeyP533 = '';
   renderMyCustomerStatusPageP528_();
 }
 
 function updateMyCustomerStatusKeywordP528_(value) {
   myCustomerStatusKeywordP528 = String(value || '');
   myCustomerStatusPageP528 = 0;
+  myCustomerStatusExpandedKeyP533 = '';
   const body = document.getElementById('myCustomerStatusListBodyP528');
   if (body) body.innerHTML = renderMyCustomerStatusListBodyP528_();
 }
@@ -275,6 +556,7 @@ function updateMyCustomerStatusKeywordP528_(value) {
 function changeMyCustomerStatusPageSizeP528_(value) {
   myCustomerStatusPageSizeP528 = Math.max(30, Math.min(100, Number(value || 50) || 50));
   myCustomerStatusPageP528 = 0;
+  myCustomerStatusExpandedKeyP533 = '';
   const body = document.getElementById('myCustomerStatusListBodyP528');
   if (body) body.innerHTML = renderMyCustomerStatusListBodyP528_();
 }
@@ -283,23 +565,149 @@ function moveMyCustomerStatusPageP528_(delta) {
   const total = getMyCustomerStatusRowsForViewP528_().length;
   const pages = Math.max(1, Math.ceil(total / myCustomerStatusPageSizeP528));
   myCustomerStatusPageP528 = Math.max(0, Math.min(pages - 1, myCustomerStatusPageP528 + Number(delta || 0)));
+  myCustomerStatusExpandedKeyP533 = '';
   const body = document.getElementById('myCustomerStatusListBodyP528');
   if (body) body.innerHTML = renderMyCustomerStatusListBodyP528_();
 }
 
 function applyMyCustomerRecommendedStatusP528_(rowNo, customerNo, newStatus, expectedStatus) {
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = String(customerNo || '');
+  newStatus = String(newStatus || '').trim();
+  expectedStatus = String(expectedStatus || '').trim();
   if (!rowNo || !customerNo || !newStatus) return toast('상태 변경 대상이 올바르지 않습니다.');
-  if (!confirm('진행현황을 [' + expectedStatus + '] → [' + newStatus + ']로 변경할까요?\n\nP531 상태변경 추천값입니다. 상태지정필요/공란 고객 중 확실한 수주실패·견적제출완료만 적용합니다.')) return;
-  const opId = 'MY_STATUS_P531_' + String(customerNo) + '_' + String(rowNo) + '_' + Date.now();
+  if (!confirm('진행현황을 [' + (expectedStatus || '(공란)') + '] → [' + newStatus + ']로 변경할까요?\n\n저장 성공 시 전체 재분석 없이 이 행만 즉시 반영합니다.')) return;
+
+  const rowKey = getMyCustomerStatusRowKeyP533_(rowNo, customerNo);
+  const oldSnapshot = snapshotMyCustomerStatusBundleRowP534_(rowNo, customerNo);
+  applyMyCustomerStatusLocalFastApplyP534_(rowNo, customerNo, newStatus, { pending: true });
+  const opId = 'MY_STATUS_P534_' + String(customerNo) + '_' + String(rowNo) + '_' + Date.now();
+
   google.script.run
     .withSuccessHandler(function(res) {
+      if (!res || res.ok === false) {
+        restoreMyCustomerStatusBundleRowP534_(oldSnapshot);
+        renderMyCustomerStatusPageP528_();
+        alert('진행현황 변경 실패: ' + (res && (res.error || res.message) ? (res.error || res.message) : '서버 응답이 올바르지 않습니다.'));
+        return;
+      }
+      applyMyCustomerStatusLocalFastApplyP534_(rowNo, customerNo, res.newStatus || newStatus, { applied: true, result: res });
       toast('진행현황을 변경했습니다.');
-      loadMyCustomerStatusPageP528(true);
       try { if (typeof invalidateCustomerSearchCaches_ === 'function') invalidateCustomerSearchCaches_({ clearIndex: true, clearDetail: true }); } catch (err) {}
+      try { if (typeof clearCustomerDetailCache_ === 'function') clearCustomerDetailCache_(rowNo, customerNo); } catch (err) {}
+      renderMyCustomerStatusPageP528_();
     })
     .withFailureHandler(function(err) {
+      restoreMyCustomerStatusBundleRowP534_(oldSnapshot);
+      renderMyCustomerStatusPageP528_();
       alert('진행현황 변경 실패: ' + (err && err.message ? err.message : String(err || '')));
     })
     .updateMyCustomerStatusFromAnalysisP528({ rowNo: rowNo, customerNo: customerNo, newStatus: newStatus, expectedStatus: expectedStatus || '', clientOperationId: opId });
 }
+
+function snapshotMyCustomerStatusBundleRowP534_(rowNo, customerNo) {
+  const row = findMyCustomerStatusRowP533_(rowNo, customerNo);
+  if (!row) return null;
+  try { return { rowNo: rowNo, customerNo: customerNo, row: JSON.parse(JSON.stringify(row)), cards: JSON.parse(JSON.stringify((myCustomerStatusBundleP528 && myCustomerStatusBundleP528.cards) || {})), statusCounts: JSON.parse(JSON.stringify((myCustomerStatusBundleP528 && myCustomerStatusBundleP528.statusCounts) || [])) }; }
+  catch (err) { return { rowNo: rowNo, customerNo: customerNo, row: Object.assign({}, row), cards: null, statusCounts: null }; }
+}
+
+function restoreMyCustomerStatusBundleRowP534_(snapshot) {
+  if (!snapshot || !myCustomerStatusBundleP528 || !myCustomerStatusBundleP528.rows) return;
+  const key = getMyCustomerStatusRowKeyP533_(snapshot.rowNo, snapshot.customerNo);
+  for (let i = 0; i < myCustomerStatusBundleP528.rows.length; i++) {
+    if (getMyCustomerStatusRowKeyP533_(myCustomerStatusBundleP528.rows[i].rowNo, myCustomerStatusBundleP528.rows[i].customerNo) === key) {
+      myCustomerStatusBundleP528.rows[i] = snapshot.row;
+      break;
+    }
+  }
+  if (snapshot.cards) myCustomerStatusBundleP528.cards = snapshot.cards;
+  if (snapshot.statusCounts) myCustomerStatusBundleP528.statusCounts = snapshot.statusCounts;
+}
+
+function applyMyCustomerStatusLocalFastApplyP534_(rowNo, customerNo, newStatus, options) {
+  options = options || {};
+  if (!myCustomerStatusBundleP528 || !myCustomerStatusBundleP528.rows) return false;
+  const row = findMyCustomerStatusRowP533_(rowNo, customerNo);
+  if (!row) return false;
+  row.status = newStatus;
+  const a = row.analysis || (row.analysis = {});
+  a.recommendedStatus = newStatus;
+  a.statusChangeRecommendedStatus = '';
+  a.statusChangeRecommendation = false;
+  a.statusChangeRecommendationGrade = '';
+  a.mismatch = false;
+  a.mismatchType = '';
+  a.stateChangeAllowed = false;
+  a.canApplyRecommendation = false;
+  a.recommendationVisible = false;
+  a.statusRecommendationBlockedReason = options.pending ? '상태 적용 저장 중' : '추천상태 적용 완료';
+  a.insightType = options.pending ? '상태 적용 중' : (a.insightType || '상태 적용 완료');
+  a.insightSummary = options.pending ? '진행현황 저장 중입니다.' : '추천상태를 적용했습니다. 전체 재분석은 새로고침 시 반영됩니다.';
+  a.reason = a.insightSummary;
+  if (newStatus === '수주실패' || newStatus === '발주완료' || newStatus === '계약완료') {
+    a.statusProtected = true;
+    a.terminalCandidate = true;
+  }
+  recomputeMyCustomerStatusClientSummaryP534_();
+  return true;
+}
+
+function recomputeMyCustomerStatusClientSummaryP534_() {
+  const bundle = myCustomerStatusBundleP528;
+  if (!bundle || !bundle.rows) return;
+  const rows = bundle.rows || [];
+  const cards = {
+    total: rows.length, active: 0, needStatus: 0, mismatch: 0, recent7: 0, noContact14: 0, sentNoFollow: 0, highPotential: 0, dataMissing: 0, terminal: 0, contactIssue: 0, contractCheck: 0, longReconnect: 0
+  };
+  const counts = {};
+  rows.forEach(function(row) {
+    const status = String(row.status || '').trim() || '(공란)';
+    const a = row.analysis || {};
+    counts[status] = (counts[status] || 0) + 1;
+    if (status !== '수주실패' && status !== '발주완료' && status !== '계약완료') cards.active++;
+    if (!status || status.indexOf('상태지정') >= 0 || status === '(공란)') cards.needStatus++;
+    if (a.statusChangeRecommendation) cards.mismatch++;
+    if (a.lastContactDays != null && Number(a.lastContactDays) <= 7) cards.recent7++;
+    if (a.longNoContact) cards.noContact14++;
+    if (a.sentNoFollow || a.insightType === '자료발송후미후속' || a.insightType === '견적후속필요') cards.sentNoFollow++;
+    if (Number(a.potentialScore || 0) >= 6) cards.highPotential++;
+    if (a.dataMissing) cards.dataMissing++;
+    if (a.terminalCandidate || a.statusProtected) cards.terminal++;
+    if (a.insightType === '연락장애/담당자확인') cards.contactIssue++;
+    if (a.insightType === '계약/발주확인필요') cards.contractCheck++;
+    if (a.insightType === '장기재접촉') cards.longReconnect++;
+  });
+  bundle.cards = cards;
+  bundle.statusCounts = buildMyCustomerStatusClientStatusCountsP534_(counts);
+  if (bundle.analysisDb) {
+    bundle.analysisDb.fastUpdatedAt = new Date().toISOString();
+    bundle.analysisDb.note = 'P534: 추천상태 적용은 전체 재분석 없이 화면/분석DB 해당 행만 반영';
+  }
+}
+
+function buildMyCustomerStatusClientStatusCountsP534_(counts) {
+  const order = ['미컨택','TM 배분 완료','TM 성공콜','영업팀 2차콜 필요','영업팀 2차콜 이후 영업 중','고객 설득 중','견적제출완료','장기 추진건','발주완료','계약완료','수주실패','영업종료(거절)','계약중도취소','!!상태지정필요!!','(공란)'];
+  const used = {};
+  const out = [];
+  order.forEach(function(k) { if (counts[k]) { out.push({ status: k, count: counts[k] }); used[k] = true; } });
+  Object.keys(counts).sort(function(a,b){ return String(a).localeCompare(String(b), 'ko-KR', { numeric: true, sensitivity: 'base' }); }).forEach(function(k) { if (!used[k]) out.push({ status: k, count: counts[k] }); });
+  return out;
+}
+
+function runMyCustomerStatusScopeDebugP532_() {
+  const box = document.getElementById('myCustomerStatusDebugP532') || document.getElementById('myCustomerStatusAreaP528');
+  if (box) box.innerHTML = '<div class="loading">나의 고객 현황 권한/범위 진단 중입니다...</div>';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!box) return;
+      box.innerHTML = '<details open><summary>범위 진단 결과</summary><pre>' + esc(JSON.stringify(res || {}, null, 2)) + '</pre></details>';
+    })
+    .withFailureHandler(function(err) {
+      if (!box) return;
+      box.innerHTML = '<div class="my-status-error-p528">범위 진단 실패: ' + esc(err && err.message ? err.message : String(err || '')) + '</div>';
+    })
+    .debugMyCustomerStatusScopeP532();
+}
+
 </script>

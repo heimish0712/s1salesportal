@@ -8240,10 +8240,6 @@ body.my-folder-tree-dragging-p507 .my-folder-tree-root-drop-hint-p507 {
 .my-status-rec-p528 { display:inline-block; background:#e8f0fe; color:#174ea6; padding:3px 8px; border-radius:999px; font-size:12px; font-weight:800; }
 .my-status-score-p528 { display:inline-block; color:#667085; font-size:12px; margin-left:4px; }
 .my-status-warning-text-p528 { color:#b42318; font-size:12px; font-weight:800; margin-top:4px; }
-.my-status-insight-p531 { margin-top:6px; padding:7px 8px; border-radius:10px; background:#f9fafb; border:1px solid #eef0f3; color:#344054; font-size:12px; line-height:1.45; }
-.my-status-insight-p531 b { display:block; color:#101828; font-size:12px; margin-bottom:2px; }
-.my-status-insight-p531 span { display:block; color:#475467; }
-
 .my-status-potential-p528 { color:#067647; font-size:12px; margin-top:4px; }
 .my-status-missing-p528 { color:#b54708; font-size:12px; margin-top:4px; }
 .my-status-memo-p528 { max-width:420px; line-height:1.55; color:#344054; }
@@ -8261,5 +8257,47 @@ body.my-folder-tree-dragging-p507 .my-folder-tree-root-drop-hint-p507 {
 .my-status-keywords-p529 .warn { background:#fffaeb; color:#b54708; }
 
 @media (max-width: 1180px) { .my-status-cards-p528 { grid-template-columns:repeat(2, minmax(150px, 1fr)); } .my-status-main-grid-p528 { grid-template-columns:1fr; } }
+
+
+/* P533 - 나의 고객 현황 compact table / sortable header / customer-search style inline expand */
+.my-status-meta-tip-p533 { margin-left:10px; color:#98a2b3; }
+.my-status-table-compact-p533 { table-layout:fixed; width:100%; }
+.my-status-table-compact-p533 th, .my-status-table-compact-p533 td { padding:10px 12px; vertical-align:middle; }
+.my-status-table-compact-p533 th:nth-child(1) { width:250px; }
+.my-status-table-compact-p533 th:nth-child(2) { width:120px; }
+.my-status-table-compact-p533 th:nth-child(3) { width:260px; }
+.my-status-table-compact-p533 th:nth-child(4) { width:110px; }
+.my-status-table-compact-p533 th:nth-child(5) { width:auto; }
+.my-status-table-compact-p533 th:nth-child(6) { width:190px; }
+.my-status-main-row-p533 { cursor:default; }
+.my-status-main-row-p533:hover td { background:#fbfdff; }
+.my-status-main-row-p533.is-expanded td { background:#f8fbff; border-top:1px solid #cfd7e2; }
+.my-status-sort-th-p533 { cursor:pointer; user-select:none; }
+.my-status-sort-th-p533 button { width:100%; display:flex; align-items:center; justify-content:flex-start; gap:6px; padding:0; border:0; background:transparent; color:inherit; font-weight:900; box-shadow:none; }
+.my-status-sort-th-p533 button:hover { background:transparent; opacity:1; color:#1a73e8; }
+.my-status-sort-th-p533 span { color:#98a2b3; font-size:11px; }
+.my-status-sort-th-p533.is-active button { color:#1a73e8; }
+.my-status-customer-cell-p533 b { display:block; max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.line-one-p533 { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+.my-status-analysis-compact-p533 { min-width:0; }
+.my-status-chip-line-p533 { display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin-bottom:4px; }
+.my-status-summary-line-p533, .my-status-evidence-line-p533 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.45; color:#344054; }
+.my-status-summary-line-p533 { font-size:12px; color:#475467; }
+.my-status-evidence-line-p533 { max-height:38px; }
+.my-status-rec-p528.is-action-p533 { background:#fff1f3; color:#b42318; }
+.my-status-rec-p528.is-protected-p533 { background:#ecfdf3; color:#067647; }
+.my-status-rec-p528.is-insight-p533 { background:#eef4ff; color:#3538cd; }
+.my-status-rec-p528.is-neutral-p533 { background:#f2f4f7; color:#475467; }
+.my-status-potential-p528.compact-p533 { display:inline-block; margin-top:0; background:#ecfdf3; color:#067647; border-radius:999px; padding:2px 6px; font-size:11px; font-weight:800; }
+.my-status-mini-warn-p533 { display:inline-block; background:#fffaeb; color:#b54708; border-radius:999px; padding:2px 6px; font-size:11px; font-weight:800; }
+.my-status-row-actions-compact-p533 { gap:4px; }
+.my-status-row-actions-compact-p533 button { padding:6px 8px; font-size:11px; border-radius:7px; }
+.my-status-expand-row-p533 td { padding:0 !important; background:#fff !important; }
+.my-status-expand-row-p533 .customer-expand-panel { margin:0 0 10px 0; border-top:0; }
+@media (max-width: 1280px) {
+  .my-status-table-compact-p533 th:nth-child(1) { width:220px; }
+  .my-status-table-compact-p533 th:nth-child(3) { width:230px; }
+  .my-status-table-compact-p533 th:nth-child(6) { width:160px; }
+}
 
 </style>

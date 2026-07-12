@@ -1,13 +1,17 @@
 /***************************************
  * S1 Sales Portal - 29_MyCustomerStatusService.gs
- * P531: 나의 고객 현황 - 상태변경추천/업무인사이트 분리 + 화면 응답 경량화
+ * P534: 나의 고객 현황 - 추천상태 적용 즉시 반영/부분 갱신
  * - 내 고객 기준: 마스터시트 영업담당자 = 현재 로그인 사용자의 영업담당자명
  * - 마스터시트 원본 메모 + 컨택이력_DB + TM 컨택 내용 + 자료발송 스냅샷을 통합 분석
  * - 수주실패/발주완료/계약완료는 영업담당자 판단 우선 보호 상태로 취급
  ***************************************/
 
-const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P531_INSIGHT_SPLIT_SLIM_RESPONSE_V1';
+const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P534_FAST_RECOMMENDED_STATUS_APPLY';
 const MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 = '고객현황분석_DB';
+const MY_CUSTOMER_STATUS_ANALYSIS_WRITE_BATCH_P532 = 120;
+const MY_CUSTOMER_STATUS_DB_EVIDENCE_JSON_LIMIT_P532 = 3500;
+const MY_CUSTOMER_STATUS_DB_EVENTS_JSON_LIMIT_P532 = 5000;
+const MY_CUSTOMER_STATUS_EXPLICIT_ADMIN_EMAILS_P532 = ['bang@s1samsung.com', 'xnewspringx@gmail.com', 'mhj842@gmail.com'];
 const MY_CUSTOMER_STATUS_BLOCKING_STATUSES_P528 = ['수주실패', '발주완료', '계약완료'];
 const MY_CUSTOMER_STATUS_ACTIVE_STATUSES_P528 = ['견적제출완료', '장기 추진건', '고객 설득 중', '발주완료', '!!상태지정필요!!'];
 const MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529 = [
@@ -23,182 +27,133 @@ const MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529 = [
 ];
 
 function getMyCustomerStatusDashboardP528(options) {
+  options = options || {};
+  const started = new Date();
+  let stage = 'start';
   try {
-    return getMyCustomerStatusDashboardP531_(options || {});
+    stage = 'permission';
+    const perm = getPortalCurrentPermission_();
+    const aliases = buildMyCustomerStatusOwnerAliasesP528_(perm);
+    const scopeInfo = resolveMyCustomerStatusScopeP532_(perm);
+    const isAllScope = !!scopeInfo.isAllScope;
+    const now = new Date();
+
+    stage = 'masterSource';
+    const sourceInfo = getMyCustomerStatusSourceRowsP532_(perm, aliases, isAllScope);
+    const scopedRows = sourceInfo.rows || [];
+
+    stage = 'contactHistory';
+    const contactMap = getMyCustomerContactHistoryMapP529_(scopedRows);
+
+    stage = 'analysis';
+    const analyzed = scopedRows.map(function(row) {
+      return buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap);
+    }).filter(function(row) { return row && row.rowNo; });
+
+    const statusCounts = {};
+    analyzed.forEach(function(row) {
+      const key = row.status || '(공란)';
+      statusCounts[key] = (statusCounts[key] || 0) + 1;
+    });
+
+    const stateChangeRows = analyzed.filter(function(row) { return !!(row.analysis && row.analysis.statusChangeRecommendation); });
+    const recentRows = analyzed.filter(function(row) { return row.analysis.lastContactDays != null && row.analysis.lastContactDays <= 7; });
+    const noContactRows = analyzed.filter(function(row) { return !!row.analysis.longNoContact; });
+    const sentNoFollowRows = analyzed.filter(function(row) { return !!row.analysis.sentNoFollow || row.analysis.insightType === '자료발송후미후속' || row.analysis.insightType === '견적후속필요'; });
+    const highPotentialRows = analyzed.filter(function(row) { return row.analysis.potentialScore >= 6; });
+    const dataMissingRows = analyzed.filter(function(row) { return !!row.analysis.dataMissing; });
+    const terminalRows = analyzed.filter(function(row) { return !!row.analysis.terminalCandidate || !!row.analysis.statusProtected; });
+    const contactIssueRows = analyzed.filter(function(row) { return row.analysis.insightType === '연락장애/담당자확인'; });
+    const contractCheckRows = analyzed.filter(function(row) { return row.analysis.insightType === '계약/발주확인필요'; });
+    const longReconnectRows = analyzed.filter(function(row) { return row.analysis.insightType === '장기재접촉'; });
+
+    const activeCount = analyzed.filter(function(row) { return isMyCustomerStatusActiveP528_(row.status); }).length;
+    const needStatusCount = analyzed.filter(function(row) { return isMyCustomerStatusNeedStatusP528_(row.status); }).length;
+
+    let analysisDbResult = { saved: false, rows: 0, sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 };
+    if (options.persist !== false) {
+      stage = 'persistAnalysisDb';
+      try {
+        analysisDbResult = saveMyCustomerStatusAnalysisRowsP529_(analyzed, perm, aliases, started, {
+          allScope: isAllScope,
+          scopeInfo: scopeInfo,
+          sourceInfo: sourceInfo
+        });
+      } catch (err) {
+        analysisDbResult = {
+          saved: false,
+          rows: 0,
+          sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
+          stage: 'persistAnalysisDb',
+          error: err && err.message ? err.message : String(err || '')
+        };
+        try { Logger.log('고객현황분석_DB 저장 실패: ' + (err && err.stack || err)); } catch (e) {}
+      }
+    }
+
+    stage = 'buildClientResponse';
+    const clientRows = analyzed.map(buildMyCustomerStatusClientRowP531_);
+    return {
+      ok: true,
+      version: MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528,
+      generatedAt: formatMyCustomerStatusDateTimeP528_(started),
+      elapsedMs: new Date().getTime() - started.getTime(),
+      owner: {
+        name: isAllScope ? '전체 고객' : (perm.salesRepName || perm.name || ''),
+        displayName: isAllScope ? ((perm.displayName || perm.name || perm.email || '') + ' · ADMIN 전체') : (perm.displayName || perm.name || perm.email || ''),
+        email: perm.email || '',
+        aliases: aliases,
+        scope: isAllScope ? 'ALL' : 'OWN',
+        isAdmin: !!isAllScope,
+        scopeReason: scopeInfo.reason || '',
+        scopeDebug: scopeInfo.debug || ''
+      },
+      index: {
+        version: sourceInfo.indexVersion || '',
+        builtAt: sourceInfo.indexBuiltAt || '',
+        dirty: !!sourceInfo.indexDirty,
+        sourceTotal: sourceInfo.rawTotal || scopedRows.length,
+        ownTotal: analyzed.length,
+        scopedTotal: analyzed.length,
+        scope: isAllScope ? 'ALL' : 'OWN',
+        sourceType: sourceInfo.sourceType || 'MASTER',
+        sourceMessage: sourceInfo.message || ''
+      },
+      analysisDb: analysisDbResult,
+      statusOptions: (PORTAL_CONFIG.STATUS_OPTIONS || []).slice(),
+      statusCounts: objectToSortedStatusCountArrayP528_(statusCounts),
+      cards: {
+        total: analyzed.length,
+        active: activeCount,
+        needStatus: needStatusCount,
+        mismatch: stateChangeRows.length,
+        recent7: recentRows.length,
+        noContact14: noContactRows.length,
+        sentNoFollow: sentNoFollowRows.length,
+        highPotential: highPotentialRows.length,
+        dataMissing: dataMissingRows.length,
+        terminal: terminalRows.length,
+        contactIssue: contactIssueRows.length,
+        contractCheck: contractCheckRows.length,
+        longReconnect: longReconnectRows.length
+      },
+      rows: clientRows,
+      lists: {},
+      responseMode: 'SLIM_ROWS_ONLY_P532_MASTER_SOURCE'
+    };
   } catch (err) {
-    try { Logger.log('나의 고객 현황 로딩 실패(P531): ' + (err && err.stack || err)); } catch (e) {}
+    const msg = err && err.message ? err.message : String(err || '');
     return {
       ok: false,
       version: MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528,
-      stage: 'dashboard.load',
-      error: err && err.message ? err.message : String(err || ''),
-      stack: err && err.stack ? String(err.stack).slice(0, 1200) : ''
+      stage: stage,
+      error: msg,
+      message: msg,
+      stack: err && err.stack ? String(err.stack).slice(0, 2000) : '',
+      generatedAt: formatMyCustomerStatusDateTimeP528_(started),
+      elapsedMs: new Date().getTime() - started.getTime()
     };
   }
-}
-
-function getMyCustomerStatusDashboardP531_(options) {
-  options = options || {};
-  const started = new Date();
-  const perm = getPortalCurrentPermission_();
-  const aliases = buildMyCustomerStatusOwnerAliasesP528_(perm);
-  const indexData = getCustomerSearchIndexData(perm);
-  const sourceRows = Array.isArray(indexData.rows) ? indexData.rows : [];
-  const ownRowsRaw = sourceRows.filter(function(row) { return isMyCustomerStatusOwnRowP528_(row, aliases); });
-  const now = new Date();
-
-  const masterMap = getMyCustomerMasterRowMapP529_(ownRowsRaw);
-  const ownRows = ownRowsRaw.map(function(row) { return enrichMyCustomerStatusRowFromMasterP529_(row, masterMap); });
-  const contactMap = getMyCustomerContactHistoryMapP529_(ownRows);
-
-  const analyzed = ownRows.map(function(row) {
-    return buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap);
-  }).filter(function(row) { return row && row.rowNo; });
-
-  const statusCounts = {};
-  analyzed.forEach(function(row) {
-    const key = row.status || '(공란)';
-    statusCounts[key] = (statusCounts[key] || 0) + 1;
-  });
-
-  const stateRecommendationRows = analyzed.filter(function(row) { return !!(row.analysis && row.analysis.stateChangeRecommendation); });
-  const recentRows = analyzed.filter(function(row) { return row.analysis.lastContactDays != null && row.analysis.lastContactDays <= 7; });
-  const noContactRows = analyzed.filter(function(row) { return !!row.analysis.longNoContact; });
-  const sentNoFollowRows = analyzed.filter(function(row) { return !!row.analysis.sentNoFollow; });
-  const contactIssueRows = analyzed.filter(function(row) { return row.analysis.insightType === '연락장애/담당자확인'; });
-  const contractCheckRows = analyzed.filter(function(row) { return row.analysis.insightType === '계약/발주 확인필요'; });
-  const longTermRows = analyzed.filter(function(row) { return row.analysis.insightType === '장기 재접촉'; });
-  const highPotentialRows = analyzed.filter(function(row) { return row.analysis.potentialScore >= 6; });
-  const dataMissingRows = analyzed.filter(function(row) { return !!row.analysis.dataMissing; });
-  const terminalRows = analyzed.filter(function(row) { return !!row.analysis.terminalCandidate || !!row.analysis.statusProtected; });
-
-  const activeCount = analyzed.filter(function(row) { return isMyCustomerStatusActiveP528_(row.status); }).length;
-  const needStatusCount = analyzed.filter(function(row) { return isMyCustomerStatusNeedStatusP528_(row.status); }).length;
-
-  let analysisDbResult = { saved: false, rows: 0, sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 };
-  if (options.persist !== false) {
-    try {
-      analysisDbResult = saveMyCustomerStatusAnalysisRowsP529_(analyzed, perm, aliases, started);
-    } catch (err) {
-      analysisDbResult = {
-        saved: false,
-        rows: 0,
-        sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
-        error: err && err.message ? err.message : String(err || '')
-      };
-      try { Logger.log('고객현황분석_DB 저장 실패: ' + (err && err.stack || err)); } catch (e) {}
-    }
-  }
-
-  const slimRows = analyzed.map(function(row) { return buildMyCustomerStatusClientRowP531_(row); });
-  return {
-    ok: true,
-    version: MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528,
-    generatedAt: formatMyCustomerStatusDateTimeP528_(started),
-    elapsedMs: new Date().getTime() - started.getTime(),
-    owner: {
-      name: perm.salesRepName || perm.name || '',
-      displayName: perm.displayName || perm.name || perm.email || '',
-      email: perm.email || '',
-      aliases: aliases
-    },
-    index: {
-      version: indexData.version || '',
-      builtAt: indexData.builtAt || '',
-      dirty: !!indexData.dirty,
-      sourceTotal: sourceRows.length,
-      ownTotal: analyzed.length
-    },
-    analysisDb: analysisDbResult,
-    statusOptions: (PORTAL_CONFIG.STATUS_OPTIONS || []).slice(),
-    statusCounts: objectToSortedStatusCountArrayP528_(statusCounts),
-    cards: {
-      total: analyzed.length,
-      active: activeCount,
-      needStatus: needStatusCount,
-      mismatch: stateRecommendationRows.length,
-      stateRecommendation: stateRecommendationRows.length,
-      recent7: recentRows.length,
-      noContact14: noContactRows.length,
-      sentNoFollow: sentNoFollowRows.length,
-      contactIssue: contactIssueRows.length,
-      contractCheck: contractCheckRows.length,
-      longTerm: longTermRows.length,
-      highPotential: highPotentialRows.length,
-      dataMissing: dataMissingRows.length,
-      terminal: terminalRows.length
-    },
-    responseMode: 'slimRowsOnly.P531',
-    rows: slimRows
-  };
-}
-
-function buildMyCustomerStatusClientRowP531_(row) {
-  row = row || {};
-  const a = row.analysis || {};
-  return {
-    rowNo: row.rowNo || '',
-    customerNo: row.customerNo || '',
-    company: row.company || '',
-    salesRep: row.salesRep || '',
-    status: row.status || '',
-    vendor: row.vendor || '',
-    contact: row.contact || '',
-    phone: row.phone || '',
-    directPhone: row.directPhone || '',
-    email: row.email || '',
-    finalQuote: row.finalQuote || '',
-    lastSent: row.lastSent || '',
-    sentAt: row.sentAt || '',
-    sendStatus: row.sendStatus || '',
-    memoSummary: shortenMyCustomerStatusTextP528_(a.latestDecisionEventText || a.latestAnyEventText || row.memoSummary || '', 220),
-    lastContactDate: a.latestDecisionEventDate || row.lastContactDate || '',
-    analysis: {
-      recommendedStatus: a.recommendedStatus || row.status || '',
-      confidence: a.confidence || '',
-      priorityRank: a.priorityRank || '',
-      mismatch: !!a.mismatch,
-      mismatchType: a.mismatchType || '',
-      reason: a.reason || '',
-      nextAction: a.nextAction || '',
-      lastContactDays: a.lastContactDays,
-      longNoContact: !!a.longNoContact,
-      sentNoFollow: !!a.sentNoFollow,
-      potentialScore: a.potentialScore || 0,
-      tags: (a.tags || []).slice(0, 8),
-      statusProtected: !!a.statusProtected,
-      stateChangeAllowed: !!a.stateChangeAllowed,
-      canApplyRecommendation: !!a.canApplyRecommendation,
-      recommendationVisible: !!a.recommendationVisible,
-      stateChangeRecommendation: !!a.stateChangeRecommendation,
-      stateChangeRecommendedStatus: a.stateChangeRecommendedStatus || '',
-      stateChangeRecommendationGrade: a.stateChangeRecommendationGrade || '',
-      insightType: a.insightType || '',
-      insightSummary: a.insightSummary || '',
-      latestAnyEventText: shortenMyCustomerStatusTextP528_(a.latestAnyEventText || '', 180),
-      latestDecisionEventText: shortenMyCustomerStatusTextP528_(a.latestDecisionEventText || '', 220),
-      latestDecisionEventDate: a.latestDecisionEventDate || '',
-      latestDecisionEventSource: a.latestDecisionEventSource || '',
-      latestEventSource: a.latestDecisionEventSource || a.latestEventSource || '',
-      matchedKeywords: trimMyCustomerMatchedKeywordsForClientP531_(a.matchedKeywords),
-      sourceLabels: (a.sourceLabels || []).slice(0, 5),
-      missingFields: (a.missingFields || []).slice(0, 8),
-      dataMissing: !!a.dataMissing,
-      contractCompleteType: a.contractCompleteType || '',
-      thirdPartyContract: !!a.thirdPartyContract,
-      analysisCautionLevel: a.analysisCautionLevel || '',
-      recommendationBlockedReason: a.recommendationBlockedReason || ''
-    }
-  };
-}
-
-function trimMyCustomerMatchedKeywordsForClientP531_(matched) {
-  matched = matched || {};
-  const out = {};
-  ['thirdPartyContract','fail','contactIssue','complete','unknownComplete','order','quote','long','active','data'].forEach(function(k) {
-    if (matched[k] && matched[k].length) out[k] = matched[k].slice(0, 4);
-  });
-  return out;
 }
 
 function updateMyCustomerStatusFromAnalysisP528(payload) {
@@ -217,7 +172,7 @@ function updateMyCustomerStatusFromAnalysisP528(payload) {
   const detail = getCustomerDetail(rowNo);
   const detailCustomerNo = normalizeCustomerNoForKey_(detail && detail.customerNo || '');
   if (detailCustomerNo !== customerNo) throw new Error('고객번호가 일치하지 않습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.');
-  if (!isMyCustomerStatusOwnRowP528_(detail, aliases)) throw new Error('내 담당 고객만 나의 고객 현황에서 상태를 수정할 수 있습니다.');
+  if (!isMyCustomerStatusRowAllowedP531_(detail, perm, aliases)) throw new Error('나의 고객 현황에서 수정할 수 있는 고객이 아닙니다. 관리자/admin은 전체 고객, 영업담당자는 본인 담당 고객만 수정할 수 있습니다.');
   const currentStatus = String((detail && detail.status) || '').trim();
   if (isMyCustomerStatusProtectedStatusP530_(currentStatus)) {
     throw new Error('수주실패/발주완료/계약완료 상태는 나의 고객 현황 자동추천으로 변경하지 않습니다. 실제 수정이 필요하면 고객상세에서 직접 확인 후 수정해 주세요.');
@@ -225,33 +180,101 @@ function updateMyCustomerStatusFromAnalysisP528(payload) {
   if (expectedStatus && currentStatus !== expectedStatus) {
     throw new Error('현재 진행현황이 화면에 표시된 값과 다릅니다. 현재값: ' + (currentStatus || '(공란)'));
   }
-  if (!isMyCustomerStatusNeedStatusP528_(currentStatus)) {
-    throw new Error('나의 고객 현황에서는 상태지정필요/공란 고객만 추천상태를 바로 적용합니다. 진행 중 고객은 고객상세에서 직접 확인 후 수정해 주세요.');
-  }
-  if (['수주실패', '견적제출완료'].indexOf(newStatus) < 0) {
-    throw new Error('나의 고객 현황 자동추천 적용은 수주실패 또는 견적제출완료만 허용합니다. 발주/계약/장기 판단은 직접 확인해 주세요.');
-  }
 
   const res = saveCustomerPatchFastP473({
     rowNo: rowNo,
     customerNo: customerNo,
     values: { status: newStatus },
     expectedValues: { status: currentStatus },
-    clientSaveSource: 'myCustomerStatus.analysisStatusApply.P531',
-    source: 'myCustomerStatus.analysisStatusApply.P531',
+    clientSaveSource: 'myCustomerStatus.analysisStatusApply.P534',
+    source: 'myCustomerStatus.analysisStatusApply.P534',
     clientOperationId: String(payload.clientOperationId || makeMyCustomerStatusOperationIdP528_(customerNo, rowNo)),
     thinSave: true,
     fastMode: true,
     noSynchronousRefresh: true
   });
+  if (res && (res.queuedFallbackP473 || res.conflictP473 || res.applied === false)) {
+    return Object.assign({}, res || {}, {
+      ok: false,
+      rowNo: rowNo,
+      customerNo: customerNo,
+      oldStatus: currentStatus,
+      newStatus: newStatus,
+      source: 'myCustomerStatus.analysisStatusApply.P534',
+      fastApply: false,
+      noFullReanalysis: true,
+      message: res.message || '상태 저장이 즉시 완료되지 않았습니다. 저장큐/충돌 상태를 확인해 주세요.'
+    });
+  }
+  const analysisDbUpdate = markMyCustomerStatusAnalysisAppliedP534_(rowNo, customerNo, currentStatus, newStatus, perm);
   return Object.assign({}, res || {}, {
     ok: true,
     rowNo: rowNo,
     customerNo: customerNo,
     oldStatus: currentStatus,
     newStatus: newStatus,
-    source: 'myCustomerStatus.analysisStatusApply.P531'
+    analysisDbUpdate: analysisDbUpdate,
+    source: 'myCustomerStatus.analysisStatusApply.P534',
+    fastApply: true,
+    noFullReanalysis: true
   });
+}
+
+function markMyCustomerStatusAnalysisAppliedP534_(rowNo, customerNo, oldStatus, newStatus, perm) {
+  try {
+    const ss = getWebAppDbSpreadsheet_();
+    const sheet = ss.getSheetByName(MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529);
+    if (!sheet || sheet.getLastRow() < 2) return { ok: false, reason: 'analysisSheetEmpty' };
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
+    const idx = {};
+    headers.forEach(function(h, i) { if (h) idx[h] = i; });
+    const rowIdx = idx['rowNo'];
+    const customerIdx = idx['고객번호'];
+    if (rowIdx == null && customerIdx == null) return { ok: false, reason: 'missingKeyHeaders' };
+    const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+    const nowText = formatMyCustomerStatusDateTimeP528_(new Date());
+    const reviewer = String((perm && (perm.name || perm.displayName || perm.email)) || Session.getActiveUser().getEmail() || '').trim();
+    let updated = 0;
+    const targetCustomer = normalizeCustomerNoForKey_(customerNo);
+    const targetRow = Number(rowNo || 0) || 0;
+
+    function setIfExists(arr, header, value) {
+      if (idx[header] != null) arr[idx[header]] = value;
+    }
+
+    values.forEach(function(arr, i) {
+      const rNo = Number(arr[rowIdx] || 0) || 0;
+      const cNo = normalizeCustomerNoForKey_(arr[customerIdx] || '');
+      const rowMatches = targetRow && rNo === targetRow;
+      const customerMatches = targetCustomer && cNo === targetCustomer;
+      if (!rowMatches && !customerMatches) return;
+      if (targetRow && rNo && rNo !== targetRow) return;
+      if (targetCustomer && cNo && cNo !== targetCustomer) return;
+
+      setIfExists(arr, '현재상태', newStatus);
+      setIfExists(arr, '추천상태', newStatus);
+      setIfExists(arr, '불일치여부', 'N');
+      setIfExists(arr, '검토상태', '적용완료');
+      setIfExists(arr, '검토자', reviewer);
+      setIfExists(arr, '검토일시', nowText);
+      setIfExists(arr, '검토메모', '나의 고객 현황 추천상태 적용: ' + (oldStatus || '(공란)') + ' → ' + newStatus);
+      setIfExists(arr, '상태변경추천상태', '');
+      setIfExists(arr, '상태변경추천여부', 'N');
+      setIfExists(arr, '상태변경추천등급', '');
+      setIfExists(arr, '상태변경추천허용', 'N');
+      setIfExists(arr, '추천노출여부', 'N');
+      setIfExists(arr, '상태보호여부', isMyCustomerStatusProtectedStatusP530_(newStatus) ? 'Y' : 'N');
+      setIfExists(arr, '상태추천차단사유', '사용자가 추천상태를 적용하여 즉시 반영됨');
+      setIfExists(arr, '보수판정사유', 'P534 fast apply: 전체 재분석 없이 해당 고객 상태만 반영');
+      sheet.getRange(2 + i, 1, 1, lastCol).setValues([arr]);
+      updated++;
+    });
+    return { ok: true, updated: updated, sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529, updatedAt: nowText };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err || '') };
+  }
 }
 
 function buildMyCustomerStatusOwnerAliasesP528_(perm) {
@@ -297,6 +320,94 @@ function isMyCustomerStatusOwnRowP528_(row, aliases) {
     const a = normalizeMyCustomerStatusNameP528_(alias);
     return a && (salesRep === a || salesRep.indexOf(a) >= 0 || a.indexOf(salesRep) >= 0);
   });
+}
+
+function getMyCustomerStatusSourceRowsP532_(perm, aliases, isAllScope) {
+  const info = {
+    rows: [],
+    rawTotal: 0,
+    sourceType: 'MASTER',
+    message: '',
+    indexVersion: '',
+    indexBuiltAt: '',
+    indexDirty: false
+  };
+  try {
+    if (typeof getCustomerSearchIndexMeta === 'function') {
+      const meta = getCustomerSearchIndexMeta();
+      info.indexVersion = meta && meta.version || '';
+      info.indexBuiltAt = meta && meta.builtAt || '';
+      info.indexDirty = !!(meta && meta.dirty);
+    }
+  } catch (err) {
+    info.message = '검색인덱스 메타 조회 실패: ' + (err && err.message ? err.message : String(err || ''));
+  }
+
+  const masterObjects = getMasterObjects_();
+  info.rawTotal = masterObjects.length;
+  const rows = masterObjects.map(function(obj) {
+    return makeMyCustomerStatusRowFromMasterObjectP532_(obj);
+  }).filter(function(row) {
+    return row && row.rowNo && normalizeCustomerNoForKey_(row.customerNo || '');
+  });
+
+  if (isAllScope) {
+    info.rows = rows;
+    info.message = (info.message ? info.message + ' / ' : '') + '마스터시트 전체 기준 분석';
+    return info;
+  }
+
+  info.rows = rows.filter(function(row) { return isMyCustomerStatusOwnRowP528_(row, aliases); });
+  info.message = (info.message ? info.message + ' / ' : '') + '마스터시트 영업담당자 기준 분석';
+  return info;
+}
+
+function makeMyCustomerStatusRowFromMasterObjectP532_(obj) {
+  obj = obj || {};
+  const memo = getCustomerListValue_(obj, 'memo') || '';
+  const customerNo = getCustomerListValue_(obj, 'customerNo') || obj['고객번호'] || '';
+  const row = {
+    __source: 'master',
+    __summary: false,
+    __masterBacked: true,
+    rowNo: Number(obj.__rowNo || 0) || obj.__rowNo || '',
+    customerNo: customerNo,
+    orderNo: getCustomerListValue_(obj, 'orderNo') || '',
+    company: getCustomerListValue_(obj, 'company') || '',
+    salesRep: getCustomerListValue_(obj, 'salesRep') || '',
+    status: getCustomerListValue_(obj, 'status') || '',
+    customerRank: getCustomerListValue_(obj, 'customerRank') || '',
+    contact: getCustomerListValue_(obj, 'contact') || '',
+    phone: getCustomerListValue_(obj, 'phone') || '',
+    directPhone: getCustomerListValue_(obj, 'directPhone') || '',
+    email: getCustomerListValue_(obj, 'email') || '',
+    vendor: getCustomerListValue_(obj, 'vendor') || '',
+    finalQuote: getCustomerListValue_(obj, 'finalQuote') || '',
+    memo: memo,
+    fullMemo: memo,
+    memoSummary: shortenMyCustomerStatusTextP528_(getRecentMemoTextP528_(extractMyCustomerMemoEventsP528_(memo), memo, 260) || memo, 260),
+    address: getCustomerListValue_(obj, 'address') || '',
+    fullAddress: getCustomerListValue_(obj, 'address') || '',
+    area: getCustomerIndexObjectValueK2_(obj, 'area') || '',
+    grade: getCustomerIndexObjectValueK2_(obj, 'grade') || '',
+    buildingType: getCustomerIndexObjectValueK2_(obj, 'buildingType') || '',
+    contractUnit: getCustomerIndexObjectValueK2_(obj, 'contractUnit') || '',
+    appointment: getCustomerIndexObjectValueK2_(obj, 'appointment') || '',
+    maintenance: getCustomerIndexObjectValueK2_(obj, 'maintenance') || '',
+    performance: getCustomerIndexObjectValueK2_(obj, 'performance') || '',
+    vat: getCustomerIndexObjectValueK2_(obj, 'vat') || '',
+    discountRate: getCustomerIndexObjectValueK2_(obj, 'discountRate') || '',
+    specialTerms: getCustomerIndexObjectValueK2_(obj, 'specialTerms') || '',
+    lastSent: getCustomerIndexObjectValueK2_(obj, 'lastSent') || '',
+    sendCount: getCustomerIndexObjectValueK2_(obj, ['발송횟수', '발송 횟수']) || '',
+    sendStatus: getCustomerIndexObjectValueK2_(obj, ['발송상태', '발송 상태']) || '',
+    sentAt: getCustomerIndexObjectValueK2_(obj, 'sentAt') || '',
+    memoInferredStatus: getCustomerIndexObjectValueK2_(obj, ['메모상 추측 상태값', '메모상추측상태값', '메모 추측 상태값']) || '',
+    statusMatch: getCustomerIndexObjectValueK2_(obj, ['상태값 일치 여부', '상태값일치여부']) || '',
+    tmProgressStatus: getCustomerIndexObjectValueK2_(obj, 'tmProgressStatus') || '',
+    tmContactContent: getCustomerIndexObjectValueK2_(obj, 'tmContactContent') || ''
+  };
+  return row;
 }
 
 function getMyCustomerMasterRowMapP529_(ownRows) {
@@ -444,11 +555,12 @@ function buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap) {
   );
   const dedupedContactEvents = dedupeMyCustomerEventsP529_(contactEvents);
   const events = buildMyCustomerCombinedEventsP529_(row, memo, dedupedContactEvents);
-  const latestEvent = getLatestMyCustomerMemoEventP528_(events);
-  const latestDate = latestEvent && latestEvent.date ? latestEvent.date : parseLoosePortalDateP528_(sentAt);
+  const latestAnyEvent = getLatestMyCustomerMemoEventP528_(events);
+  const latestDecisionEvent = getLatestMyCustomerDecisionEventP531_(events);
+  const latestDate = latestDecisionEvent && latestDecisionEvent.date ? latestDecisionEvent.date : (latestAnyEvent && latestAnyEvent.date ? latestAnyEvent.date : parseLoosePortalDateP528_(sentAt));
   const lastContactDays = latestDate ? daysBetweenPortalDatesP528_(latestDate, now) : null;
-  const analysis = classifyMyCustomerMemoP528_(row, events, latestEvent, lastContactDays, now);
-  const latestText = latestEvent && latestEvent.text ? latestEvent.text : getLastMemoLineP528_(memo);
+  const analysis = classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecisionEvent, lastContactDays, now);
+  const latestText = latestDecisionEvent && latestDecisionEvent.text ? latestDecisionEvent.text : (latestAnyEvent && latestAnyEvent.text ? latestAnyEvent.text : getLastMemoLineP528_(memo));
   const missingFields = getMyCustomerMissingFieldsP528_(row);
   analysis.missingFields = missingFields;
   analysis.dataMissing = missingFields.length > 0;
@@ -472,7 +584,7 @@ function buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap) {
     lastSent: String(row.lastSent || ''),
     sentAt: String(row.sentAt || ''),
     sendStatus: String(row.sendStatus || ''),
-    memoSummary: shortenMyCustomerStatusTextP528_(latestText || memo, 260),
+    memoSummary: shortenMyCustomerStatusTextP528_(latestText || memo, 220),
     lastContactDate: latestDate ? formatMyCustomerStatusDateP528_(latestDate) : '',
     analysis: analysis
   };
@@ -534,289 +646,218 @@ function makeMyCustomerStatusEventP529_(data) {
   return ev;
 }
 
-function classifyMyCustomerMemoP528_(row, events, latestEvent, lastContactDays, now) {
+function classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecisionEvent, lastContactDays, now) {
   row = row || {};
   events = Array.isArray(events) ? events : [];
-  events.forEach(function(ev) { if (ev) ev.category = classifyMyCustomerEventCategoryP531_(ev); });
+  events.forEach(function(ev) { enrichMyCustomerEventClassP531_(ev); });
+
   const currentStatus = String(row.status || '').trim();
+  const statusLabel = currentStatus || '!!상태지정필요!!';
   const stateProtected = isMyCustomerStatusProtectedStatusP530_(currentStatus);
   const sentDone = !!(String(row.sendStatus || '').indexOf('발송완료') >= 0 || row.lastSent || row.sentAt);
-  const usableEvents = events.filter(function(ev) { return ev && ev.category !== 'SYSTEM_META'; });
-  const decisionEvents = usableEvents.filter(function(ev) { return isMyCustomerDecisionEventP531_(ev); });
-  const excludedEvents = events.filter(function(ev) { return ev && ev.category === 'SYSTEM_META'; });
-  const signalSummary = summarizeMyCustomerSignalsP529_(decisionEvents);
-  const allSignalSummary = summarizeMyCustomerSignalsP529_(usableEvents);
-  const latestAnyEvent = getLatestMyCustomerSignalP530_(events) || latestEvent || null;
-  const latestDecisionEvent = getLatestMyCustomerSignalP530_(decisionEvents) || null;
-  const effectiveLastContactDays = latestDecisionEvent && latestDecisionEvent.date ? daysBetweenPortalDatesP528_(latestDecisionEvent.date, now) : lastContactDays;
+  const decisionEvents = events.filter(function(ev) { return ev && ev.eventClass === 'CUSTOMER_INTENT'; });
+  const statusEvents = events.filter(function(ev) { return ev && ev.eventClass !== 'SYSTEM_META'; });
+  const signalSummary = summarizeMyCustomerSignalsP529_(statusEvents);
+  const decisionSummary = summarizeMyCustomerSignalsP529_(decisionEvents);
 
-  const ownComplete = signalSummary.complete.latest;
-  const thirdPartyContract = signalSummary.thirdPartyContract.latest;
-  const unknownComplete = signalSummary.unknownComplete.latest;
-  const fail = signalSummary.fail.latest;
+  const thirdPartyContract = decisionSummary.thirdPartyContract.latest;
+  const fail = decisionSummary.fail.latest;
+  const contactBlocker = decisionSummary.contactBlocker.latest || signalSummary.contactBlocker.latest;
+  const ownComplete = decisionSummary.complete.latest;
+  const unknownComplete = decisionSummary.unknownComplete.latest;
+  const order = decisionSummary.order.latest;
+  const long = decisionSummary.long.latest;
+  const quote = decisionSummary.quote.latest || signalSummary.quote.latest;
+  const active = decisionSummary.active.latest;
+  const data = signalSummary.data.latest;
   const failLike = getLatestMyCustomerSignalP530_([thirdPartyContract, fail]);
-  const order = signalSummary.order.latest;
-  const long = signalSummary.long.latest;
-  const active = signalSummary.active.latest;
-  const data = allSignalSummary.data.latest;
-  const contactIssue = allSignalSummary.contactIssue.latest;
-  const quote = allSignalSummary.quote.latest;
-  const contractCompleteType = getMyCustomerContractCompleteTypeP530_(signalSummary);
+  const contractCompleteType = getMyCustomerContractCompleteTypeP530_(decisionSummary);
   const hasThirdPartyContract = !!thirdPartyContract;
+  const latestDecision = latestDecisionEvent || getLatestMyCustomerDecisionEventP531_(events);
+  const latestAny = latestAnyEvent || getLatestMyCustomerMemoEventP528_(events);
 
-  let stateChangeRecommendedStatus = currentStatus || '';
-  let stateChangeRecommendation = false;
-  let stateChangeRecommendationGrade = '';
-  let recommendationBlockedReason = '';
+  let statusChangeRecommendedStatus = currentStatus || '';
+  let statusChangeRecommendation = false;
+  let statusChangeRecommendationGrade = '';
+  let statusRecommendationBlockedReason = '';
+  let confidence = 0;
+  let priorityRank = '';
   let insightType = '';
   let insightSummary = '';
-  let mismatchType = '';
-  let confidence = 0;
   let reason = '';
   let nextAction = '';
-  let priorityRank = '';
   let terminalCandidate = false;
   let analysisCautionLevel = '';
   let conservativeReason = '';
 
-  const needStatus = isMyCustomerStatusNeedStatusP528_(currentStatus);
+  function setInsight(type, summary, action, conf, priority) {
+    if (!insightType) insightType = type || '';
+    if (!insightSummary) insightSummary = summary || '';
+    if (!nextAction) nextAction = action || '';
+    if (!confidence && conf) confidence = conf;
+    if (!priorityRank && priority) priorityRank = priority;
+  }
+  function setStatusRecommendation(target, grade, summary, action, conf, priority) {
+    statusChangeRecommendedStatus = target || currentStatus || '';
+    statusChangeRecommendation = !!target && target !== currentStatus;
+    statusChangeRecommendationGrade = grade || '';
+    insightType = grade || insightType;
+    insightSummary = summary || insightSummary;
+    reason = summary || reason;
+    nextAction = action || nextAction;
+    confidence = conf || confidence;
+    priorityRank = priority || priorityRank;
+  }
 
   if (stateProtected) {
+    statusChangeRecommendedStatus = currentStatus;
+    statusChangeRecommendation = false;
     confidence = 98;
     priorityRank = '0_상태보호';
     terminalCandidate = true;
-    mismatchType = currentStatus + ' 보호';
-    insightType = '종결상태 보호';
-    insightSummary = currentStatus + ' 상태는 담당자 판단을 우선합니다.';
-    analysisCautionLevel = hasThirdPartyContract && currentStatus === '계약완료' ? '참고확인' : '보호';
-    conservativeReason = currentStatus + '은/는 영업담당자가 직접 판단했을 가능성이 높은 보호 상태입니다. 메모/TM 이력만으로 상태변경 추천을 하지 않습니다.';
-    recommendationBlockedReason = '보호 상태: ' + currentStatus;
-    if (currentStatus === '수주실패' && (failLike || hasThirdPartyContract)) {
-      mismatchType = '수주실패 정합 / 종결상태 보호';
-      insightType = hasThirdPartyContract ? '타사선정/수주실패 정합' : '수주실패 정합';
-      insightSummary = hasThirdPartyContract ? '타사 계약/타사 결정 이력이 있어 현재 수주실패 상태와 정합합니다.' : '거절/진행불가 이력이 있어 현재 수주실패 상태와 정합합니다.';
-      reason = insightSummary;
-      nextAction = '추가 영업 대상에서 제외하거나 장기 재접촉 여부만 참고하세요.';
+    statusRecommendationBlockedReason = currentStatus + '은/는 담당자가 직접 정리한 주요 상태이므로 자동 상태추천 대상에서 제외합니다.';
+    conservativeReason = statusRecommendationBlockedReason;
+    if (currentStatus === '수주실패' && (hasThirdPartyContract || fail)) {
+      setInsight('종결상태보호', hasThirdPartyContract ? '타사 계약/타사 결정 계열 이력이 있어 현재 수주실패 상태와 정합합니다.' : '거절/진행불가 계열 이력이 있어 현재 수주실패 상태와 정합합니다.', '추가 영업 대상에서 제외하거나 장기 재접촉 여부만 참고하세요.', 98, '0_수주실패보호');
     } else if (currentStatus === '발주완료') {
-      mismatchType = '발주완료 보호';
-      insightType = '발주완료 보호';
-      reason = '발주완료는 주요 진행 상태이므로 현재 상태를 우선 신뢰합니다.';
-      insightSummary = reason;
-      nextAction = '계약완료 전환 여부는 담당자가 직접 확인해 주세요.';
+      setInsight('종결상태보호', '발주완료는 주요 진행 상태이므로 현재 상태를 우선 신뢰합니다.', '계약완료 전환 여부는 담당자가 직접 확인해 주세요.', 98, '0_발주완료보호');
     } else if (currentStatus === '계약완료') {
-      mismatchType = '계약완료 보호';
-      insightType = '계약완료 보호';
-      reason = hasThirdPartyContract ? '타사 계약 표현이 감지되었지만 현재 계약완료 상태는 자동으로 뒤집지 않습니다. 필요 시 참고 확인만 하세요.' : '계약완료는 주요 종결 상태이므로 현재 상태를 우선 신뢰합니다.';
-      insightSummary = reason;
-      nextAction = '계약완료 자료/계약완료 시트와 대조가 필요할 때만 수동 확인하세요.';
+      setInsight('종결상태보호', hasThirdPartyContract ? '타사 계약 표현이 감지되었지만 현재 계약완료 상태는 자동으로 뒤집지 않습니다. 필요 시 참고 확인만 하세요.' : '계약완료는 주요 종결 상태이므로 현재 상태를 우선 신뢰합니다.', '계약완료 자료/계약완료 시트와 대조가 필요할 때만 수동 확인하세요.', 98, '0_계약완료보호');
+    } else {
+      setInsight('종결상태보호', statusRecommendationBlockedReason, '필요 시 고객상세에서 직접 확인하세요.', 98, '0_상태보호');
     }
   } else if (thirdPartyContract) {
-    confidence = 93;
     terminalCandidate = true;
-    insightType = '타사선정';
-    insightSummary = '타사 계약/타사 결정/다른 업체 선정 신호가 있습니다.';
-    reason = '타사 계약완료는 우리 계약완료가 아니라 수주실패 신호입니다.';
-    nextAction = needStatus ? '수주실패 처리 여부를 확인하세요.' : '현재 진행상태와 타사 선정 이력을 같이 확인하세요.';
-    priorityRank = '2_타사선정';
-    analysisCautionLevel = '높음';
-    if (needStatus) {
-      stateChangeRecommendedStatus = '수주실패';
-      stateChangeRecommendation = true;
-      stateChangeRecommendationGrade = '강함';
-      mismatchType = '수주실패 전환 추천';
+    if (isMyCustomerStatusStrictStateChangeBaseP531_(currentStatus)) {
+      setStatusRecommendation('수주실패', '수주실패 전환 추천', '최신 유효 이력에 타사 계약/타사 결정/다른 업체 선정 신호가 있습니다. 타사 계약완료는 우리 계약완료가 아니라 수주실패 신호입니다.', '수주실패 처리 여부를 확인한 뒤 적용하세요.', 94, '2_타사계약수주실패');
     } else {
-      recommendationBlockedReason = '진행 중 상태는 타사선정 이력이 있어도 자동 상태변경 추천하지 않음';
-      mismatchType = '타사선정 참고';
+      statusChangeRecommendedStatus = currentStatus;
+      statusRecommendationBlockedReason = '현재상태가 상태지정필요/공란이 아니므로 타사 계약 신호는 상태변경 버튼이 아니라 영업 참고로만 표시합니다.';
+      setInsight('타사선정/수주실패확인', '타사 계약/타사 결정 신호가 있습니다. 현재 진행현황이 맞는지 확인하세요.', '필요하면 고객상세에서 직접 수주실패 처리하세요.', 90, '2_타사계약참고');
     }
-  } else if (fail && !hasPositiveSignalAfterP529_(signalSummary, fail)) {
-    confidence = 88;
+  } else if (fail && !hasPositiveSignalAfterP529_(decisionSummary, fail)) {
     terminalCandidate = true;
-    insightType = '수주실패 의심';
-    insightSummary = '거절/진행불가로 볼 수 있는 강한 신호가 있습니다.';
-    reason = insightSummary;
-    nextAction = needStatus ? '수주실패 처리 여부를 확인하세요.' : '현재 상태와 최근 고객 의사를 확인하세요.';
-    priorityRank = '2_수주실패의심';
-    if (needStatus) {
-      stateChangeRecommendedStatus = '수주실패';
-      stateChangeRecommendation = true;
-      stateChangeRecommendationGrade = '강함';
-      mismatchType = '수주실패 전환 추천';
+    if (isMyCustomerStatusStrictStateChangeBaseP531_(currentStatus)) {
+      setStatusRecommendation('수주실패', '수주실패 전환 추천', '최신 유효 이력에 명확한 거절/진행불가 신호가 있습니다.', '수주실패 처리 여부를 확인한 뒤 적용하세요.', 88, '2_수주실패');
     } else {
-      recommendationBlockedReason = '상태지정필요/공란이 아니므로 수주실패 자동추천 보류';
-      mismatchType = '수주실패 참고';
+      statusChangeRecommendedStatus = currentStatus;
+      statusRecommendationBlockedReason = '현재상태가 상태지정필요/공란이 아니므로 수주실패 신호는 영업 참고로만 표시합니다.';
+      setInsight('수주실패확인', '명확한 거절/진행불가 신호가 있습니다. 현재 진행현황이 맞는지 확인하세요.', '필요하면 고객상세에서 직접 정리하세요.', 82, '2_수주실패참고');
     }
-  } else if (contactIssue) {
-    confidence = 74;
-    insightType = '연락장애/담당자확인';
-    insightSummary = '전화연결/직통번호/담당자 확인 관련 장애 신호입니다. 수주실패로 보지 않습니다.';
-    reason = insightSummary;
-    nextAction = '담당자/직통번호/관리사무소 경로를 보강하세요.';
-    priorityRank = '6_연락장애';
-    recommendationBlockedReason = '연락장애는 수주실패 추천 대상이 아님';
   } else if (ownComplete || order) {
-    confidence = ownComplete ? 84 : 78;
-    insightType = '계약/발주 확인필요';
-    insightSummary = ownComplete ? '당사 계약완료로 볼 수 있는 신호가 있습니다. 단, 자동 상태변경은 하지 않습니다.' : '용역신청서/계약서/사업자등록증/발주 신호가 있습니다. 발주 여부 확인이 필요합니다.';
-    reason = insightSummary;
-    nextAction = '계약/발주 자료와 고객상세를 확인한 뒤 담당자가 직접 상태를 정리하세요.';
-    priorityRank = ownComplete ? '1_계약확인필요' : '4_발주확인필요';
+    statusChangeRecommendedStatus = currentStatus;
+    statusRecommendationBlockedReason = '발주완료/계약완료는 자동 상태추천 대상이 아닙니다.';
     analysisCautionLevel = '확인필요';
-    recommendationBlockedReason = '계약완료/발주완료는 자동추천하지 않음';
-  } else if (unknownComplete) {
-    confidence = 58;
-    insightType = '계약주체 확인필요';
-    insightSummary = '계약완료 표현은 있으나 타사 계약인지 당사 계약인지 불명확합니다.';
-    reason = insightSummary;
-    nextAction = '계약 주체를 확인하세요.';
-    priorityRank = '7_주체불명계약완료';
-    analysisCautionLevel = '확인필요';
-    recommendationBlockedReason = '계약완료 주체불명';
+    setInsight('계약/발주확인필요', ownComplete ? '당사 계약/계약완료 처리로 보일 수 있는 신호가 있습니다. 단, 계약완료는 자동추천하지 않습니다.' : '용역신청서/계약서류/사업자등록증/발주 신호가 있습니다. 발주완료 여부를 확인하세요.', '계약/발주 자료를 확인하고 필요한 경우 고객상세에서 직접 상태를 수정하세요.', ownComplete ? 86 : 78, ownComplete ? '1_우리계약확인' : '4_발주계약확인');
+    terminalCandidate = !!ownComplete;
+  } else if (contactBlocker) {
+    statusChangeRecommendedStatus = currentStatus;
+    statusRecommendationBlockedReason = '전화연결/담당자확인/직통번호 안내불가류는 수주실패가 아니라 연락장애로 분류합니다.';
+    setInsight('연락장애/담당자확인', '연락 경로 또는 담당자 확인 문제가 감지되었습니다. 수주실패로 자동 추천하지 않습니다.', '담당자/직통번호/관리사무소 경로를 보강한 뒤 재연락하세요.', 76, '6_연락장애');
   } else if (long) {
-    confidence = 70;
-    insightType = '장기 재접촉';
-    insightSummary = '예산/내년/추후/보류 등 장기 재접촉 신호가 있습니다.';
-    reason = insightSummary;
-    nextAction = '다음 재접촉 시점을 지정하세요.';
-    priorityRank = '3_장기재접촉';
-    recommendationBlockedReason = '장기 추진건은 담당자 판단 필요';
-  } else if (quote || sentDone) {
-    confidence = quote ? 73 : 66;
-    insightType = '자료발송 후 미후속';
-    insightSummary = quote ? '견적/자료 발송 신호가 있습니다. 상태 변경보다 후속 연락 관리가 우선입니다.' : '발송상태 또는 마지막발송 값이 있습니다.';
-    reason = insightSummary;
-    nextAction = '견적서 발송 후 후속 연락을 진행하세요.';
-    priorityRank = '5_견적후속';
-    if (needStatus && quote && !failLike && !ownComplete && !order && !long && !unknownComplete) {
-      stateChangeRecommendedStatus = '견적제출완료';
-      stateChangeRecommendation = true;
-      stateChangeRecommendationGrade = '보통';
-      mismatchType = '견적제출완료 전환 추천';
-      confidence = 76;
+    statusChangeRecommendedStatus = currentStatus;
+    statusRecommendationBlockedReason = '장기 추진건은 담당자 판단 편차가 커서 자동 상태추천하지 않습니다.';
+    setInsight('장기재접촉', '예산/내년/추후/보류 등 장기 재접촉 신호가 있습니다.', '다음 재접촉 시점을 오늘 할 일 또는 메모에 남기세요.', 78, '3_장기재접촉');
+  } else if ((quote || sentDone) && !failLike && !ownComplete && !order && !thirdPartyContract) {
+    if (isMyCustomerStatusStrictStateChangeBaseP531_(currentStatus) && quote && isMyCustomerQuoteLatestEnoughForStatusP531_(quote, failLike, ownComplete, order, thirdPartyContract)) {
+      setStatusRecommendation('견적제출완료', '견적제출완료 전환 추천', '상태지정필요 고객이며 최신 유효 이벤트가 견적/자료 발송 계열입니다.', '견적제출완료 적용 후 후속 연락 일정을 잡으세요.', 77, '5_견적제출상태추천');
     } else {
-      recommendationBlockedReason = '자료발송은 일반적으로 상태변경 근거가 아니라 후속연락 인사이트';
-      mismatchType = '견적후속 참고';
+      statusChangeRecommendedStatus = currentStatus;
+      statusRecommendationBlockedReason = '자료발송/견적발송은 상태를 뒤집는 근거가 아니라 후속연락 인사이트로 표시합니다.';
+      setInsight('자료발송후미후속', '견적/자료 발송 이력이 있습니다. 발송 후 후속 연락 여부를 확인하세요.', '견적 확인 연락 또는 재발송 필요 여부를 확인하세요.', quote ? 72 : 66, '5_견적후속');
     }
-  } else if (active) {
-    confidence = 67;
-    insightType = '진행상황 확인';
-    insightSummary = '검토/비교/재확인/담당자 전달 신호가 있습니다.';
-    reason = insightSummary;
-    nextAction = '고객 반응을 확인하고 다음 액션을 남기세요.';
-    priorityRank = '6_설득중참고';
-    recommendationBlockedReason = '고객 설득 중/진행 상황은 자동 상태변경 추천하지 않음';
+  } else if (unknownComplete) {
+    statusChangeRecommendedStatus = currentStatus;
+    statusRecommendationBlockedReason = '계약완료 표현은 있으나 타사 계약인지 당사 계약인지 불명확하여 상태변경 추천을 보류합니다.';
+    analysisCautionLevel = '확인필요';
+    setInsight('계약주체확인필요', '계약완료 표현은 있으나 계약 주체가 불명확합니다.', '타사 계약인지 당사 계약인지 확인하세요.', 60, '7_주체불명계약완료');
   } else if (data) {
-    confidence = 62;
-    insightType = '데이터 확인필요';
-    insightSummary = '중복/주소/연면적/연락처 등 데이터 정리 신호가 있습니다.';
-    reason = insightSummary;
-    nextAction = '고객정보를 먼저 정리하세요.';
-    priorityRank = '8_데이터확인';
-    recommendationBlockedReason = '데이터 확인은 상태변경 추천이 아님';
+    statusChangeRecommendedStatus = currentStatus;
+    setInsight('데이터확인필요', '중복/주소/연면적/연락처 등 데이터 확인 신호가 있습니다.', '고객정보를 먼저 정리하세요.', 62, '8_데이터확인');
+  } else if (active) {
+    statusChangeRecommendedStatus = currentStatus;
+    setInsight('진행중추적', '검토/비교/재확인/담당자 전달 등 진행중 신호가 있습니다.', '고객 반응을 확인하고 다음 액션을 남기세요.', 64, '6_진행중');
   } else {
-    confidence = 50;
-    insightType = '특이사항 없음';
-    insightSummary = '상태변경 추천 없이 현재 상태를 유지합니다.';
-    reason = insightSummary;
-    nextAction = '최근 메모와 다음 액션을 확인하세요.';
-    priorityRank = '9_기본';
+    statusChangeRecommendedStatus = currentStatus;
+    setInsight('', '', '', 0, '');
   }
 
-  if (!stateChangeRecommendation) stateChangeRecommendedStatus = currentStatus || '';
-  const recommendationVisible = !!stateChangeRecommendation;
-  const mismatch = recommendationVisible;
+  const strictBase = isMyCustomerStatusStrictStateChangeBaseP531_(currentStatus);
+  const stateChangeAllowed = !stateProtected && strictBase;
+  const recommendationVisible = !!(stateChangeAllowed && statusChangeRecommendation && statusChangeRecommendedStatus && statusChangeRecommendedStatus !== currentStatus && confidence >= 75 && isMyCustomerStatusAllowedAutoTargetP531_(statusChangeRecommendedStatus));
+  if (!recommendationVisible && statusChangeRecommendation) {
+    statusChangeRecommendation = false;
+    statusRecommendationBlockedReason = statusRecommendationBlockedReason || '상태변경 추천 노출 기준에 맞지 않아 업무 인사이트로만 표시합니다.';
+    statusChangeRecommendedStatus = currentStatus;
+  }
+
   const activeStatus = isMyCustomerStatusActiveP528_(currentStatus);
-  const longNoContact = activeStatus && (effectiveLastContactDays == null || effectiveLastContactDays >= 14);
+  const longNoContact = activeStatus && (lastContactDays == null || lastContactDays >= 14);
   let sentNoFollow = false;
-  if (sentDone && activeStatus) {
-    if (effectiveLastContactDays == null) sentNoFollow = true;
-    else if (effectiveLastContactDays >= 3 && !order && !failLike && !ownComplete && !thirdPartyContract) sentNoFollow = true;
+  if (sentDone && activeStatus && !stateProtected) {
+    if (lastContactDays == null) sentNoFollow = true;
+    else if (lastContactDays >= 3 && !order && !failLike && !ownComplete && !thirdPartyContract) sentNoFollow = true;
   }
-  if (sentNoFollow && insightType === '특이사항 없음') {
-    insightType = '자료발송 후 미후속';
-    insightSummary = '자료발송 후 후속 연락 확인이 필요합니다.';
-    reason = insightSummary;
-    nextAction = '고객에게 자료 확인 여부를 재확인하세요.';
-  }
-  const recommendedForScore = stateChangeRecommendation ? stateChangeRecommendedStatus : currentStatus;
-  const potentialScore = stateProtected ? 0 : calculateMyCustomerPotentialScoreP528_(row, allSignalSummary.flags, effectiveLastContactDays, recommendedForScore);
+  const potentialScore = stateProtected ? 0 : calculateMyCustomerPotentialScoreP528_(row, signalSummary.flags, lastContactDays, statusChangeRecommendedStatus);
   const tags = [];
-  Object.keys(allSignalSummary.flags).forEach(function(k) { if (allSignalSummary.flags[k]) tags.push(k); });
+  Object.keys(signalSummary.flags).forEach(function(k) { if (signalSummary.flags[k]) tags.push(k); });
   if (longNoContact) tags.push('장기미접촉');
   if (sentNoFollow) tags.push('자료발송후미후속');
   if (terminalCandidate || stateProtected) tags.push('종결성신호');
   if (stateProtected) tags.push('상태보호');
   if (hasThirdPartyContract) tags.push('타사계약');
   if (unknownComplete) tags.push('계약주체불명');
-  if (contactIssue) tags.push('연락장애');
+  if (contactBlocker) tags.push('연락장애');
 
-  const eventCategorySummary = summarizeMyCustomerEventCategoriesP531_(events);
-  const excludedEventSummary = excludedEvents.slice(0, 5).map(function(ev) { return shortenMyCustomerStatusTextP528_(ev.text, 120); }).join(' | ');
+  const latestAnyText = latestAny && latestAny.text ? latestAny.text : '';
+  const latestDecisionText = latestDecision && latestDecision.text ? latestDecision.text : '';
+  const excludedEvents = events.filter(function(ev) { return ev && ev.eventClass === 'SYSTEM_META'; }).slice(0, 5);
+  const eventClassSummary = summarizeMyCustomerEventClassesP531_(events);
+
   return {
-    recommendedStatus: stateChangeRecommendation ? stateChangeRecommendedStatus : (currentStatus || ''),
+    recommendedStatus: recommendationVisible ? statusChangeRecommendedStatus : statusLabel,
+    statusChangeRecommendedStatus: recommendationVisible ? statusChangeRecommendedStatus : '',
+    statusChangeRecommendation: recommendationVisible,
+    statusChangeRecommendationGrade: recommendationVisible ? statusChangeRecommendationGrade : '',
     confidence: confidence,
     priorityRank: priorityRank,
-    mismatch: mismatch,
-    mismatchType: mismatch ? mismatchType : '',
+    mismatch: recommendationVisible,
+    mismatchType: recommendationVisible ? statusChangeRecommendationGrade : '',
     terminalCandidate: terminalCandidate || stateProtected,
-    reason: reason || conservativeReason,
-    nextAction: nextAction,
-    lastContactDays: effectiveLastContactDays,
+    reason: insightSummary || reason || conservativeReason || '',
+    insightType: insightType || '',
+    insightSummary: insightSummary || '',
+    nextAction: nextAction || '',
+    lastContactDays: lastContactDays,
     longNoContact: longNoContact,
     sentNoFollow: sentNoFollow,
     potentialScore: potentialScore,
     tags: tags,
-    latestMemoDate: latestDecisionEvent && latestDecisionEvent.date ? formatMyCustomerStatusDateP528_(latestDecisionEvent.date) : '',
-    latestMemoText: shortenMyCustomerStatusTextP528_(latestDecisionEvent && latestDecisionEvent.text || latestAnyEvent && latestAnyEvent.text || '', 220),
-    latestEventSource: latestDecisionEvent ? latestDecisionEvent.sourceLabel : (latestAnyEvent ? latestAnyEvent.sourceLabel : ''),
-    latestAnyEventText: shortenMyCustomerStatusTextP528_(latestAnyEvent && latestAnyEvent.text || '', 260),
-    latestDecisionEventText: shortenMyCustomerStatusTextP528_(latestDecisionEvent && latestDecisionEvent.text || '', 260),
-    latestDecisionEventDate: latestDecisionEvent && latestDecisionEvent.date ? formatMyCustomerStatusDateP528_(latestDecisionEvent.date) : '',
-    latestDecisionEventSource: latestDecisionEvent ? latestDecisionEvent.sourceLabel : '',
-    eventCategorySummary: eventCategorySummary,
-    excludedEventSummary: excludedEventSummary,
-    signalSummary: allSignalSummary,
-    matchedKeywords: allSignalSummary.matchedKeywords,
-    sourceLabels: allSignalSummary.sourceLabels,
+    latestMemoDate: latestDecision && latestDecision.date ? formatMyCustomerStatusDateP528_(latestDecision.date) : (latestAny && latestAny.date ? formatMyCustomerStatusDateP528_(latestAny.date) : ''),
+    latestMemoText: shortenMyCustomerStatusTextP528_(latestDecisionText || latestAnyText, 220),
+    latestEventSource: latestDecision ? latestDecision.sourceLabel : (latestAny ? latestAny.sourceLabel : ''),
+    latestAnyEventText: shortenMyCustomerStatusTextP528_(latestAnyText, 220),
+    latestAnyEventSource: latestAny ? latestAny.sourceLabel : '',
+    latestDecisionEventText: shortenMyCustomerStatusTextP528_(latestDecisionText, 220),
+    latestDecisionEventDate: latestDecision && latestDecision.date ? formatMyCustomerStatusDateP528_(latestDecision.date) : '',
+    latestDecisionEventSource: latestDecision ? latestDecision.sourceLabel : '',
+    signalSummary: signalSummary,
+    matchedKeywords: signalSummary.matchedKeywords,
+    sourceLabels: signalSummary.sourceLabels,
     statusProtected: stateProtected,
-    stateChangeAllowed: !stateProtected && needStatus,
+    stateChangeAllowed: stateChangeAllowed,
     canApplyRecommendation: recommendationVisible,
     recommendationVisible: recommendationVisible,
-    stateChangeRecommendation: stateChangeRecommendation,
-    stateChangeRecommendedStatus: stateChangeRecommendedStatus,
-    stateChangeRecommendationGrade: stateChangeRecommendationGrade,
-    insightType: insightType,
-    insightSummary: insightSummary,
-    contractCompleteType: contractCompleteType,
+    contractCompleteType: getMyCustomerContractCompleteTypeP530_(decisionSummary),
     thirdPartyContract: hasThirdPartyContract,
     analysisCautionLevel: analysisCautionLevel,
-    conservativeReason: conservativeReason || (stateProtected ? reason : ''),
-    recommendationBlockedReason: recommendationBlockedReason
+    conservativeReason: conservativeReason || '',
+    statusRecommendationBlockedReason: statusRecommendationBlockedReason || '',
+    eventClassSummary: eventClassSummary,
+    excludedEventSummary: excludedEvents.map(function(ev) { return shortenMyCustomerStatusTextP528_(ev.text, 120); }).join(' / '),
+    latestAnyEvent: eventForClientP529_(latestAny || {}),
+    latestDecisionEvent: eventForClientP529_(latestDecision || {})
   };
-}
-
-function classifyMyCustomerEventCategoryP531_(ev) {
-  const source = String(ev && ev.source || '').trim();
-  const text = normalizeMyCustomerSignalTextP529_(ev && (ev.text || ev.rawText) || '');
-  if (source === 'sendLog') return 'SEND_LOG';
-  if (/(중복\s*삭제|데이터\s*병합|담당자별\s*시트|이관|삭제\s*고객번호|대표전화번호|담당자\s*이메일\s*주소|정보\s*확인해보시고|tm\s*콜\s*원하시면|상태지정필요로|고객번호\s*변경)/.test(text)) return 'SYSTEM_META';
-  if (/(주소\s*확인|연면적\s*확인|전화번호\s*오류|메일\s*오류|번호\s*오류)/.test(text)) return 'DATA_NOTE';
-  return 'CUSTOMER_INTENT';
-}
-
-function isMyCustomerDecisionEventP531_(ev) {
-  if (!ev) return false;
-  const cat = ev.category || classifyMyCustomerEventCategoryP531_(ev);
-  if (cat === 'SYSTEM_META' || cat === 'DATA_NOTE' || cat === 'SEND_LOG') return false;
-  return true;
-}
-
-function summarizeMyCustomerEventCategoriesP531_(events) {
-  const counts = {};
-  (events || []).forEach(function(ev) {
-    const cat = ev && (ev.category || classifyMyCustomerEventCategoryP531_(ev)) || 'UNKNOWN';
-    counts[cat] = (counts[cat] || 0) + 1;
-  });
-  return Object.keys(counts).sort().map(function(k) { return k + ':' + counts[k]; }).join(', ');
 }
 
 function isMyCustomerStatusProtectedStatusP530_(status) {
@@ -852,7 +893,10 @@ function getMyCustomerContractCompleteTypeP530_(summary) {
 function getMyCustomerEventSignalsP529_(text) {
   text = normalizeMyCustomerSignalTextP529_(text);
   const defs = getMyCustomerSignalDefsP529_();
-  const out = { complete: [], thirdPartyContract: [], unknownComplete: [], fail: [], contactIssue: [], order: [], long: [], quote: [], active: [], data: [] };
+  const out = {
+    complete: [], thirdPartyContract: [], unknownComplete: [], fail: [], contactBlocker: [],
+    order: [], long: [], quote: [], active: [], data: []
+  };
   Object.keys(defs).forEach(function(k) {
     defs[k].forEach(function(rule) {
       let hit = false;
@@ -878,34 +922,36 @@ function getMyCustomerSignalDefsP529_() {
       { kw: '타업체계약완료', label: '타업체 계약완료' }, { kw: '타업체 계약완료', label: '타업체 계약완료' }, { kw: '타업체와 계약완료', label: '타업체 계약완료' },
       { kw: '다른업체와 계약완료', label: '다른업체 계약완료' }, { kw: '다른 업체와 계약 완료', label: '다른업체 계약완료' },
       { kw: '타사로 결정', label: '타사로 결정' }, { kw: '타사 결정', label: '타사 결정' }, { kw: '타업체로 결정', label: '타업체로 결정' }, { kw: '타업체 결정', label: '타업체 결정' },
+      { kw: '타업체 선정', label: '타업체 선정' }, { kw: '타사 선정', label: '타사 선정' },
       { kw: '다른 업체로 결정', label: '다른 업체로 결정' }, { kw: '다른곳으로 결정', label: '다른 곳으로 결정' }, { kw: '다른 곳으로 결정', label: '다른 곳으로 결정' },
       { kw: '기존 업체 유지', label: '기존업체 유지' }, { kw: '기존업체 유지', label: '기존업체 유지' }, { kw: '금액 낮은 곳으로 계약', label: '저가 타업체 계약' },
-      { kw: '장애인사업장하고 진행', label: '타 기관 진행' }, { kw: '업체 선정 완료', label: '타 업체 선정 완료' }, { kw: '선정 완료', label: '업체 선정 완료' },
+      { kw: '장애인사업장하고 진행', label: '타 기관 진행' }, { kw: '업체 선정 완료', label: '타 업체 선정 완료' },
       { re: /타(사|업체).{0,12}(결정|계약|진행|완료|선정)/, label: '타사 결정/계약' },
       { re: /(다른|기존).{0,6}(업체|곳).{0,12}(계약|진행|결정|유지|완료)/, label: '다른 업체 계약/결정' },
       { re: /(가격|금액).{0,10}(낮|저렴).{0,12}(곳|업체).{0,12}(계약|진행|결정)/, label: '저가 업체 계약/결정' }
     ],
     unknownComplete: [
-      { re: /(^|[^타사타업체다른기존])계약\s*완료(?!\s*처리|\s*시트)/, label: '계약완료 주체불명' },
       { kw: '계약완료', label: '계약완료 주체불명' }, { kw: '계약 완료', label: '계약완료 주체불명' }
     ],
     fail: [
-      { kw: '수주실패' }, { kw: '가격차이가 많이 나서 어렵', label: '가격차이로 어려움' }, { kw: '가격 차이가 많이 나서 어렵', label: '가격차이로 어려움' },
-      { kw: '진행 어렵', label: '진행 어려움' }, { kw: '진행어렵', label: '진행 어려움' }, { kw: '안한다고', label: '안 한다고 함' }, { kw: '안 한다고', label: '안 한다고 함' },
-      { kw: '하지 말', label: '하지 말라고 함' }, { kw: '연락하지', label: '연락하지 말라고 함' }, { kw: '대상 아님' }, { kw: '대상아님' }, { kw: '폐업' }, { kw: '계약 취소' }, { kw: '계약취소' },
-      { re: /(계약|진행|서비스|견적|제안).{0,10}거절/, label: '계약/진행 거절' },
-      { re: /거절.{0,10}(계약|진행|서비스|견적|제안)/, label: '계약/진행 거절' },
+      { kw: '수주실패' }, { kw: '계약 취소' }, { kw: '계약취소' }, { kw: '진행 취소' },
+      { kw: '가격차이가 많이 나서 어렵', label: '가격차이로 어려움' }, { kw: '가격 차이가 많이 나서 어렵', label: '가격차이로 어려움' },
+      { kw: '진행 어렵', label: '진행 어려움' }, { kw: '진행어렵', label: '진행 어려움' },
+      { kw: '안한다고', label: '고객 안 한다고 함' }, { kw: '안 한다고', label: '고객 안 한다고 함' }, { kw: '하지 말', label: '진행 거절' }, { kw: '연락하지', label: '연락 거절' },
+      { kw: '대상 아님' }, { kw: '대상아님' }, { kw: '폐업' },
+      { re: /(계약|진행|제안).{0,8}(거절|불가|안함|안 함)/, label: '계약/진행 거절' },
       { re: /(가격|금액).{0,12}(차이|비싸).{0,16}(어렵|불가|안)/, label: '가격 이슈로 진행불가' }
     ],
-    contactIssue: [
-      { kw: '전화연결 불가' }, { kw: '전화 연결 불가' }, { kw: '직원 연결 불가' }, { kw: '직통번호 불가' }, { kw: '직통 번호 불가' },
-      { kw: '안내 불가' }, { kw: '담당자 부재' }, { kw: '자리비움' }, { kw: '자리 비움' }, { kw: '내용 잘 모름' }, { kw: '연락처 안내 거절' },
-      { kw: '관리사무소 번호 문의 거절' }, { kw: '메일 확인 불가' }, { kw: '통화 불가' }, { kw: '연결 불가' }, { kw: '부재중' }
+    contactBlocker: [
+      { kw: '전화연결 불가' }, { kw: '전화 연결 불가' }, { kw: '연결 불가' }, { kw: '전화 안받' }, { kw: '전화 안 받' },
+      { kw: '직원 연결 불가' }, { kw: '직통번호 안내불가' }, { kw: '직통번호 안내 불가' }, { kw: '안내 불가' },
+      { kw: '담당자 부재' }, { kw: '자리비움' }, { kw: '자리 비움' }, { kw: '내용 잘 모름' }, { kw: '잘 모른다고' },
+      { kw: '연락처 안내 거절' }, { kw: '관리사무소 번호 문의하니 거절' }, { kw: '메일 확인 불가' }, { kw: '담당자 확인 필요' }
     ],
     order: [
-      { kw: '용역신청서' }, { kw: '계약서 요청' }, { kw: '계약서류' }, { kw: '계약 진행' }, { kw: '계약진행' },
-      { kw: '사업자등록증' }, { kw: '사업자 등록증' }, { kw: '발주' }, { kw: '진행하시기로' }, { kw: '계약하시기로' },
-      { kw: '서류 받' }, { kw: '서류 요청' }, { kw: '취합' }
+      { kw: '용역신청서 회신' }, { kw: '용역신청서 받' }, { kw: '계약서 요청' }, { kw: '계약서류 요청' }, { kw: '계약서류 회신' },
+      { kw: '계약 진행' }, { kw: '계약진행' }, { kw: '사업자등록증 요청' }, { kw: '사업자 등록증 요청' }, { kw: '발주 요청' }, { kw: '발주 예정' },
+      { kw: '진행하시기로' }, { kw: '계약하시기로' }, { kw: '서류 받' }, { kw: '서류 요청' }, { kw: '취합' }
     ],
     long: [
       { kw: '내년' }, { kw: '예산' }, { kw: '하반기' }, { kw: '상반기' }, { kw: '추후' }, { kw: '나중' }, { kw: '장기' }, { kw: '보류' }, { kw: '재검토' }
@@ -930,7 +976,7 @@ function normalizeMyCustomerSignalTextP529_(text) {
 }
 
 function summarizeMyCustomerSignalsP529_(events) {
-  const categories = ['complete', 'thirdPartyContract', 'unknownComplete', 'fail', 'contactIssue', 'order', 'long', 'quote', 'active', 'data'];
+  const categories = ['complete', 'thirdPartyContract', 'unknownComplete', 'fail', 'contactBlocker', 'order', 'long', 'quote', 'active', 'data'];
   const summary = {
     flags: {},
     matchedKeywords: {},
@@ -939,19 +985,17 @@ function summarizeMyCustomerSignalsP529_(events) {
     thirdPartyContract: { latest: null, count: 0, keywords: [] },
     unknownComplete: { latest: null, count: 0, keywords: [] },
     fail: { latest: null, count: 0, keywords: [] },
-    contactIssue: { latest: null, count: 0, keywords: [] },
+    contactBlocker: { latest: null, count: 0, keywords: [] },
     order: { latest: null, count: 0, keywords: [] },
     long: { latest: null, count: 0, keywords: [] },
     quote: { latest: null, count: 0, keywords: [] },
     active: { latest: null, count: 0, keywords: [] },
     data: { latest: null, count: 0, keywords: [] }
   };
-  const sourceSeen = {};
   (events || []).forEach(function(ev) {
-    if (ev && ev.sourceLabel && !sourceSeen[ev.sourceLabel]) {
-      sourceSeen[ev.sourceLabel] = true;
-      summary.sourceLabels.push(ev.sourceLabel);
-    }
+    if (!ev) return;
+    enrichMyCustomerEventClassP531_(ev);
+    if (ev.sourceLabel && summary.sourceLabels.indexOf(ev.sourceLabel) < 0) summary.sourceLabels.push(ev.sourceLabel);
     categories.forEach(function(cat) {
       const hits = ev && ev.signal && ev.signal[cat] || [];
       if (!hits.length) return;
@@ -1178,7 +1222,6 @@ function eventForClientP529_(ev) {
     date: ev.date ? formatMyCustomerStatusDateP528_(ev.date) : '',
     text: shortenMyCustomerStatusTextP528_(ev.text, 260),
     actor: ev.actor || '',
-    category: ev.category || classifyMyCustomerEventCategoryP531_(ev),
     keywords: flattenMyCustomerSignalKeywordsP529_(ev.signal)
   };
 }
@@ -1188,8 +1231,7 @@ function eventForHashP529_(ev) {
     source: ev.source,
     date: ev.date ? formatMyCustomerStatusDateP528_(ev.date) : '',
     text: ev.text || '',
-    actor: ev.actor || '',
-    category: ev.category || classifyMyCustomerEventCategoryP531_(ev)
+    actor: ev.actor || ''
   };
 }
 
@@ -1227,13 +1269,15 @@ function ensureMyCustomerStatusAnalysisSheetP529_() {
   return sheet;
 }
 
-function saveMyCustomerStatusAnalysisRowsP529_(rows, perm, aliases, analyzedAt) {
+function saveMyCustomerStatusAnalysisRowsP529_(rows, perm, aliases, analyzedAt, options) {
   rows = Array.isArray(rows) ? rows : [];
+  options = options || {};
   const sheet = ensureMyCustomerStatusAnalysisSheetP529_();
   const lastCol = Math.max(sheet.getLastColumn(), MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529.length);
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
   const headerMap = {};
   headers.forEach(function(h, i) { if (h) headerMap[h] = i; });
+  const allScope = !!options.allScope || canMyCustomerStatusViewAllP531_(perm);
   const ownerAliases = {};
   (aliases || []).forEach(function(a) { const k = normalizeMyCustomerStatusNameP528_(a); if (k) ownerAliases[k] = true; });
   const ownerName = String((perm && (perm.salesRepName || perm.name || perm.displayName)) || '').trim();
@@ -1242,7 +1286,7 @@ function saveMyCustomerStatusAnalysisRowsP529_(rows, perm, aliases, analyzedAt) 
 
   const existing = [];
   const lastRow = sheet.getLastRow();
-  if (lastRow >= 2) {
+  if (!allScope && lastRow >= 2) {
     const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
     values.forEach(function(r) {
       const rep = String(r[headerMap['영업담당자']] || '').trim();
@@ -1254,36 +1298,50 @@ function saveMyCustomerStatusAnalysisRowsP529_(rows, perm, aliases, analyzedAt) 
 
   const nowText = formatMyCustomerStatusDateTimeP528_(analyzedAt || new Date());
   const newRows = rows.map(function(row) { return buildMyCustomerAnalysisDbRowP529_(row, nowText, headers); });
-  const combined = existing.concat(newRows);
+  const combined = allScope ? newRows : existing.concat(newRows);
+
   if (lastRow >= 2) sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
-  if (combined.length) sheet.getRange(2, 1, combined.length, lastCol).setValues(combined);
+  const batchSize = MY_CUSTOMER_STATUS_ANALYSIS_WRITE_BATCH_P532 || 120;
+  let written = 0;
+  for (let start = 0; start < combined.length; start += batchSize) {
+    const chunk = combined.slice(start, start + batchSize);
+    if (!chunk.length) continue;
+    sheet.getRange(2 + start, 1, chunk.length, lastCol).setValues(chunk);
+    written += chunk.length;
+    try { SpreadsheetApp.flush(); } catch (err) {}
+  }
   return {
     saved: true,
     rows: newRows.length,
     totalRows: combined.length,
+    written: written,
+    batchSize: batchSize,
     sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
     spreadsheetUrl: getWebAppDbSpreadsheet_().getUrl(),
-    savedAt: nowText
+    savedAt: nowText,
+    scope: allScope ? 'ALL' : 'OWN',
+    sourceType: options.sourceInfo && options.sourceInfo.sourceType || 'MASTER'
   };
 }
+
 
 function buildMyCustomerAnalysisDbRowP529_(row, analyzedAtText, headers) {
   row = row || {};
   const a = row.analysis || {};
-  const s = a.signalSummary || {};
   const latestEvent = (a.events && a.events[0]) || {};
   const evidence = {
     reason: a.reason || '',
-    nextAction: a.nextAction || '',
-    sourceLabels: a.sourceLabels || [],
-    matchedKeywords: a.matchedKeywords || {},
-    latestEvent: latestEvent,
     insightType: a.insightType || '',
     insightSummary: a.insightSummary || '',
-    latestDecisionEventText: a.latestDecisionEventText || '',
-    recommendationBlockedReason: a.recommendationBlockedReason || ''
+    nextAction: shortenMyCustomerStatusTextP528_(a.nextAction || '', 180),
+    sourceLabels: a.sourceLabels || [],
+    matchedKeywords: a.matchedKeywords || {},
+    latestAnyEvent: a.latestAnyEvent || latestEvent,
+    latestDecisionEvent: a.latestDecisionEvent || {}
   };
   const sourceLabels = (a.sourceLabels || []).join(', ');
+  const statusRecommendation = a.statusChangeRecommendation ? 'Y' : 'N';
+  const recommendedForDb = a.statusChangeRecommendation ? a.statusChangeRecommendedStatus : (row.status || '');
   const rec = {
     '분석일시': analyzedAtText,
     '분석ID': 'MCSA-' + String(row.customerNo || '') + '-' + String(row.rowNo || '') + '-' + String(a.memoHash || '').slice(0, 8),
@@ -1292,15 +1350,15 @@ function buildMyCustomerAnalysisDbRowP529_(row, analyzedAtText, headers) {
     '회사명': row.company || '',
     '영업담당자': row.salesRep || '',
     '현재상태': row.status || '',
-    '추천상태': a.recommendedStatus || row.status || '',
-    '판정유형': a.mismatchType || '',
+    '추천상태': recommendedForDb,
+    '판정유형': a.statusChangeRecommendation ? (a.statusChangeRecommendationGrade || '상태변경 추천') : (a.insightType || ''),
     '신뢰도': a.confidence || '',
     '우선순위등급': a.priorityRank || '',
-    '불일치여부': a.mismatch ? 'Y' : 'N',
+    '불일치여부': a.statusChangeRecommendation ? 'Y' : 'N',
     '분석소스': sourceLabels,
-    '최근연락일': a.latestDecisionEventDate || row.lastContactDate || a.latestMemoDate || '',
-    '최근이벤트출처': a.latestEventSource || latestEvent.sourceLabel || '',
-    '최근이벤트요약': a.latestMemoText || row.memoSummary || '',
+    '최근연락일': row.lastContactDate || a.latestMemoDate || '',
+    '최근이벤트출처': a.latestDecisionEventSource || a.latestEventSource || latestEvent.sourceLabel || '',
+    '최근이벤트요약': a.latestDecisionEventText || a.latestMemoText || row.memoSummary || '',
     '강한긍정키워드': [].concat((a.matchedKeywords && a.matchedKeywords.complete) || [], (a.matchedKeywords && a.matchedKeywords.order) || [], (a.matchedKeywords && a.matchedKeywords.active) || []).join(', '),
     '강한부정키워드': [].concat((a.matchedKeywords && a.matchedKeywords.thirdPartyContract) || [], (a.matchedKeywords && a.matchedKeywords.fail) || []).join(', '),
     '계약진행키워드': ((a.matchedKeywords && a.matchedKeywords.order) || []).join(', '),
@@ -1310,8 +1368,8 @@ function buildMyCustomerAnalysisDbRowP529_(row, analyzedAtText, headers) {
     '가능성점수': a.potentialScore || 0,
     '위험태그': (a.tags || []).join(', '),
     '추천액션': a.nextAction || '',
-    '근거JSON': safeStringifyMyCustomerStatusP529_(evidence, 12000),
-    '이벤트JSON': safeStringifyMyCustomerStatusP529_((a.events || []).slice(0, 30), 30000),
+    '근거JSON': safeStringifyMyCustomerStatusP529_(evidence, MY_CUSTOMER_STATUS_DB_EVIDENCE_JSON_LIMIT_P532),
+    '이벤트JSON': safeStringifyMyCustomerStatusP529_((a.events || []).slice(0, 8).map(eventForClientP529_), MY_CUSTOMER_STATUS_DB_EVENTS_JSON_LIMIT_P532),
     'memoHash': a.memoHash || '',
     'contactHistoryHash': a.contactHistoryHash || '',
     'sendHash': a.sendHash || '',
@@ -1327,20 +1385,243 @@ function buildMyCustomerAnalysisDbRowP529_(row, analyzedAtText, headers) {
     '추천노출여부': a.recommendationVisible ? 'Y' : 'N',
     '분석주의등급': a.analysisCautionLevel || '',
     '보수판정사유': a.conservativeReason || '',
-    '상태변경추천상태': a.stateChangeRecommendedStatus || '',
-    '상태변경추천여부': a.stateChangeRecommendation ? 'Y' : 'N',
-    '상태변경추천등급': a.stateChangeRecommendationGrade || '',
+    '상태변경추천상태': a.statusChangeRecommendedStatus || '',
+    '상태변경추천여부': statusRecommendation,
+    '상태변경추천등급': a.statusChangeRecommendationGrade || '',
     '업무인사이트유형': a.insightType || '',
     '업무인사이트요약': a.insightSummary || '',
     '최신전체이벤트요약': a.latestAnyEventText || '',
     '최신판정이벤트요약': a.latestDecisionEventText || '',
     '최신판정이벤트일자': a.latestDecisionEventDate || '',
     '최신판정이벤트출처': a.latestDecisionEventSource || '',
-    '이벤트분류요약': a.eventCategorySummary || '',
+    '이벤트분류요약': a.eventClassSummary || '',
     '제외이벤트요약': a.excludedEventSummary || '',
-    '상태추천차단사유': a.recommendationBlockedReason || ''
+    '상태추천차단사유': a.statusRecommendationBlockedReason || ''
   };
   return headers.map(function(h) { return rec[h] == null ? '' : rec[h]; });
+}
+
+
+function canMyCustomerStatusViewAllP531_(perm) {
+  return !!resolveMyCustomerStatusScopeP532_(perm || getPortalCurrentPermission_()).isAllScope;
+}
+
+function resolveMyCustomerStatusScopeP532_(perm) {
+  perm = perm || {};
+  const email = String(perm.email || perm.emailKey || '').trim().toLowerCase();
+  const level = String(perm.level || '').trim().toUpperCase();
+  const role = String(perm.role || '').trim();
+  const rank = String(perm.rank || '').trim();
+  const scope = String(perm.defaultScope || '').trim().toUpperCase();
+  const nameText = [perm.name, perm.displayName, perm.salesRepName, perm.note].map(function(v) { return String(v || ''); }).join(' ');
+  const debug = [email, level, role, rank, scope, nameText].join(' | ');
+  if (!perm || perm.active === false) return { isAllScope: false, reason: 'inactive', debug: debug };
+  if (perm.isAdmin || perm.canUseAdminHome) return { isAllScope: true, reason: 'adminFlag', debug: debug };
+  if (level === 'ADMIN' || level === 'MANAGER') return { isAllScope: true, reason: 'adminLevel', debug: debug };
+  if (role.indexOf('서무') >= 0 || role.indexOf('총괄') >= 0 || role.indexOf('관리자') >= 0) return { isAllScope: true, reason: 'adminRole', debug: debug };
+  if (nameText.indexOf('관리자') >= 0 || nameText.indexOf('서무') >= 0 || nameText.indexOf('총괄') >= 0) return { isAllScope: true, reason: 'adminNameOrNote', debug: debug };
+  if (MY_CUSTOMER_STATUS_EXPLICIT_ADMIN_EMAILS_P532.indexOf(email) >= 0) return { isAllScope: true, reason: 'explicitAdminEmail', debug: debug };
+  if (rank.indexOf('책임') >= 0 && role.indexOf('영업담당자') < 0) return { isAllScope: true, reason: 'adminRank', debug: debug };
+  // 전체고객열람(Y)만으로는 나의 고객 현황을 전체 고객 범위로 열지 않습니다.
+  // 단, SALES가 아닌 계정의 기본범위 ALL은 관리자성 계정으로 간주합니다.
+  if (scope === 'ALL' && level !== 'SALES' && role.indexOf('영업담당자') < 0) return { isAllScope: true, reason: 'adminDefaultScope', debug: debug };
+  return { isAllScope: false, reason: 'salesOwnOnly', debug: debug };
+}
+
+function debugMyCustomerStatusScopeP532() {
+  const perm = getPortalCurrentPermission_();
+  const aliases = buildMyCustomerStatusOwnerAliasesP528_(perm);
+  const scopeInfo = resolveMyCustomerStatusScopeP532_(perm);
+  let sourceInfo = null;
+  let error = '';
+  try {
+    sourceInfo = getMyCustomerStatusSourceRowsP532_(perm, aliases, !!scopeInfo.isAllScope);
+  } catch (err) {
+    error = err && err.message ? err.message : String(err || '');
+  }
+  return {
+    ok: true,
+    version: MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528,
+    permission: {
+      email: perm.email || '',
+      name: perm.name || '',
+      displayName: perm.displayName || '',
+      role: perm.role || '',
+      level: perm.level || '',
+      rank: perm.rank || '',
+      defaultScope: perm.defaultScope || '',
+      salesRepName: perm.salesRepName || '',
+      isAdmin: !!perm.isAdmin,
+      canUseAdminHome: !!perm.canUseAdminHome,
+      canViewAllCustomers: !!perm.canViewAllCustomers,
+      canCompleteSupport: !!perm.canCompleteSupport,
+      canWriteNotice: !!perm.canWriteNotice,
+      active: perm.active !== false
+    },
+    aliases: aliases,
+    scopeInfo: scopeInfo,
+    sourceInfo: sourceInfo ? {
+      rowCount: sourceInfo.rows ? sourceInfo.rows.length : 0,
+      rawTotal: sourceInfo.rawTotal || 0,
+      sourceType: sourceInfo.sourceType || '',
+      message: sourceInfo.message || '',
+      indexVersion: sourceInfo.indexVersion || '',
+      indexBuiltAt: sourceInfo.indexBuiltAt || '',
+      indexDirty: !!sourceInfo.indexDirty
+    } : null,
+    error: error
+  };
+}
+
+function isMyCustomerStatusRowAllowedP531_(row, perm, aliases) {
+  if (canMyCustomerStatusViewAllP531_(perm)) return true;
+  return isMyCustomerStatusOwnRowP528_(row, aliases || buildMyCustomerStatusOwnerAliasesP528_(perm));
+}
+
+function isMyCustomerStatusStrictStateChangeBaseP531_(status) {
+  status = String(status || '').trim();
+  if (!status) return true;
+  if (status.indexOf('상태지정') >= 0) return true;
+  return false;
+}
+
+function isMyCustomerStatusAllowedAutoTargetP531_(status) {
+  status = String(status || '').trim();
+  return status === '수주실패' || status === '견적제출완료';
+}
+
+function isMyCustomerQuoteLatestEnoughForStatusP531_(quote, failLike, ownComplete, order, thirdPartyContract) {
+  if (!quote) return false;
+  const blockers = [failLike, ownComplete, order, thirdPartyContract].filter(Boolean);
+  return !blockers.some(function(ev) { return isMyCustomerSignalAfterP529_(ev, quote); });
+}
+
+function enrichMyCustomerEventClassP531_(ev) {
+  if (!ev) return ev;
+  if (ev.eventClass) return ev;
+  const cls = classifyMyCustomerEventClassP531_(ev);
+  ev.eventClass = cls.eventClass;
+  ev.eventClassReason = cls.reason;
+  return ev;
+}
+
+function classifyMyCustomerEventClassP531_(ev) {
+  ev = ev || {};
+  const source = String(ev.source || '');
+  const text = normalizeMyCustomerSignalTextP529_(ev.text || ev.rawText || '');
+  const systemMeta = [
+    '중복 삭제', '데이터 병합', '기존 담당자별 시트', '담당자별 시트', '이관', '삭제 고객번호',
+    '대표전화번호', '담당자 이메일 주소', '연면적', '정보 확인해보시고', 'tm 콜 원하시면',
+    '상태지정필요로', '법정동코드 보정', '주소 보정', '폴더', 'renamed'
+  ];
+  for (let i = 0; i < systemMeta.length; i++) {
+    if (text.indexOf(normalizeMyCustomerSignalTextP529_(systemMeta[i])) >= 0) {
+      return { eventClass: 'SYSTEM_META', reason: systemMeta[i] };
+    }
+  }
+  if (source === 'sendLog') return { eventClass: 'SEND_LOG', reason: '자료발송 스냅샷' };
+  const sig = ev.signal || getMyCustomerEventSignalsP529_(text);
+  if ((sig.thirdPartyContract && sig.thirdPartyContract.length) || (sig.fail && sig.fail.length) ||
+      (sig.complete && sig.complete.length) || (sig.unknownComplete && sig.unknownComplete.length) ||
+      (sig.order && sig.order.length) || (sig.long && sig.long.length) || (sig.active && sig.active.length) ||
+      (sig.contactBlocker && sig.contactBlocker.length)) {
+    return { eventClass: 'CUSTOMER_INTENT', reason: '고객의사/영업진행 신호' };
+  }
+  if ((sig.quote && sig.quote.length)) return { eventClass: 'SEND_LOG', reason: '견적/자료발송 신호' };
+  if ((sig.data && sig.data.length)) return { eventClass: 'DATA_NOTE', reason: '데이터확인 신호' };
+  return { eventClass: 'UNKNOWN', reason: '' };
+}
+
+function getLatestMyCustomerDecisionEventP531_(events) {
+  let best = null;
+  (events || []).forEach(function(ev) {
+    if (!ev) return;
+    enrichMyCustomerEventClassP531_(ev);
+    if (ev.eventClass !== 'CUSTOMER_INTENT') return;
+    if (!best || compareMyCustomerEventsP529_(ev, best) >= 0) best = ev;
+  });
+  return best;
+}
+
+function summarizeMyCustomerEventClassesP531_(events) {
+  const counts = {};
+  (events || []).forEach(function(ev) {
+    enrichMyCustomerEventClassP531_(ev);
+    const k = ev.eventClass || 'UNKNOWN';
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  return Object.keys(counts).sort().map(function(k) { return k + ':' + counts[k]; }).join(', ');
+}
+
+function buildMyCustomerStatusClientRowP531_(row) {
+  row = row || {};
+  const a = row.analysis || {};
+  return {
+    rowNo: row.rowNo || 0,
+    customerNo: row.customerNo || '',
+    company: row.company || '',
+    salesRep: row.salesRep || '',
+    status: row.status || '',
+    vendor: row.vendor || '',
+    contact: row.contact || '',
+    phone: row.phone || '',
+    directPhone: row.directPhone || '',
+    email: row.email || '',
+    finalQuote: row.finalQuote || '',
+    lastSent: row.lastSent || '',
+    sentAt: row.sentAt || '',
+    sendStatus: row.sendStatus || '',
+    memoSummary: shortenMyCustomerStatusTextP528_(row.memoSummary || '', 180),
+    lastContactDate: row.lastContactDate || '',
+    analysis: {
+      recommendedStatus: a.recommendedStatus || row.status || '',
+      statusChangeRecommendedStatus: a.statusChangeRecommendedStatus || '',
+      statusChangeRecommendation: !!a.statusChangeRecommendation,
+      statusChangeRecommendationGrade: a.statusChangeRecommendationGrade || '',
+      mismatch: !!a.statusChangeRecommendation,
+      mismatchType: a.statusChangeRecommendationGrade || '',
+      confidence: a.confidence || 0,
+      priorityRank: a.priorityRank || '',
+      insightType: a.insightType || '',
+      insightSummary: shortenMyCustomerStatusTextP528_(a.insightSummary || a.reason || '', 180),
+      reason: shortenMyCustomerStatusTextP528_(a.reason || a.insightSummary || '', 180),
+      nextAction: shortenMyCustomerStatusTextP528_(a.nextAction || '', 180),
+      lastContactDays: a.lastContactDays,
+      longNoContact: !!a.longNoContact,
+      sentNoFollow: !!a.sentNoFollow,
+      potentialScore: a.potentialScore || 0,
+      tags: (a.tags || []).slice(0, 12),
+      latestMemoText: shortenMyCustomerStatusTextP528_(a.latestMemoText || '', 220),
+      latestEventSource: a.latestEventSource || '',
+      latestAnyEventText: shortenMyCustomerStatusTextP528_(a.latestAnyEventText || '', 220),
+      latestAnyEventSource: a.latestAnyEventSource || '',
+      latestDecisionEventText: shortenMyCustomerStatusTextP528_(a.latestDecisionEventText || '', 220),
+      latestDecisionEventDate: a.latestDecisionEventDate || '',
+      latestDecisionEventSource: a.latestDecisionEventSource || '',
+      matchedKeywords: reduceMyCustomerMatchedKeywordsForClientP531_(a.matchedKeywords || {}),
+      sourceLabels: (a.sourceLabels || []).slice(0, 4),
+      missingFields: (a.missingFields || []).slice(0, 8),
+      dataMissing: !!a.dataMissing,
+      statusProtected: !!a.statusProtected,
+      stateChangeAllowed: !!a.stateChangeAllowed,
+      canApplyRecommendation: !!a.canApplyRecommendation,
+      recommendationVisible: !!a.recommendationVisible,
+      terminalCandidate: !!a.terminalCandidate,
+      contractCompleteType: a.contractCompleteType || '',
+      thirdPartyContract: !!a.thirdPartyContract,
+      analysisCautionLevel: a.analysisCautionLevel || '',
+      conservativeReason: a.conservativeReason || '',
+      statusRecommendationBlockedReason: a.statusRecommendationBlockedReason || ''
+    }
+  };
+}
+
+function reduceMyCustomerMatchedKeywordsForClientP531_(matched) {
+  const out = {};
+  ['thirdPartyContract','fail','contactBlocker','complete','unknownComplete','order','quote','long','active','data'].forEach(function(k) {
+    if (matched && matched[k] && matched[k].length) out[k] = matched[k].slice(0, 5);
+  });
+  return out;
 }
 
 function safeStringifyMyCustomerStatusP529_(value, maxLen) {
