@@ -1,18 +1,19 @@
 /***************************************
  * S1 Sales Portal - 29_MyCustomerStatusService.gs
- * P535: 나의 고객 현황 - 분석DB 날짜 안전 저장 보정
+ * P536: 나의 고객 현황 - 실무 상태정의 기반 상태추천 보정
  * - 내 고객 기준: 마스터시트 영업담당자 = 현재 로그인 사용자의 영업담당자명
  * - 마스터시트 원본 메모 + 컨택이력_DB + TM 컨택 내용 + 자료발송 스냅샷을 통합 분석
  * - 수주실패/발주완료/계약완료는 영업담당자 판단 우선 보호 상태로 취급
  ***************************************/
 
-const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P535_DATE_SAFE_ANALYSIS_DB_SAVE';
+const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P536_BUSINESS_STATUS_TRANSITION_RULES';
 const MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 = '고객현황분석_DB';
 const MY_CUSTOMER_STATUS_ANALYSIS_WRITE_BATCH_P532 = 120;
 const MY_CUSTOMER_STATUS_DB_EVIDENCE_JSON_LIMIT_P532 = 3500;
 const MY_CUSTOMER_STATUS_DB_EVENTS_JSON_LIMIT_P532 = 5000;
 const MY_CUSTOMER_STATUS_EXPLICIT_ADMIN_EMAILS_P532 = ['bang@s1samsung.com', 'xnewspringx@gmail.com', 'mhj842@gmail.com'];
 const MY_CUSTOMER_STATUS_BLOCKING_STATUSES_P528 = ['수주실패', '발주완료', '계약완료'];
+const MY_CUSTOMER_STATUS_HARD_PROTECTED_STATUSES_P536 = ['수주실패', '계약완료'];
 const MY_CUSTOMER_STATUS_ACTIVE_STATUSES_P528 = ['견적제출완료', '장기 추진건', '고객 설득 중', '발주완료', '!!상태지정필요!!'];
 const MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529 = [
   '분석일시', '분석ID', '고객번호', 'rowNo', '회사명', '영업담당자', '현재상태', '추천상태',
@@ -45,9 +46,12 @@ function getMyCustomerStatusDashboardP528(options) {
     stage = 'contactHistory';
     const contactMap = getMyCustomerContactHistoryMapP529_(scopedRows);
 
+    stage = 'contractCompleteLookup';
+    const contractCompleteMap = getMyCustomerContractCompleteMapP536_();
+
     stage = 'analysis';
     const analyzed = scopedRows.map(function(row) {
-      return buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap);
+      return buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap, contractCompleteMap);
     }).filter(function(row) { return row && row.rowNo; });
 
     const statusCounts = {};
@@ -174,8 +178,12 @@ function updateMyCustomerStatusFromAnalysisP528(payload) {
   if (detailCustomerNo !== customerNo) throw new Error('고객번호가 일치하지 않습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.');
   if (!isMyCustomerStatusRowAllowedP531_(detail, perm, aliases)) throw new Error('나의 고객 현황에서 수정할 수 있는 고객이 아닙니다. 관리자/admin은 전체 고객, 영업담당자는 본인 담당 고객만 수정할 수 있습니다.');
   const currentStatus = String((detail && detail.status) || '').trim();
-  if (isMyCustomerStatusProtectedStatusP530_(currentStatus)) {
-    throw new Error('수주실패/발주완료/계약완료 상태는 나의 고객 현황 자동추천으로 변경하지 않습니다. 실제 수정이 필요하면 고객상세에서 직접 확인 후 수정해 주세요.');
+  const contractCompletionInfoP536 = getMyCustomerContractCompletionInfoP536_(detail, getMyCustomerContractCompleteMapP536_());
+  if (!isMyCustomerStatusAllowedTransitionP536_(currentStatus, newStatus, {
+    contractCompleteReady: !!(contractCompletionInfoP536 && contractCompletionInfoP536.ready),
+    strongFailure: newStatus === '수주실패'
+  })) {
+    throw new Error('나의 고객 현황 자동추천으로 허용되지 않는 상태 변경입니다. 현재값: ' + (currentStatus || '(공란)') + ', 변경값: ' + newStatus + '. 발주완료→계약완료는 계약번호 기준 서류 저장 3종이 모두 저장일 때만 가능합니다.');
   }
   if (expectedStatus && currentStatus !== expectedStatus) {
     throw new Error('현재 진행현황이 화면에 표시된 값과 다릅니다. 현재값: ' + (currentStatus || '(공란)'));
@@ -541,9 +549,98 @@ function getMyCustomerContactHistoryMapP529_(ownRows) {
   return result;
 }
 
-function buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap) {
+
+function getMyCustomerContractCompleteMapP536_() {
+  const out = { byContractNo: {}, count: 0, error: '' };
+  try {
+    if (typeof listContractCompleteRowsV69 !== 'function') {
+      out.error = 'listContractCompleteRowsV69 함수가 없어 수주확정/계약완료 시트를 조회하지 못했습니다.';
+      return out;
+    }
+    const res = listContractCompleteRowsV69({ force: false });
+    const rows = (res && res.rows) || [];
+    rows.forEach(function(item) {
+      const key = normalizeMyCustomerContractNoP536_(item && item.contractNo);
+      if (!key) return;
+      if (!out.byContractNo[key]) {
+        out.byContractNo[key] = item;
+        out.count += 1;
+      }
+    });
+  } catch (err) {
+    out.error = err && err.message ? err.message : String(err || '');
+    try { Logger.log('나의 고객 현황 수주확정/계약완료 lookup 실패: ' + (err && err.stack || err)); } catch (e) {}
+  }
+  return out;
+}
+
+function normalizeMyCustomerContractNoP536_(value) {
+  return String(value == null ? '' : value).replace(/\u00a0/g, ' ').replace(/,/g, '').replace(/\s+/g, '').trim();
+}
+
+function isMyCustomerContractDocSavedP536_(value) {
+  const v = String(value == null ? '' : value).replace(/\s+/g, '').trim();
+  return v === '저장' || v === 'Y' || v === 'TRUE' || v === '완료' || v === 'O' || v === '○';
+}
+
+function getMyCustomerContractCompletionInfoP536_(row, contractCompleteMap) {
+  row = row || {};
+  contractCompleteMap = contractCompleteMap || { byContractNo: {}, error: '' };
+  const orderNo = normalizeMyCustomerContractNoP536_(row.orderNo || row['발주번호'] || row.contractNo || '');
+  const customerNo = normalizeCustomerNoForKey_(row.customerNo || row['고객번호'] || '');
+  const info = {
+    orderNo: orderNo,
+    contractNo: '',
+    contractRowNo: '',
+    customerNo: customerNo,
+    matched: false,
+    ready: false,
+    businessRegSaved: '',
+    contractSaved: '',
+    appointmentReportSaved: '',
+    customerNoMatches: '',
+    error: contractCompleteMap.error || '',
+    summary: ''
+  };
+  if (!orderNo) {
+    info.summary = '마스터시트 발주번호가 없어 수주확정/계약완료 시트와 매칭할 수 없습니다.';
+    return info;
+  }
+  const item = contractCompleteMap.byContractNo && contractCompleteMap.byContractNo[orderNo];
+  if (!item) {
+    info.summary = '수주확정/계약완료 시트에서 계약번호 ' + orderNo + ' 행을 찾지 못했습니다.';
+    return info;
+  }
+  info.matched = true;
+  info.contractNo = String(item.contractNo || orderNo || '').trim();
+  info.contractRowNo = item.rowNo || '';
+  const itemCustomerNo = normalizeCustomerNoForKey_(item.customerNo || '');
+  info.customerNoMatches = (!customerNo || !itemCustomerNo || customerNo === itemCustomerNo) ? 'Y' : 'N';
+  info.businessRegSaved = String(item.businessRegSaved || '').trim();
+  info.contractSaved = String(item.contractSaved || '').trim();
+  info.appointmentReportSaved = String(item.orderMailSaved || item.appointmentReportSaved || '').trim();
+  const docsReady = isMyCustomerContractDocSavedP536_(info.businessRegSaved) &&
+    isMyCustomerContractDocSavedP536_(info.contractSaved) &&
+    isMyCustomerContractDocSavedP536_(info.appointmentReportSaved);
+  info.ready = docsReady && info.customerNoMatches !== 'N';
+  if (info.customerNoMatches === 'N') {
+    info.summary = '계약번호 ' + orderNo + '는 일치하지만 고객번호가 다릅니다. 자동 계약완료 추천을 보류합니다.';
+  } else if (info.ready) {
+    info.summary = '계약번호 ' + orderNo + '의 사업자등록증 저장·계약서 저장·선임신고서 저장이 모두 저장입니다.';
+  } else {
+    const missing = [];
+    if (!isMyCustomerContractDocSavedP536_(info.businessRegSaved)) missing.push('사업자등록증 저장=' + (info.businessRegSaved || '-'));
+    if (!isMyCustomerContractDocSavedP536_(info.contractSaved)) missing.push('계약서 저장=' + (info.contractSaved || '-'));
+    if (!isMyCustomerContractDocSavedP536_(info.appointmentReportSaved)) missing.push('선임신고서 저장=' + (info.appointmentReportSaved || '-'));
+    info.summary = '계약번호 ' + orderNo + ' 필수서류 미완료: ' + missing.join(', ');
+  }
+  return info;
+}
+
+function buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap, contractCompleteMap) {
   row = row || {};
   contactMap = contactMap || { byCustomerNo: {}, byRowNo: {} };
+  contractCompleteMap = contractCompleteMap || { byContractNo: {} };
   const memo = String(row.fullMemo || row.memo || '');
   const status = String(row.status || '').trim();
   const sentAt = String(row.sentAt || row.lastSent || '');
@@ -559,7 +656,8 @@ function buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap) {
   const latestDecisionEvent = getLatestMyCustomerDecisionEventP531_(events);
   const latestDate = latestDecisionEvent && latestDecisionEvent.date ? latestDecisionEvent.date : (latestAnyEvent && latestAnyEvent.date ? latestAnyEvent.date : parseLoosePortalDateP528_(sentAt));
   const lastContactDays = latestDate ? daysBetweenPortalDatesP528_(latestDate, now) : null;
-  const analysis = classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecisionEvent, lastContactDays, now);
+  const contractCompletionInfo = getMyCustomerContractCompletionInfoP536_(row, contractCompleteMap);
+  const analysis = classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecisionEvent, lastContactDays, now, contractCompletionInfo);
   const latestText = latestDecisionEvent && latestDecisionEvent.text ? latestDecisionEvent.text : (latestAnyEvent && latestAnyEvent.text ? latestAnyEvent.text : getLastMemoLineP528_(memo));
   const missingFields = getMyCustomerMissingFieldsP528_(row);
   analysis.missingFields = missingFields;
@@ -584,6 +682,8 @@ function buildMyCustomerStatusAnalyzedRowP528_(row, now, contactMap) {
     lastSent: String(row.lastSent || ''),
     sentAt: String(row.sentAt || ''),
     sendStatus: String(row.sendStatus || ''),
+    orderNo: String(row.orderNo || ''),
+    contractCompletionInfo: contractCompletionInfo,
     memoSummary: shortenMyCustomerStatusTextP528_(latestText || memo, 220),
     lastContactDate: latestDate ? formatMyCustomerStatusDateP528_(latestDate) : '',
     analysis: analysis
@@ -646,15 +746,20 @@ function makeMyCustomerStatusEventP529_(data) {
   return ev;
 }
 
-function classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecisionEvent, lastContactDays, now) {
+function classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecisionEvent, lastContactDays, now, contractCompletionInfo) {
   row = row || {};
   events = Array.isArray(events) ? events : [];
   events.forEach(function(ev) { enrichMyCustomerEventClassP531_(ev); });
+  contractCompletionInfo = contractCompletionInfo || {};
 
   const currentStatus = String(row.status || '').trim();
   const statusLabel = currentStatus || '!!상태지정필요!!';
-  const stateProtected = isMyCustomerStatusProtectedStatusP530_(currentStatus);
+  const hardProtected = isMyCustomerStatusHardProtectedP536_(currentStatus);
+  const orderStatus = currentStatus === '발주완료';
+  const contractReady = !!contractCompletionInfo.ready;
+  const stateProtected = hardProtected || (orderStatus && !contractReady);
   const sentDone = !!(String(row.sendStatus || '').indexOf('발송완료') >= 0 || row.lastSent || row.sentAt);
+
   const decisionEvents = events.filter(function(ev) { return ev && ev.eventClass === 'CUSTOMER_INTENT'; });
   const statusEvents = events.filter(function(ev) { return ev && ev.eventClass !== 'SYSTEM_META'; });
   const signalSummary = summarizeMyCustomerSignalsP529_(statusEvents);
@@ -671,7 +776,6 @@ function classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecision
   const active = decisionSummary.active.latest;
   const data = signalSummary.data.latest;
   const failLike = getLatestMyCustomerSignalP530_([thirdPartyContract, fail]);
-  const contractCompleteType = getMyCustomerContractCompleteTypeP530_(decisionSummary);
   const hasThirdPartyContract = !!thirdPartyContract;
   const latestDecision = latestDecisionEvent || getLatestMyCustomerDecisionEventP531_(events);
   const latestAny = latestAnyEvent || getLatestMyCustomerMemoEventP528_(events);
@@ -708,64 +812,78 @@ function classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecision
     confidence = conf || confidence;
     priorityRank = priority || priorityRank;
   }
+  function recommendIfAllowed(target, grade, summary, action, conf, priority, extra) {
+    extra = extra || {};
+    if (isMyCustomerStatusAllowedTransitionP536_(currentStatus, target, {
+      contractCompleteReady: contractReady,
+      strongFailure: !!(extra.strongFailure || failLike),
+      orderNo: row.orderNo || '',
+      contractCompletionInfo: contractCompletionInfo
+    })) {
+      setStatusRecommendation(target, grade, summary, action, conf, priority);
+      return true;
+    }
+    statusChangeRecommendedStatus = currentStatus;
+    statusRecommendationBlockedReason = statusRecommendationBlockedReason || getMyCustomerStatusTransitionBlockReasonP536_(currentStatus, target, contractCompletionInfo);
+    setInsight(extra.insightType || grade || '상태확인필요', summary, action, Math.min(conf || 70, 80), priority);
+    return false;
+  }
 
-  if (stateProtected) {
+  if (hardProtected) {
     statusChangeRecommendedStatus = currentStatus;
     statusChangeRecommendation = false;
     confidence = 98;
     priorityRank = '0_상태보호';
     terminalCandidate = true;
-    statusRecommendationBlockedReason = currentStatus + '은/는 담당자가 직접 정리한 주요 상태이므로 자동 상태추천 대상에서 제외합니다.';
+    statusRecommendationBlockedReason = currentStatus + '은/는 영업담당자가 직접 판단한 주요 상태이므로 나의 고객 현황 자동추천으로 변경하지 않습니다.';
     conservativeReason = statusRecommendationBlockedReason;
     if (currentStatus === '수주실패' && (hasThirdPartyContract || fail)) {
       setInsight('종결상태보호', hasThirdPartyContract ? '타사 계약/타사 결정 계열 이력이 있어 현재 수주실패 상태와 정합합니다.' : '거절/진행불가 계열 이력이 있어 현재 수주실패 상태와 정합합니다.', '추가 영업 대상에서 제외하거나 장기 재접촉 여부만 참고하세요.', 98, '0_수주실패보호');
-    } else if (currentStatus === '발주완료') {
-      setInsight('종결상태보호', '발주완료는 주요 진행 상태이므로 현재 상태를 우선 신뢰합니다.', '계약완료 전환 여부는 담당자가 직접 확인해 주세요.', 98, '0_발주완료보호');
     } else if (currentStatus === '계약완료') {
-      setInsight('종결상태보호', hasThirdPartyContract ? '타사 계약 표현이 감지되었지만 현재 계약완료 상태는 자동으로 뒤집지 않습니다. 필요 시 참고 확인만 하세요.' : '계약완료는 주요 종결 상태이므로 현재 상태를 우선 신뢰합니다.', '계약완료 자료/계약완료 시트와 대조가 필요할 때만 수동 확인하세요.', 98, '0_계약완료보호');
+      setInsight('종결상태보호', '계약완료는 수주 확정 및 필수서류 취합 완료 상태이므로 현재 상태를 우선 신뢰합니다.', '필요 시 계약종합관리/수주확정 시트와 수동 대조하세요.', 98, '0_계약완료보호');
     } else {
       setInsight('종결상태보호', statusRecommendationBlockedReason, '필요 시 고객상세에서 직접 확인하세요.', 98, '0_상태보호');
     }
+  } else if (orderStatus) {
+    terminalCandidate = true;
+    if (contractReady) {
+      setStatusRecommendation('계약완료', '계약완료 전환 추천', '현재 발주완료 상태이며, 수주확정/계약완료 시트에서 계약번호 ' + (contractCompletionInfo.contractNo || row.orderNo || '-') + '의 사업자등록증 저장·계약서 저장·선임신고서 저장이 모두 저장 상태입니다.', '계약완료 적용 후 계약완료 고객으로 관리하세요.', 96, '1_발주완료계약완료');
+    } else {
+      statusChangeRecommendedStatus = currentStatus;
+      statusChangeRecommendation = false;
+      confidence = 94;
+      priorityRank = '0_발주완료보호';
+      statusRecommendationBlockedReason = '발주완료는 수주 확정 상태입니다. 계약완료 추천은 수주확정/계약완료 시트의 사업자등록증 저장·계약서 저장·선임신고서 저장이 모두 저장일 때만 허용합니다.';
+      setInsight('발주완료서류확인', contractCompletionInfo.summary || '발주완료 상태입니다. 필수서류 저장 3종이 모두 저장인지 확인하세요.', '필수서류가 모두 저장되면 계약완료 전환 대상입니다.', 94, '0_발주완료보호');
+    }
   } else if (thirdPartyContract) {
     terminalCandidate = true;
-    if (isMyCustomerStatusStrictStateChangeBaseP531_(currentStatus)) {
-      setStatusRecommendation('수주실패', '수주실패 전환 추천', '최신 유효 이력에 타사 계약/타사 결정/다른 업체 선정 신호가 있습니다. 타사 계약완료는 우리 계약완료가 아니라 수주실패 신호입니다.', '수주실패 처리 여부를 확인한 뒤 적용하세요.', 94, '2_타사계약수주실패');
-    } else {
-      statusChangeRecommendedStatus = currentStatus;
-      statusRecommendationBlockedReason = '현재상태가 상태지정필요/공란이 아니므로 타사 계약 신호는 상태변경 버튼이 아니라 영업 참고로만 표시합니다.';
-      setInsight('타사선정/수주실패확인', '타사 계약/타사 결정 신호가 있습니다. 현재 진행현황이 맞는지 확인하세요.', '필요하면 고객상세에서 직접 수주실패 처리하세요.', 90, '2_타사계약참고');
-    }
+    recommendIfAllowed('수주실패', '수주실패 전환 추천', '최신 유효 이력에 타사 계약/타사 결정/다른 업체 선정 신호가 있습니다. 타사 계약완료는 우리 계약완료가 아니라 수주실패 신호입니다.', '수주실패 처리 여부를 확인한 뒤 적용하세요.', 94, '2_타사계약수주실패', { insightType: '타사선정/수주실패확인', strongFailure: true });
   } else if (fail && !hasPositiveSignalAfterP529_(decisionSummary, fail)) {
     terminalCandidate = true;
-    if (isMyCustomerStatusStrictStateChangeBaseP531_(currentStatus)) {
-      setStatusRecommendation('수주실패', '수주실패 전환 추천', '최신 유효 이력에 명확한 거절/진행불가 신호가 있습니다.', '수주실패 처리 여부를 확인한 뒤 적용하세요.', 88, '2_수주실패');
-    } else {
-      statusChangeRecommendedStatus = currentStatus;
-      statusRecommendationBlockedReason = '현재상태가 상태지정필요/공란이 아니므로 수주실패 신호는 영업 참고로만 표시합니다.';
-      setInsight('수주실패확인', '명확한 거절/진행불가 신호가 있습니다. 현재 진행현황이 맞는지 확인하세요.', '필요하면 고객상세에서 직접 정리하세요.', 82, '2_수주실패참고');
-    }
-  } else if (ownComplete || order) {
-    statusChangeRecommendedStatus = currentStatus;
-    statusRecommendationBlockedReason = '발주완료/계약완료는 자동 상태추천 대상이 아닙니다.';
-    analysisCautionLevel = '확인필요';
-    setInsight('계약/발주확인필요', ownComplete ? '당사 계약/계약완료 처리로 보일 수 있는 신호가 있습니다. 단, 계약완료는 자동추천하지 않습니다.' : '용역신청서/계약서류/사업자등록증/발주 신호가 있습니다. 발주완료 여부를 확인하세요.', '계약/발주 자료를 확인하고 필요한 경우 고객상세에서 직접 상태를 수정하세요.', ownComplete ? 86 : 78, ownComplete ? '1_우리계약확인' : '4_발주계약확인');
-    terminalCandidate = !!ownComplete;
+    recommendIfAllowed('수주실패', '수주실패 전환 추천', '최신 유효 이력에 명확한 거절/진행불가 신호가 있습니다.', '수주실패 처리 여부를 확인한 뒤 적용하세요.', 90, '2_수주실패', { insightType: '수주실패확인', strongFailure: true });
   } else if (contactBlocker) {
     statusChangeRecommendedStatus = currentStatus;
     statusRecommendationBlockedReason = '전화연결/담당자확인/직통번호 안내불가류는 수주실패가 아니라 연락장애로 분류합니다.';
     setInsight('연락장애/담당자확인', '연락 경로 또는 담당자 확인 문제가 감지되었습니다. 수주실패로 자동 추천하지 않습니다.', '담당자/직통번호/관리사무소 경로를 보강한 뒤 재연락하세요.', 76, '6_연락장애');
   } else if (long) {
+    recommendIfAllowed('장기 추진건', '장기 추진건 전환 추천', '최신 유효 이력에 내년/예산/금년도 대상 아님/추후 재접촉 등 장기 추진 신호가 있습니다.', '장기 추진건으로 정리하고 재접촉 시점을 메모나 오늘 할 일에 남기세요.', 82, '3_장기추진', { insightType: '장기재접촉' });
+  } else if (ownComplete || order) {
     statusChangeRecommendedStatus = currentStatus;
-    statusRecommendationBlockedReason = '장기 추진건은 담당자 판단 편차가 커서 자동 상태추천하지 않습니다.';
-    setInsight('장기재접촉', '예산/내년/추후/보류 등 장기 재접촉 신호가 있습니다.', '다음 재접촉 시점을 오늘 할 일 또는 메모에 남기세요.', 78, '3_장기재접촉');
+    statusRecommendationBlockedReason = '발주완료는 사람이 확정해야 하는 수주 상태이므로 나의 고객 현황에서 자동 추천하지 않습니다. 단, 발주완료→계약완료만 서류 저장 기준으로 추천합니다.';
+    analysisCautionLevel = '확인필요';
+    setInsight('계약/발주확인필요', ownComplete ? '당사 계약/계약완료 처리로 보일 수 있는 신호가 있습니다. 단, 계약완료는 발주완료 상태에서 필수서류 3종 저장이 확인될 때만 추천합니다.' : '용역신청서/계약서류/사업자등록증/발주 신호가 있습니다. 발주완료 여부는 담당자가 직접 확정해야 합니다.', '계약/발주 자료를 확인하고 필요한 경우 고객상세에서 직접 상태를 수정하세요.', ownComplete ? 86 : 78, ownComplete ? '1_우리계약확인' : '4_발주계약확인');
+    terminalCandidate = !!ownComplete;
   } else if ((quote || sentDone) && !failLike && !ownComplete && !order && !thirdPartyContract) {
-    if (isMyCustomerStatusStrictStateChangeBaseP531_(currentStatus) && quote && isMyCustomerQuoteLatestEnoughForStatusP531_(quote, failLike, ownComplete, order, thirdPartyContract)) {
-      setStatusRecommendation('견적제출완료', '견적제출완료 전환 추천', '상태지정필요 고객이며 최신 유효 이벤트가 견적/자료 발송 계열입니다.', '견적제출완료 적용 후 후속 연락 일정을 잡으세요.', 77, '5_견적제출상태추천');
+    if (quote && isMyCustomerQuoteLatestEnoughForStatusP531_(quote, failLike, ownComplete, order, thirdPartyContract)) {
+      recommendIfAllowed('견적제출완료', '견적제출완료 전환 추천', '견적/자료 발송 이력이 있어 영업팀의 후속 컨택이 필요한 상태입니다.', '견적제출완료 적용 후 후속 연락 일정을 잡으세요.', 78, '5_견적제출상태추천', { insightType: '자료발송후미후속' });
     } else {
       statusChangeRecommendedStatus = currentStatus;
-      statusRecommendationBlockedReason = '자료발송/견적발송은 상태를 뒤집는 근거가 아니라 후속연락 인사이트로 표시합니다.';
+      statusRecommendationBlockedReason = '자료발송/견적발송은 확인됐지만 상태전이 기준에 맞지 않아 후속연락 인사이트로만 표시합니다.';
       setInsight('자료발송후미후속', '견적/자료 발송 이력이 있습니다. 발송 후 후속 연락 여부를 확인하세요.', '견적 확인 연락 또는 재발송 필요 여부를 확인하세요.', quote ? 72 : 66, '5_견적후속');
     }
+  } else if (active) {
+    recommendIfAllowed('고객 설득 중', '고객 설득 중 전환 추천', '검토/비교/재확인/담당자 전달 등 영업팀 추가 컨택이 필요한 진행중 신호가 있습니다.', '고객 설득 중으로 정리하고 다음 컨택 액션을 남기세요.', 70, '6_고객설득중', { insightType: '진행중추적' });
   } else if (unknownComplete) {
     statusChangeRecommendedStatus = currentStatus;
     statusRecommendationBlockedReason = '계약완료 표현은 있으나 타사 계약인지 당사 계약인지 불명확하여 상태변경 추천을 보류합니다.';
@@ -774,31 +892,31 @@ function classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecision
   } else if (data) {
     statusChangeRecommendedStatus = currentStatus;
     setInsight('데이터확인필요', '중복/주소/연면적/연락처 등 데이터 확인 신호가 있습니다.', '고객정보를 먼저 정리하세요.', 62, '8_데이터확인');
-  } else if (active) {
-    statusChangeRecommendedStatus = currentStatus;
-    setInsight('진행중추적', '검토/비교/재확인/담당자 전달 등 진행중 신호가 있습니다.', '고객 반응을 확인하고 다음 액션을 남기세요.', 64, '6_진행중');
   } else {
     statusChangeRecommendedStatus = currentStatus;
     setInsight('', '', '', 0, '');
   }
 
-  const strictBase = isMyCustomerStatusStrictStateChangeBaseP531_(currentStatus);
-  const stateChangeAllowed = !stateProtected && strictBase;
-  const recommendationVisible = !!(stateChangeAllowed && statusChangeRecommendation && statusChangeRecommendedStatus && statusChangeRecommendedStatus !== currentStatus && confidence >= 75 && isMyCustomerStatusAllowedAutoTargetP531_(statusChangeRecommendedStatus));
+  const transitionAllowed = isMyCustomerStatusAllowedTransitionP536_(currentStatus, statusChangeRecommendedStatus, {
+    contractCompleteReady: contractReady,
+    strongFailure: !!failLike,
+    contractCompletionInfo: contractCompletionInfo
+  });
+  const recommendationVisible = !!(statusChangeRecommendation && transitionAllowed && statusChangeRecommendedStatus && statusChangeRecommendedStatus !== currentStatus && confidence >= 70 && isMyCustomerStatusAllowedAutoTargetP536_(statusChangeRecommendedStatus));
   if (!recommendationVisible && statusChangeRecommendation) {
     statusChangeRecommendation = false;
-    statusRecommendationBlockedReason = statusRecommendationBlockedReason || '상태변경 추천 노출 기준에 맞지 않아 업무 인사이트로만 표시합니다.';
+    statusRecommendationBlockedReason = statusRecommendationBlockedReason || getMyCustomerStatusTransitionBlockReasonP536_(currentStatus, statusChangeRecommendedStatus, contractCompletionInfo);
     statusChangeRecommendedStatus = currentStatus;
   }
 
   const activeStatus = isMyCustomerStatusActiveP528_(currentStatus);
   const longNoContact = activeStatus && (lastContactDays == null || lastContactDays >= 14);
   let sentNoFollow = false;
-  if (sentDone && activeStatus && !stateProtected) {
+  if (sentDone && activeStatus && !hardProtected) {
     if (lastContactDays == null) sentNoFollow = true;
     else if (lastContactDays >= 3 && !order && !failLike && !ownComplete && !thirdPartyContract) sentNoFollow = true;
   }
-  const potentialScore = stateProtected ? 0 : calculateMyCustomerPotentialScoreP528_(row, signalSummary.flags, lastContactDays, statusChangeRecommendedStatus);
+  const potentialScore = stateProtected ? 0 : calculateMyCustomerPotentialScoreP528_(row, signalSummary.flags, lastContactDays, recommendationVisible ? statusChangeRecommendedStatus : currentStatus);
   const tags = [];
   Object.keys(signalSummary.flags).forEach(function(k) { if (signalSummary.flags[k]) tags.push(k); });
   if (longNoContact) tags.push('장기미접촉');
@@ -808,11 +926,13 @@ function classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecision
   if (hasThirdPartyContract) tags.push('타사계약');
   if (unknownComplete) tags.push('계약주체불명');
   if (contactBlocker) tags.push('연락장애');
+  if (contractReady) tags.push('계약완료전환가능');
 
   const latestAnyText = latestAny && latestAny.text ? latestAny.text : '';
   const latestDecisionText = latestDecision && latestDecision.text ? latestDecision.text : '';
   const excludedEvents = events.filter(function(ev) { return ev && ev.eventClass === 'SYSTEM_META'; }).slice(0, 5);
   const eventClassSummary = summarizeMyCustomerEventClassesP531_(events);
+  const transitionBlockReason = statusRecommendationBlockedReason || (!recommendationVisible && statusChangeRecommendedStatus && statusChangeRecommendedStatus !== currentStatus ? getMyCustomerStatusTransitionBlockReasonP536_(currentStatus, statusChangeRecommendedStatus, contractCompletionInfo) : '');
 
   return {
     recommendedStatus: recommendationVisible ? statusChangeRecommendedStatus : statusLabel,
@@ -845,14 +965,15 @@ function classifyMyCustomerMemoP528_(row, events, latestAnyEvent, latestDecision
     matchedKeywords: signalSummary.matchedKeywords,
     sourceLabels: signalSummary.sourceLabels,
     statusProtected: stateProtected,
-    stateChangeAllowed: stateChangeAllowed,
+    stateChangeAllowed: transitionAllowed,
     canApplyRecommendation: recommendationVisible,
     recommendationVisible: recommendationVisible,
-    contractCompleteType: getMyCustomerContractCompleteTypeP530_(decisionSummary),
+    contractCompleteType: contractReady ? '발주완료_서류3종저장완료' : getMyCustomerContractCompleteTypeP530_(decisionSummary),
+    contractCompletionInfo: contractCompletionInfo,
     thirdPartyContract: hasThirdPartyContract,
     analysisCautionLevel: analysisCautionLevel,
     conservativeReason: conservativeReason || '',
-    statusRecommendationBlockedReason: statusRecommendationBlockedReason || '',
+    statusRecommendationBlockedReason: transitionBlockReason || '',
     eventClassSummary: eventClassSummary,
     excludedEventSummary: excludedEvents.map(function(ev) { return shortenMyCustomerStatusTextP528_(ev.text, 120); }).join(' / '),
     latestAnyEvent: eventForClientP529_(latestAny || {}),
@@ -865,12 +986,51 @@ function isMyCustomerStatusProtectedStatusP530_(status) {
   return MY_CUSTOMER_STATUS_BLOCKING_STATUSES_P528.indexOf(status) >= 0;
 }
 
+function isMyCustomerStatusHardProtectedP536_(status) {
+  status = String(status || '').trim();
+  return MY_CUSTOMER_STATUS_HARD_PROTECTED_STATUSES_P536.indexOf(status) >= 0;
+}
+
 function isMyCustomerStatusStateChangeCandidateP530_(status) {
   status = String(status || '').trim();
-  if (isMyCustomerStatusProtectedStatusP530_(status)) return false;
+  if (isMyCustomerStatusHardProtectedP536_(status)) return false;
   if (!status) return true;
   if (status.indexOf('상태지정') >= 0) return true;
-  return ['고객 설득 중', '견적제출완료', '장기 추진건', '데이터확인필요'].indexOf(status) >= 0;
+  return ['고객 설득 중', '견적제출완료', '장기 추진건', '발주완료'].indexOf(status) >= 0;
+}
+
+function isMyCustomerStatusAllowedTransitionP536_(currentStatus, targetStatus, context) {
+  currentStatus = String(currentStatus || '').trim();
+  targetStatus = String(targetStatus || '').trim();
+  context = context || {};
+  if (!targetStatus || targetStatus === currentStatus) return false;
+  if (targetStatus === '발주완료') return false;
+  if (currentStatus === '수주실패' || currentStatus === '계약완료') return false;
+  if (currentStatus === '발주완료') return targetStatus === '계약완료' && !!context.contractCompleteReady;
+  const needStatus = !currentStatus || currentStatus.indexOf('상태지정') >= 0;
+  if (needStatus) return ['수주실패', '장기 추진건', '견적제출완료', '고객 설득 중'].indexOf(targetStatus) >= 0;
+  if (currentStatus === '고객 설득 중') return ['수주실패', '장기 추진건', '견적제출완료'].indexOf(targetStatus) >= 0;
+  if (currentStatus === '견적제출완료') return ['수주실패', '장기 추진건'].indexOf(targetStatus) >= 0;
+  if (currentStatus === '장기 추진건') return targetStatus === '수주실패' && !!context.strongFailure;
+  return false;
+}
+
+function isMyCustomerStatusAllowedAutoTargetP536_(status) {
+  status = String(status || '').trim();
+  return ['수주실패', '견적제출완료', '장기 추진건', '고객 설득 중', '계약완료'].indexOf(status) >= 0;
+}
+
+function getMyCustomerStatusTransitionBlockReasonP536_(currentStatus, targetStatus, contractCompletionInfo) {
+  currentStatus = String(currentStatus || '').trim();
+  targetStatus = String(targetStatus || '').trim();
+  if (!targetStatus) return '';
+  if (targetStatus === '발주완료') return '발주완료는 영업담당자가 수주 확정 후 수기로 지정하는 상태이므로 자동추천하지 않습니다.';
+  if (currentStatus === '수주실패' || currentStatus === '계약완료') return currentStatus + '은/는 보호 상태라 자동추천으로 변경하지 않습니다.';
+  if (currentStatus === '발주완료' && targetStatus === '계약완료') {
+    return contractCompletionInfo && contractCompletionInfo.summary ? contractCompletionInfo.summary : '발주완료→계약완료는 수주확정/계약완료 시트의 사업자등록증 저장·계약서 저장·선임신고서 저장이 모두 저장일 때만 허용합니다.';
+  }
+  if (currentStatus === '장기 추진건' && targetStatus !== '수주실패') return '장기 추진건은 명확한 수주실패 신호 외에는 자동 상태변경하지 않습니다.';
+  return '현재상태에서 해당 추천상태로 자동 전환하는 기준에 맞지 않아 업무 인사이트로만 표시합니다.';
 }
 
 function getLatestMyCustomerSignalP530_(events) {
@@ -935,12 +1095,13 @@ function getMyCustomerSignalDefsP529_() {
     ],
     fail: [
       { kw: '수주실패' }, { kw: '계약 취소' }, { kw: '계약취소' }, { kw: '진행 취소' },
-      { kw: '가격차이가 많이 나서 어렵', label: '가격차이로 어려움' }, { kw: '가격 차이가 많이 나서 어렵', label: '가격차이로 어려움' },
-      { kw: '진행 어렵', label: '진행 어려움' }, { kw: '진행어렵', label: '진행 어려움' },
-      { kw: '안한다고', label: '고객 안 한다고 함' }, { kw: '안 한다고', label: '고객 안 한다고 함' }, { kw: '하지 말', label: '진행 거절' }, { kw: '연락하지', label: '연락 거절' },
+      { kw: '계약 못한다고', label: '계약 못한다고 함' }, { kw: '계약못한다고', label: '계약 못한다고 함' },
+      { kw: '진행 안한다고', label: '진행 안 한다고 함' }, { kw: '진행 안 한다고', label: '진행 안 한다고 함' },
+      { kw: '안한다고', label: '고객 안 한다고 함' }, { kw: '안 한다고', label: '고객 안 한다고 함' },
+      { kw: '필요없다고', label: '필요없다고 함' }, { kw: '필요 없다고', label: '필요없다고 함' },
+      { kw: '하지 말', label: '진행 거절' }, { kw: '연락하지', label: '연락 거절' },
       { kw: '대상 아님' }, { kw: '대상아님' }, { kw: '폐업' },
-      { re: /(계약|진행|제안).{0,8}(거절|불가|안함|안 함)/, label: '계약/진행 거절' },
-      { re: /(가격|금액).{0,12}(차이|비싸).{0,16}(어렵|불가|안)/, label: '가격 이슈로 진행불가' }
+      { re: /(계약|진행|제안).{0,8}(거절|불가|안함|안 함)/, label: '계약/진행 거절' }
     ],
     contactBlocker: [
       { kw: '전화연결 불가' }, { kw: '전화 연결 불가' }, { kw: '연결 불가' }, { kw: '전화 안받' }, { kw: '전화 안 받' },
@@ -954,7 +1115,9 @@ function getMyCustomerSignalDefsP529_() {
       { kw: '진행하시기로' }, { kw: '계약하시기로' }, { kw: '서류 받' }, { kw: '서류 요청' }, { kw: '취합' }
     ],
     long: [
-      { kw: '내년' }, { kw: '예산' }, { kw: '하반기' }, { kw: '상반기' }, { kw: '추후' }, { kw: '나중' }, { kw: '장기' }, { kw: '보류' }, { kw: '재검토' }
+      { kw: '내년' }, { kw: '내년도' }, { kw: '2027년' }, { kw: '올해 대상 아님' }, { kw: '금년도 대상 아님' },
+      { kw: '예산 없음' }, { kw: '예산없' }, { kw: '예산 잡히면' }, { kw: '예산 편성' },
+      { kw: '하반기 이후' }, { kw: '추후 검토' }, { kw: '내년에 다시 연락' }, { kw: '장기' }, { kw: '보류' }, { kw: '재검토' }
     ],
     quote: [
       { kw: '견적서 발송' }, { kw: '견적서발송' }, { kw: '견적 발송' }, { kw: '견적발송' }, { kw: '자료발송' }, { kw: '자료 발송' },
@@ -963,7 +1126,7 @@ function getMyCustomerSignalDefsP529_() {
     active: [
       { kw: '검토중' }, { kw: '검토 중' }, { kw: '비교중' }, { kw: '비교 중' }, { kw: '타업체와 비교' }, { kw: '타사 비교' },
       { kw: '담당자 전달' }, { kw: '내부 검토' }, { kw: '확인 후' }, { kw: '재확인' }, { kw: '연락 예정' }, { kw: '연락준다고' },
-      { kw: '가격 조율' }, { kw: '본사' }, { kw: '회신' }, { kw: '상담' }
+      { kw: '가격 조율' }, { kw: '가격차이' }, { kw: '가격 차이' }, { kw: '금액 차이' }, { kw: '본사' }, { kw: '회신' }, { kw: '상담' }
     ],
     data: [
       { kw: '중복' }, { kw: '전화번호 오류' }, { kw: '메일 오류' }, { kw: '주소 확인' }, { kw: '연면적 확인' }, { kw: '확인 필요' }, { kw: '정보 확인' }, { kw: '번호 오류' }
@@ -1388,7 +1551,8 @@ function buildMyCustomerAnalysisDbRowP529_(row, analyzedAtText, headers) {
     sourceLabels: a.sourceLabels || [],
     matchedKeywords: a.matchedKeywords || {},
     latestAnyEvent: a.latestAnyEvent || latestEvent,
-    latestDecisionEvent: a.latestDecisionEvent || {}
+    latestDecisionEvent: a.latestDecisionEvent || {},
+    contractCompletionInfo: a.contractCompletionInfo || {}
   };
   const sourceLabels = (a.sourceLabels || []).join(', ');
   const statusRecommendation = a.statusChangeRecommendation ? 'Y' : 'N';
@@ -1533,12 +1697,11 @@ function isMyCustomerStatusStrictStateChangeBaseP531_(status) {
   status = String(status || '').trim();
   if (!status) return true;
   if (status.indexOf('상태지정') >= 0) return true;
-  return false;
+  return ['고객 설득 중', '견적제출완료', '장기 추진건', '발주완료'].indexOf(status) >= 0;
 }
 
 function isMyCustomerStatusAllowedAutoTargetP531_(status) {
-  status = String(status || '').trim();
-  return status === '수주실패' || status === '견적제출완료';
+  return isMyCustomerStatusAllowedAutoTargetP536_(status);
 }
 
 function isMyCustomerQuoteLatestEnoughForStatusP531_(quote, failLike, ownComplete, order, thirdPartyContract) {
@@ -1622,6 +1785,7 @@ function buildMyCustomerStatusClientRowP531_(row) {
     lastSent: row.lastSent || '',
     sentAt: row.sentAt || '',
     sendStatus: row.sendStatus || '',
+    orderNo: row.orderNo || '',
     memoSummary: shortenMyCustomerStatusTextP528_(row.memoSummary || '', 180),
     lastContactDate: row.lastContactDate || '',
     analysis: {
@@ -1659,6 +1823,7 @@ function buildMyCustomerStatusClientRowP531_(row) {
       recommendationVisible: !!a.recommendationVisible,
       terminalCandidate: !!a.terminalCandidate,
       contractCompleteType: a.contractCompleteType || '',
+      contractCompletionInfo: a.contractCompletionInfo || {},
       thirdPartyContract: !!a.thirdPartyContract,
       analysisCautionLevel: a.analysisCautionLevel || '',
       conservativeReason: a.conservativeReason || '',
