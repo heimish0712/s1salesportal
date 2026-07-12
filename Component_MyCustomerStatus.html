@@ -1,5 +1,5 @@
 <script>
-// P539: 나의 고객 현황 - 분석DB 빠른 조회 + 별도 chunk 갱신 작업
+// P541: 나의 고객 현황 - 얇은 분석DB 조회 + 실제 로딩/렌더링 계측
 let myCustomerStatusBundleP528 = null;
 let myCustomerStatusLoadingP528 = false;
 let myCustomerStatusActiveViewP528 = 'all';
@@ -14,12 +14,42 @@ let myCustomerStatusExpandedKeyP533 = '';
 let myCustomerStatusExpandedRowNoP533 = 0;
 let myCustomerStatusExpandedCustomerNoP533 = '';
 let myCustomerStatusExpandedLoadingP533 = {};
+let myCustomerStatusLoadSeqP541 = 0;
+
+function logMyCustomerStatusClientPerfP541_(eventName, detail) {
+  try {
+    detail = detail || {};
+    detail.page = detail.page || 'myCustomerStatus';
+    detail.component = 'Component_MyCustomerStatus';
+    if (typeof portalPerfLogP460_ === 'function') return portalPerfLogP460_(eventName, detail);
+  } catch (err) {}
+  return null;
+}
+
+function nowMyCustomerStatusPerfP541_() {
+  try { return (typeof portalNowP460_ === 'function') ? portalNowP460_() : Date.now(); } catch (err) { return Date.now(); }
+}
+
+function getMyCustomerStatusPerfRowsP541_(res) {
+  try { return res && Array.isArray(res.rows) ? res.rows.length : 0; } catch (err) { return 0; }
+}
 
 function loadMyCustomerStatusPageP528(force) {
   const area = document.getElementById('myCustomerStatusAreaP528');
   if (!area) return;
   if (myCustomerStatusLoadingP528) return;
   myCustomerStatusLoadingP528 = true;
+  const loadSeq = ++myCustomerStatusLoadSeqP541;
+  const totalStarted = nowMyCustomerStatusPerfP541_();
+  const serverStarted = nowMyCustomerStatusPerfP541_();
+  const hadCache = !!myCustomerStatusBundleP528;
+  logMyCustomerStatusClientPerfP541_('myCustomerStatus.clientLoad.start', {
+    durationMs: 0,
+    force: !!force,
+    hadCache: hadCache,
+    loadSeq: loadSeq,
+    status: 'ok'
+  });
   if (!myCustomerStatusBundleP528 || force) {
     area.innerHTML = '<div class="loading">고객현황분석_DB에서 나의 고객 현황을 불러오는 중입니다.</div>';
   } else {
@@ -27,9 +57,34 @@ function loadMyCustomerStatusPageP528(force) {
   }
   google.script.run
     .withSuccessHandler(function(res) {
+      const serverMs = Math.round(nowMyCustomerStatusPerfP541_() - serverStarted);
       myCustomerStatusLoadingP528 = false;
+      logMyCustomerStatusClientPerfP541_('myCustomerStatus.serverSuccess', {
+        durationMs: serverMs,
+        loadSeq: loadSeq,
+        force: !!force,
+        ok: !!(res && res.ok !== false),
+        responseMode: res && res.responseMode || '',
+        rowCount: getMyCustomerStatusPerfRowsP541_(res),
+        serverElapsedMs: res && res.elapsedMs || '',
+        serverTotalMs: res && res.perf && res.perf.totalMs || '',
+        serverReadMs: res && res.perf && res.perf.readMs || '',
+        serverMapMs: res && res.perf && res.perf.mapMs || '',
+        serverBuildMs: res && res.perf && res.perf.buildMs || '',
+        selectedColumnCount: res && res.perf && res.perf.selectedColumnCount || '',
+        blockCount: res && res.perf && res.perf.blockCount || '',
+        status: (res && res.ok === false) ? 'error' : 'ok',
+        error: (res && res.ok === false && (res.error || res.message)) || ''
+      });
       if (!res || res.ok === false) {
         area.innerHTML = renderMyCustomerStatusLoadErrorP531_(res || { error: 'empty response' });
+        logMyCustomerStatusClientPerfP541_('myCustomerStatus.totalLoad.fail', {
+          durationMs: Math.round(nowMyCustomerStatusPerfP541_() - totalStarted),
+          loadSeq: loadSeq,
+          rowCount: getMyCustomerStatusPerfRowsP541_(res),
+          status: 'error',
+          error: (res && (res.error || res.message)) || 'empty response'
+        });
         return;
       }
       myCustomerStatusBundleP528 = res;
@@ -39,9 +94,32 @@ function loadMyCustomerStatusPageP528(force) {
         myCustomerStatusExpandedRowNoP533 = 0;
         myCustomerStatusExpandedCustomerNoP533 = '';
       }
+      const renderStarted = nowMyCustomerStatusPerfP541_();
       try {
         renderMyCustomerStatusPageP528_();
+        const renderMs = Math.round(nowMyCustomerStatusPerfP541_() - renderStarted);
+        const totalMs = Math.round(nowMyCustomerStatusPerfP541_() - totalStarted);
+        logMyCustomerStatusClientPerfP541_('myCustomerStatus.clientRender.end', {
+          durationMs: renderMs,
+          loadSeq: loadSeq,
+          rowCount: getMyCustomerStatusPerfRowsP541_(res),
+          pageSize: myCustomerStatusPageSizeP528,
+          responseMode: res && res.responseMode || '',
+          status: 'ok'
+        });
+        logMyCustomerStatusClientPerfP541_('myCustomerStatus.totalLoad.end', {
+          durationMs: totalMs,
+          loadSeq: loadSeq,
+          rowCount: getMyCustomerStatusPerfRowsP541_(res),
+          serverMs: serverMs,
+          renderMs: renderMs,
+          responseMode: res && res.responseMode || '',
+          selectedColumnCount: res && res.perf && res.perf.selectedColumnCount || '',
+          blockCount: res && res.perf && res.perf.blockCount || '',
+          status: 'ok'
+        });
       } catch (renderErr) {
+        const renderMs = Math.round(nowMyCustomerStatusPerfP541_() - renderStarted);
         area.innerHTML = renderMyCustomerStatusLoadErrorP531_({
           stage: 'clientRender',
           error: renderErr && renderErr.message ? renderErr.message : String(renderErr || ''),
@@ -49,14 +127,35 @@ function loadMyCustomerStatusPageP528(force) {
           responseMode: res && res.responseMode,
           rows: res && res.rows ? res.rows.length : 0
         });
+        logMyCustomerStatusClientPerfP541_('myCustomerStatus.clientRender.fail', {
+          durationMs: renderMs,
+          loadSeq: loadSeq,
+          rowCount: getMyCustomerStatusPerfRowsP541_(res),
+          status: 'error',
+          error: renderErr && renderErr.message ? renderErr.message : String(renderErr || '')
+        });
       }
     })
     .withFailureHandler(function(err) {
       myCustomerStatusLoadingP528 = false;
+      const serverMs = Math.round(nowMyCustomerStatusPerfP541_() - serverStarted);
       area.innerHTML = renderMyCustomerStatusLoadErrorP531_({
         stage: 'serverCallFailure',
         error: err && err.message ? err.message : String(err || ''),
         stack: err && err.stack ? String(err.stack).slice(0, 2000) : ''
+      });
+      logMyCustomerStatusClientPerfP541_('myCustomerStatus.serverFailure', {
+        durationMs: serverMs,
+        loadSeq: loadSeq,
+        force: !!force,
+        status: 'error',
+        error: err && err.message ? err.message : String(err || '')
+      });
+      logMyCustomerStatusClientPerfP541_('myCustomerStatus.totalLoad.fail', {
+        durationMs: Math.round(nowMyCustomerStatusPerfP541_() - totalStarted),
+        loadSeq: loadSeq,
+        status: 'error',
+        error: err && err.message ? err.message : String(err || '')
       });
     })
     .getMyCustomerStatusDashboardP528({ fast: true, force: !!force });
@@ -122,7 +221,7 @@ function renderMyCustomerStatusPageP528_() {
   html += '</div>';
 
   const idx = bundle.index || {};
-  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 범위 ' + esc(owner.scope || 'OWN') + ' · 원천 ' + esc(idx.sourceType || 'ANALYSIS_DB') + ' · DB대상 ' + esc(String(idx.sourceTotal || 0)) + '건' + (owner.scopeReason ? ' · 권한판정 ' + esc(owner.scopeReason) : '') + (idx.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + renderMyCustomerStatusJobMetaP539_(bundle) + renderMyCustomerAiMetaP537_(bundle) + '</div>';
+  html += '<div class="my-status-meta-p528">분석시각 ' + esc(bundle.generatedAt || '-') + ' · 범위 ' + esc(owner.scope || 'OWN') + ' · 원천 ' + esc(idx.sourceType || 'ANALYSIS_DB') + ' · DB대상 ' + esc(String(idx.sourceTotal || 0)) + '건' + (owner.scopeReason ? ' · 권한판정 ' + esc(owner.scopeReason) : '') + (idx.dirty ? ' · <b>인덱스 갱신 필요</b>' : '') + renderMyCustomerStatusDbMetaP529_(bundle) + '<span id="myCustomerStatusAsyncHealthP540">' + renderMyCustomerStatusJobMetaP539_(bundle) + renderMyCustomerAiMetaP537_(bundle) + (bundle.asyncHealthPending ? ' · 작업/AI 상태 조회 중...' : '') + '</span></div>';
 
   html += '<div class="my-status-cards-p528">';
   html += renderMyCustomerStatusCardP528_(owner.scope === 'ALL' ? '전체 고객' : '전체 내 고객', cards.total, 'all', '', owner.scope === 'ALL' ? 'admin 전체 고객' : '담당자 기준 전체 고객');
@@ -151,14 +250,70 @@ function renderMyCustomerStatusPageP528_() {
   html += '</div>';
   html += '</div>';
   area.innerHTML = html;
+  scheduleMyCustomerStatusAsyncHealthP541_();
 }
 
+function scheduleMyCustomerStatusAsyncHealthP541_() {
+  try {
+    clearTimeout(window.myCustomerStatusAsyncHealthTimerP541);
+    window.myCustomerStatusAsyncHealthTimerP541 = setTimeout(function() {
+      loadMyCustomerStatusAsyncHealthP540_();
+    }, 1200);
+  } catch (err) {
+    loadMyCustomerStatusAsyncHealthP540_();
+  }
+}
+
+function loadMyCustomerStatusAsyncHealthP540_() {
+  const slot = document.getElementById('myCustomerStatusAsyncHealthP540');
+  if (!slot || !myCustomerStatusBundleP528 || myCustomerStatusBundleP528.asyncHealthLoaded) return;
+  const started = nowMyCustomerStatusPerfP541_();
+  logMyCustomerStatusClientPerfP541_('myCustomerStatus.asyncHealth.start', { durationMs: 0, status: 'ok' });
+  google.script.run
+    .withSuccessHandler(function(res) {
+      const elapsed = Math.round(nowMyCustomerStatusPerfP541_() - started);
+      const target = document.getElementById('myCustomerStatusAsyncHealthP540');
+      if (!target) return;
+      if (!res || res.ok === false) {
+        target.innerHTML = ' · <b>작업/AI 상태 조회 실패</b>: ' + esc((res && (res.error || res.message)) || 'unknown');
+        logMyCustomerStatusClientPerfP541_('myCustomerStatus.asyncHealth.clientFail', {
+          durationMs: elapsed,
+          status: 'error',
+          error: (res && (res.error || res.message)) || 'unknown'
+        });
+        return;
+      }
+      myCustomerStatusBundleP528.job = res.job || null;
+      myCustomerStatusBundleP528.ai = res.ai || null;
+      myCustomerStatusBundleP528.asyncHealthPending = false;
+      myCustomerStatusBundleP528.asyncHealthLoaded = true;
+      target.innerHTML = renderMyCustomerStatusJobMetaP539_(myCustomerStatusBundleP528) + renderMyCustomerAiMetaP537_(myCustomerStatusBundleP528);
+      logMyCustomerStatusClientPerfP541_('myCustomerStatus.asyncHealth.clientEnd', {
+        durationMs: elapsed,
+        serverElapsedMs: res && res.elapsedMs || '',
+        jobOk: !!(res && res.job && res.job.ok !== false),
+        aiOk: !!(res && res.ai && res.ai.ok !== false),
+        status: 'ok'
+      });
+    })
+    .withFailureHandler(function(err) {
+      const elapsed = Math.round(nowMyCustomerStatusPerfP541_() - started);
+      const target = document.getElementById('myCustomerStatusAsyncHealthP540');
+      if (target) target.innerHTML = ' · <b>작업/AI 상태 조회 실패</b>: ' + esc(err && err.message ? err.message : String(err || ''));
+      logMyCustomerStatusClientPerfP541_('myCustomerStatus.asyncHealth.clientFail', {
+        durationMs: elapsed,
+        status: 'error',
+        error: err && err.message ? err.message : String(err || '')
+      });
+    })
+    .getMyCustomerStatusAsyncHealthP540();
+}
 
 function renderMyCustomerStatusDbMetaP529_(bundle) {
   const db = bundle && bundle.analysisDb || {};
   if (!db) return '';
   if (db.fastLoad || db.loaded) {
-    return ' · 분석DB 조회 ' + esc(String(db.rows || 0)) + '건' + (db.latestAnalyzedAt ? ' · 최신분석 ' + esc(db.latestAnalyzedAt) : '') + (db.message ? ' · ' + esc(db.message) : '');
+    return ' · 분석DB 조회 ' + esc(String(db.rows || 0)) + '건' + (db.selectedColumnCount ? ' · 경량컬럼 ' + esc(String(db.selectedColumnCount)) + '개' : '') + (db.blockCount ? ' · 읽기블록 ' + esc(String(db.blockCount)) + '개' : '') + (db.latestAnalyzedAt ? ' · 최신분석 ' + esc(db.latestAnalyzedAt) : '') + (db.message ? ' · ' + esc(db.message) : '');
   }
   if (db.saved) return ' · 분석DB 저장 ' + esc(String(db.rows || 0)) + '건 / 기록 ' + esc(String(db.written || db.totalRows || 0)) + '건(' + esc(db.sheetName || '고객현황분석_DB') + ')';
   if (db.error) return ' · <b>분석DB 저장 실패</b>: ' + esc(db.error);

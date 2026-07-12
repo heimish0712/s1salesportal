@@ -6,7 +6,7 @@
  * - 수주실패/발주완료/계약완료는 영업담당자 판단 우선 보호 상태로 취급
  ***************************************/
 
-const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P539_ANALYSIS_DB_FAST_LOAD';
+const MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528 = 'P541_FAST_LOAD_MEASURED_THIN_COLUMNS';
 const MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529 = '고객현황분석_DB';
 const MY_CUSTOMER_STATUS_ANALYSIS_JOB_SHEET_P539 = '고객현황분석작업_DB';
 const MY_CUSTOMER_STATUS_ANALYSIS_JOB_PROCESS_LIMIT_P539 = 200;
@@ -33,6 +33,19 @@ const MY_CUSTOMER_STATUS_ANALYSIS_HEADERS_P529 = [
   '최신전체이벤트요약', '최신판정이벤트요약', '최신판정이벤트일자', '최신판정이벤트출처',
   '이벤트분류요약', '제외이벤트요약', '상태추천차단사유'
 ];
+
+
+// P541: 첫 화면은 표/카드/정렬에 필요한 얇은 컬럼만 읽습니다.
+// 상세 검증용 키워드/hash/JSON/검토 메모는 더블클릭 상세 또는 DB 검증용으로 분리합니다.
+const MY_CUSTOMER_STATUS_FAST_DB_HEADERS_P540 = [
+  '분석일시', '고객번호', 'rowNo', '회사명', '영업담당자', '현재상태', '추천상태',
+  '신뢰도', '데이터누락키워드', '가능성점수', '추천액션', '상태보호여부', '추천노출여부',
+  '상태변경추천상태', '상태변경추천여부', '상태변경추천등급',
+  '업무인사이트유형', '업무인사이트요약', '최근연락일',
+  '최신판정이벤트요약', '최신판정이벤트일자', '최신판정이벤트출처',
+  '상태추천차단사유'
+];
+const MY_CUSTOMER_STATUS_HEAVY_DB_HEADERS_P540 = ['근거JSON', '이벤트JSON', 'rawResultJson', 'payloadJson', 'candidateJson', 'resultJson'];
 
 
 function getMyCustomerStatusDashboardP528(options) {
@@ -1650,6 +1663,7 @@ function getMyCustomerStatusDashboardFromDbP539_(options) {
   options = options || {};
   const started = new Date();
   let stage = 'start';
+  const perf = { readMs: 0, mapMs: 0, buildMs: 0, totalMs: 0 };
   try {
     stage = 'permission';
     const perm = getPortalCurrentPermission_();
@@ -1658,22 +1672,58 @@ function getMyCustomerStatusDashboardFromDbP539_(options) {
     const isAllScope = !!scopeInfo.isAllScope;
 
     stage = 'readAnalysisDb';
+    const readStarted = new Date();
     const dbResult = readMyCustomerStatusAnalysisDbRowsP539_(perm, aliases, isAllScope);
+    perf.readMs = new Date().getTime() - readStarted.getTime();
+
+    stage = 'mapClientRows';
+    const mapStarted = new Date();
     const clientRows = dbResult.rows.map(buildMyCustomerStatusClientRowFromDbP539_);
+    perf.mapMs = new Date().getTime() - mapStarted.getTime();
 
     stage = 'buildFastResponse';
-    return buildMyCustomerStatusDashboardResponseFromClientRowsP539_(clientRows, {
+    const buildStarted = new Date();
+    const response = buildMyCustomerStatusDashboardResponseFromClientRowsP539_(clientRows, {
       started: started,
       perm: perm,
       aliases: aliases,
       scopeInfo: scopeInfo,
       isAllScope: isAllScope,
       dbResult: dbResult,
-      sourceType: 'ANALYSIS_DB',
+      sourceType: 'ANALYSIS_DB_FAST_COLUMNS',
       sourceMessage: dbResult.message || ''
     });
+    perf.buildMs = new Date().getTime() - buildStarted.getTime();
+    perf.totalMs = new Date().getTime() - started.getTime();
+    response.perf = Object.assign({}, perf, {
+      rawRows: dbResult.rawRows || 0,
+      scopedRows: dbResult.scopedRows || 0,
+      selectedColumnCount: dbResult.selectedColumnCount || 0,
+      blockCount: dbResult.blockCount || 0
+    });
+    logMyCustomerStatusPerfP540_('myCustomerStatus.dbFastLoad.end', perf.totalMs, '', {
+      stage: stage,
+      scope: isAllScope ? 'ALL' : 'OWN',
+      isAdmin: !!isAllScope,
+      rawRows: dbResult.rawRows || 0,
+      scopedRows: dbResult.scopedRows || 0,
+      selectedColumnCount: dbResult.selectedColumnCount || 0,
+      blockCount: dbResult.blockCount || 0,
+      missingHeaders: dbResult.missingHeaders || [],
+      skippedHeavyHeaders: dbResult.skippedHeavyHeaders || [],
+      readMs: perf.readMs,
+      mapMs: perf.mapMs,
+      buildMs: perf.buildMs
+    });
+    return response;
   } catch (err) {
     const msg = err && err.message ? err.message : String(err || '');
+    const elapsed = new Date().getTime() - started.getTime();
+    logMyCustomerStatusPerfP540_('myCustomerStatus.dbFastLoad.fail', elapsed, msg, {
+      stage: stage,
+      error: msg,
+      stack: err && err.stack ? String(err.stack).slice(0, 1200) : ''
+    });
     return {
       ok: false,
       version: MY_CUSTOMER_STATUS_ANALYZER_VERSION_P528,
@@ -1682,8 +1732,8 @@ function getMyCustomerStatusDashboardFromDbP539_(options) {
       message: msg,
       stack: err && err.stack ? String(err.stack).slice(0, 2000) : '',
       generatedAt: formatMyCustomerStatusDateTimeP528_(started),
-      elapsedMs: new Date().getTime() - started.getTime(),
-      responseMode: 'FAST_DB_LOAD_FAILED_P539'
+      elapsedMs: elapsed,
+      responseMode: 'FAST_DB_LOAD_FAILED_P540'
     };
   }
 }
@@ -1697,7 +1747,12 @@ function readMyCustomerStatusAnalysisDbRowsP539_(perm, aliases, isAllScope) {
     scopedRows: 0,
     latestAnalyzedAt: '',
     message: '',
-    error: ''
+    error: '',
+    selectedColumnCount: 0,
+    selectedHeaders: [],
+    missingHeaders: [],
+    blockCount: 0,
+    skippedHeavyHeaders: []
   };
   const ss = getWebAppDbSpreadsheet_();
   const sheet = ss.getSheetByName(MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529);
@@ -1709,16 +1764,18 @@ function readMyCustomerStatusAnalysisDbRowsP539_(perm, aliases, isAllScope) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function(h) { return String(h || '').trim(); });
-  const headerMap = {};
-  headers.forEach(function(h, i) { if (h) headerMap[h] = i; });
-  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  const readResult = readMyCustomerStatusAnalysisFastColumnsP540_(sheet, headers, 2, lastRow - 1);
+  const records = readResult.records || [];
   const aliasKeys = {};
   (aliases || []).forEach(function(a) { const k = normalizeMyCustomerStatusNameP528_(a); if (k) aliasKeys[k] = true; });
-  out.rawRows = values.length;
+  out.rawRows = records.length;
+  out.selectedColumnCount = readResult.selectedColumnCount || 0;
+  out.selectedHeaders = readResult.selectedHeaders || [];
+  out.missingHeaders = readResult.missingHeaders || [];
+  out.blockCount = readResult.blockCount || 0;
+  out.skippedHeavyHeaders = MY_CUSTOMER_STATUS_HEAVY_DB_HEADERS_P540.filter(function(h) { return headers.indexOf(h) >= 0 && out.selectedHeaders.indexOf(h) < 0; });
 
-  values.forEach(function(arr) {
-    const rec = {};
-    headers.forEach(function(h, i) { if (h) rec[h] = arr[i]; });
+  records.forEach(function(rec) {
     const repKey = normalizeMyCustomerStatusNameP528_(rec['영업담당자'] || '');
     if (!isAllScope) {
       if (!repKey || !aliasKeys[repKey]) return;
@@ -1728,8 +1785,70 @@ function readMyCustomerStatusAnalysisDbRowsP539_(perm, aliases, isAllScope) {
     if (at && (!out.latestAnalyzedAt || String(at) > String(out.latestAnalyzedAt))) out.latestAnalyzedAt = at;
   });
   out.scopedRows = out.rows.length;
-  out.message = '고객현황분석_DB 기준 빠른 조회';
+  out.message = '고객현황분석_DB 기준 P541 얇은 컬럼 빠른 조회';
   return out;
+}
+
+function readMyCustomerStatusAnalysisFastColumnsP540_(sheet, headers, startRow, rowCount) {
+  const result = {
+    records: [],
+    selectedColumnCount: 0,
+    selectedHeaders: [],
+    missingHeaders: [],
+    blockCount: 0
+  };
+  rowCount = Math.max(0, Number(rowCount || 0) || 0);
+  if (!sheet || !rowCount) return result;
+  headers = (headers || []).map(function(h) { return String(h || '').trim(); });
+  const headerToIndex = {};
+  headers.forEach(function(h, i) { if (h && headerToIndex[h] == null) headerToIndex[h] = i; });
+  const selectedIndexes = [];
+  const seen = {};
+  (MY_CUSTOMER_STATUS_FAST_DB_HEADERS_P540 || []).forEach(function(h) {
+    const idx = headerToIndex[h];
+    if (idx == null) {
+      result.missingHeaders.push(h);
+      return;
+    }
+    if (seen[idx]) return;
+    seen[idx] = true;
+    selectedIndexes.push(idx);
+    result.selectedHeaders.push(h);
+  });
+  selectedIndexes.sort(function(a, b) { return a - b; });
+  result.selectedColumnCount = selectedIndexes.length;
+  const records = Array.from({ length: rowCount }, function() { return {}; });
+  if (!selectedIndexes.length) {
+    result.records = records;
+    return result;
+  }
+  const blocks = [];
+  let blockStart = selectedIndexes[0];
+  let prev = selectedIndexes[0];
+  for (let i = 1; i < selectedIndexes.length; i++) {
+    const idx = selectedIndexes[i];
+    if (idx === prev + 1) {
+      prev = idx;
+      continue;
+    }
+    blocks.push({ start: blockStart, end: prev });
+    blockStart = idx;
+    prev = idx;
+  }
+  blocks.push({ start: blockStart, end: prev });
+  result.blockCount = blocks.length;
+  blocks.forEach(function(block) {
+    const width = block.end - block.start + 1;
+    const values = sheet.getRange(startRow, block.start + 1, rowCount, width).getDisplayValues();
+    for (let r = 0; r < rowCount; r++) {
+      for (let c = 0; c < width; c++) {
+        const header = headers[block.start + c];
+        if (header) records[r][header] = values[r][c];
+      }
+    }
+  });
+  result.records = records;
+  return result;
 }
 
 function buildMyCustomerStatusClientRowFromDbP539_(rec) {
@@ -1863,17 +1982,62 @@ function buildMyCustomerStatusDashboardResponseFromClientRowsP539_(clientRows, c
       sheetName: MY_CUSTOMER_STATUS_ANALYSIS_SHEET_P529,
       latestAnalyzedAt: (ctx.dbResult && ctx.dbResult.latestAnalyzedAt) || '',
       message: (ctx.dbResult && ctx.dbResult.message) || '고객현황분석_DB 빠른 조회',
-      fastLoad: true
+      fastLoad: true,
+      selectedColumnCount: (ctx.dbResult && ctx.dbResult.selectedColumnCount) || 0,
+      blockCount: (ctx.dbResult && ctx.dbResult.blockCount) || 0,
+      missingHeaders: (ctx.dbResult && ctx.dbResult.missingHeaders) || [],
+      skippedHeavyHeaders: (ctx.dbResult && ctx.dbResult.skippedHeavyHeaders) || []
     },
-    job: getMyCustomerStatusAnalysisJobStatusP539({ light: true }),
+    job: null,
+    asyncHealthPending: true,
     statusOptions: (PORTAL_CONFIG.STATUS_OPTIONS || []).slice(),
     statusCounts: objectToSortedStatusCountArrayP528_(statusCounts),
     cards: cards,
     rows: clientRows,
     lists: {},
-    responseMode: 'FAST_ANALYSIS_DB_ROWS_ONLY_P539',
-    ai: (typeof getMyCustomerAiAnalysisHealthP537 === 'function' ? getMyCustomerAiAnalysisHealthP537({ light: true }) : null)
+    responseMode: 'FAST_ANALYSIS_DB_THIN_COLUMNS_P541',
+    ai: null
   };
+}
+
+function getMyCustomerStatusAsyncHealthP540() {
+  const started = new Date();
+  let stage = 'start';
+  try {
+    stage = 'jobStatus';
+    const job = getMyCustomerStatusAnalysisJobStatusP539({ light: true });
+    stage = 'aiStatus';
+    const ai = (typeof getMyCustomerAiAnalysisHealthP537 === 'function' ? getMyCustomerAiAnalysisHealthP537({ light: true }) : null);
+    const elapsed = new Date().getTime() - started.getTime();
+    logMyCustomerStatusPerfP540_('myCustomerStatus.asyncHealth.end', elapsed, '', {
+      jobOk: !job || job.ok !== false,
+      aiOk: !ai || ai.ok !== false,
+      jobTrigger: job && job.triggerStatus || '',
+      aiTrigger: ai && ai.triggerStatus || ''
+    });
+    return { ok: true, job: job, ai: ai, elapsedMs: elapsed, generatedAt: formatMyCustomerStatusDateTimeP528_(started) };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err || '');
+    const elapsed = new Date().getTime() - started.getTime();
+    logMyCustomerStatusPerfP540_('myCustomerStatus.asyncHealth.fail', elapsed, msg, { stage: stage });
+    return { ok: false, stage: stage, error: msg, elapsedMs: elapsed };
+  }
+}
+
+function logMyCustomerStatusPerfP540_(eventName, durationMs, error, detail) {
+  try {
+    if (typeof appendPortalServerPerfLogP460_ !== 'function') return;
+    appendPortalServerPerfLogP460_({
+      event: eventName,
+      durationMs: Number(durationMs || 0) || 0,
+      page: 'myCustomerStatus',
+      status: error ? 'error' : 'ok',
+      error: error || '',
+      detail: detail || {}
+    });
+  } catch (err) {
+    try { Logger.log('P540 my customer status perf log failed: ' + (err && err.stack || err)); } catch (e) {}
+  }
 }
 
 function computeMyCustomerStatusCardsFromClientRowsP539_(rows) {
