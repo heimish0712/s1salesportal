@@ -26,7 +26,7 @@ function preloadFocusCustomerDefaultP330_(options) {
   options = options || {};
   try {
     if (typeof focusCustomerStateP290_ === 'undefined' || !focusCustomerStateP290_) return;
-    if (focusCustomerStateP290_.preloadLoading) return;
+    if (focusCustomerStateP290_.preloadLoading || focusCustomerStateP290_.loading) return;
     if (focusCustomerStateP290_.preloadDone && !options.force) return;
 
     const perm = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
@@ -92,6 +92,9 @@ function loadFocusCustomerPageP290(forceRefresh) {
   if (!focusCustomerStateP290_.data && !forceRefresh) {
     const list = document.getElementById('focusListP290');
     if (list) list.innerHTML = '<div class="loading">중점고객관리 데이터를 불러오는 중입니다.</div>';
+    // P546: 기본조건 프리로드가 이미 진행 중이면 동일 서버 호출을 중복 실행하지 않습니다.
+    // 프리로드 완료 콜백이 현재 화면이 활성 상태일 때 바로 렌더링합니다.
+    if (focusCustomerStateP290_.preloadLoading) return;
   }
   requestFocusCustomerDataP290_(!!forceRefresh);
 }

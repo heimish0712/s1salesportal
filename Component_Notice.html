@@ -3,6 +3,10 @@ let noticeSortKeyP15 = "";
 let noticeSortDirP15 = "asc";
 let currentNoticeEditIdP449 = "";
 let noticeWriteContextKeyP494D = "";
+const NOTICE_LIST_CACHE_KEY_P546 = 'salesPortal.noticeList.p546';
+let noticeListLoadingP546 = false;
+let noticeListLoadedP546 = false;
+let noticeListLoadedAtP546 = 0;
 let noticeWriteOpenSeqP494D = 0;
 function loadHomeNoticeList() {
   google.script.run
@@ -11,11 +15,69 @@ function loadHomeNoticeList() {
     .getPortalNotices(3);
 }
 
-function loadNoticeTable() {
-  try { applyPortalPermissionToUi_(); } catch (err) {}
+function getNoticeListCacheP546_() {
+  try {
+    const raw = sessionStorage.getItem(NOTICE_LIST_CACHE_KEY_P546);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !Array.isArray(obj.rows)) return null;
+    if (Date.now() - Number(obj.cachedAt || 0) > 10 * 60 * 1000) return null;
+    return obj;
+  } catch (err) { return null; }
+}
+
+function saveNoticeListCacheP546_(rows) {
+  try { sessionStorage.setItem(NOTICE_LIST_CACHE_KEY_P546, JSON.stringify({ cachedAt: Date.now(), rows: Array.isArray(rows) ? rows : [] })); } catch (err) {}
+}
+
+function preloadNoticeTableP546_(options) {
+  options = options || {};
+  if (noticeListLoadingP546 || noticeListLoadedP546) return;
+  const cached = getNoticeListCacheP546_();
+  if (cached) {
+    noticeListCache = cached.rows.slice();
+    upsertNoticeCache_(noticeListCache);
+    noticeListLoadedP546 = true;
+    noticeListLoadedAtP546 = Number(cached.cachedAt || Date.now());
+    return;
+  }
+  noticeListLoadingP546 = true;
   google.script.run
-    .withSuccessHandler(renderNoticeTable)
-    .withFailureHandler(showGlobalError)
+    .withSuccessHandler(function(rows) {
+      noticeListLoadingP546 = false;
+      noticeListLoadedP546 = true;
+      noticeListLoadedAtP546 = Date.now();
+      renderNoticeTable(rows || []);
+      saveNoticeListCacheP546_(rows || []);
+    })
+    .withFailureHandler(function(err) {
+      noticeListLoadingP546 = false;
+      if (!options.silent) console.warn('공지사항 프리로드 실패', err);
+    })
+    .getPortalNotices(0);
+}
+
+function loadNoticeTable(options) {
+  options = options || {};
+  try { applyPortalPermissionToUi_(); } catch (err) {}
+  const cached = getNoticeListCacheP546_();
+  if (noticeListCache && noticeListCache.length) renderNoticeTable(noticeListCache);
+  else if (cached) renderNoticeTable(cached.rows || []);
+  if (noticeListLoadingP546) return;
+  noticeListLoadingP546 = true;
+  google.script.run
+    .withSuccessHandler(function(rows) {
+      noticeListLoadingP546 = false;
+      noticeListLoadedP546 = true;
+      noticeListLoadedAtP546 = Date.now();
+      renderNoticeTable(rows || []);
+      saveNoticeListCacheP546_(rows || []);
+    })
+    .withFailureHandler(function(err) {
+      noticeListLoadingP546 = false;
+      if (!(noticeListCache && noticeListCache.length) && !cached) showGlobalError(err);
+      else console.warn('공지사항 최신 조회 실패', err);
+    })
     .getPortalNotices(0);
 }
 
@@ -45,6 +107,8 @@ function renderNoticeTable(notices) {
   if (!target) return;
   notices = Array.isArray(notices) ? notices : [];
   noticeListCache = notices.slice();
+  noticeListLoadedP546 = true;
+  noticeListLoadedAtP546 = Date.now();
   upsertNoticeCache_(notices);
   if (!notices.length) {
     target.innerHTML = '<div class="loading">등록된 공지사항이 없습니다.' + (canPortal_('canWriteNotice') ? ' 작성하기 버튼으로 새 공지를 등록하세요.' : '') + '</div>';

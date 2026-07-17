@@ -91,6 +91,35 @@ function endMyCustomerFolderAddCompositionP506_() {
   scheduleMyCustomerFolderCandidateSearchP497_();
 }
 
+function preloadMyCustomerFolderPageP546_(options) {
+  options = options || {};
+  if (myCustomerFolderBundleP497 || myCustomerFolderServerLoadingP497) return;
+  if (typeof portalPermissionLoadedV63 !== 'undefined' && !portalPermissionLoadedV63) {
+    setTimeout(function(){ try { preloadMyCustomerFolderPageP546_(options); } catch (err) {} }, 700);
+    return;
+  }
+  try { ensureMyCustomerFolderSearchIndexP501_(false); } catch (err) {}
+  myCustomerFolderServerLoadingP497 = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      myCustomerFolderServerLoadingP497 = false;
+      if (res && res.ok) {
+        setMyCustomerFolderBundleP499_(res);
+        ensureMyCustomerFolderSelectedP497_();
+      }
+      const section = document.getElementById('myCustomerFolderSectionP497');
+      if (section && section.classList.contains('active')) {
+        renderMyCustomerFolderPageP497_();
+        startMyCustomerFolderRenderPollP497_();
+      }
+    })
+    .withFailureHandler(function(err) {
+      myCustomerFolderServerLoadingP497 = false;
+      if (!options.silent) console.warn('나의 고객 폴더 프리로드 실패', err);
+    })
+    .getMyCustomerFolderBundleP497({ force: false, preload: true });
+}
+
 function loadMyCustomerFolderPageP497(force) {
   force = !!force;
   const area = document.getElementById('myCustomerFolderAreaP497');
@@ -110,6 +139,10 @@ function loadMyCustomerFolderPageP497(force) {
     startMyCustomerFolderRenderPollP497_();
     return;
   }
+
+  // P546: 백그라운드 예열이 진행 중이면 중복 서버 호출을 만들지 않습니다.
+  // 예열 완료 콜백이 현재 화면이 활성 상태일 때 즉시 렌더링합니다.
+  if (!force && myCustomerFolderServerLoadingP497) return;
 
   myCustomerFolderServerLoadingP497 = true;
   google.script.run

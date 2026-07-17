@@ -11,7 +11,12 @@ let favoriteSortDirP15 = 'asc';
 function refreshFavoriteCustomers(force) {
   force = !!force;
   const area = document.getElementById('favoriteResultArea');
-  if (area) area.innerHTML = '<div class="loading">즐겨찾기 고객을 불러오는 중입니다.</div>';
+  // P546: 이미 예열된 map/인덱스가 있으면 화면을 비우지 않고 즉시 기존 목록부터 표시합니다.
+  if (!force && customerFavoriteLoadedV60) {
+    renderFavoritePage();
+  } else if (area) {
+    area.innerHTML = '<div class="loading">즐겨찾기 고객을 불러오는 중입니다.</div>';
+  }
 
   // 검색인덱스는 localStorage 우선으로 즉시 올립니다.
   try {

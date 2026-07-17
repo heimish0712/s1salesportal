@@ -7,7 +7,7 @@ let portalCurrentPageP469_ = 'home';
 // - 크롬 전체 캐시는 웹앱에서 삭제할 수 없으므로, 포털이 직접 저장한 localStorage/sessionStorage/Cache API만 정리합니다.
 // - 캐시 버전이 바뀐 경우 1회 자동 초기화해 오래된 고객 row/detail/send workspace 캐시를 제거합니다.
 // - 단, 미처리 저장/발송 operation은 보호해 사용자의 저장 의도를 지우지 않습니다.
-const PORTAL_CLIENT_CACHE_VERSION_P515 = 'P528_my_customer_status_dashboard';
+const PORTAL_CLIENT_CACHE_VERSION_P515 = 'P546_serial_page_prewarm_cache';
 const PORTAL_CLIENT_CACHE_VERSION_KEY_P515 = 'salesPortal.clientCache.version';
 const PORTAL_CLIENT_CACHE_RESET_MARKER_P515 = 'salesPortal.clientCache.resetNotice';
 
@@ -171,7 +171,12 @@ window.onload = function() {
   }, 2600);
   setTimeout(function() { try { finishPortalBootP462_(); } catch (err) {} }, 1800);
   setTimeout(function() { try { setPortalBootLoadingP462_(false); portalBootReadyP462 = true; } catch (err) {} }, 4200);
-  setTimeout(function() { try { schedulePortalIdlePrewarmP461_(); } catch (err) { console.warn('idle prewarm 실패', err); } }, 60000);
+  // P546: 메뉴를 열기 전부터 모든 주요 화면 데이터를 한 번에 하나씩 순차 예열합니다.
+  // 기존 60초 대기/메뉴 이동 시 중단 방식은 실제 사용 시 거의 완료되지 않아 폐기합니다.
+  setTimeout(function() {
+    try { schedulePortalPagePrewarmP546_({ reason: 'boot', delay: 0 }); }
+    catch (err) { console.warn('페이지 순차 예열 시작 실패', err); }
+  }, 1500);
   // v31 FIX 유지: 고객 상세 검색 메뉴 진입 시 searchCustomerPage(0)가 실행됩니다.
   // v46: notice 전체 목록은 공지사항 메뉴 진입 시에만 조회합니다.
 };
@@ -238,30 +243,195 @@ function markPortalRouteLoadingP463_(label, on) {
   area.textContent = on ? '화면 준비 중...' : '';
 }
 
-function schedulePortalIdlePrewarmP461_() {
-  const jobs = [
-    function(){ try { loadCustomerFavoriteMap_({ silent: true }); } catch (err) { console.warn('고객 즐겨찾기 프리로드 실패', err); } },
-    function(){ try { preloadSupportPageV57_({ silent: true }); } catch (err) { console.warn('영업지원 요청 프리로드 실패', err); } },
-    function(){ try { if (typeof preloadTodayPageV57_ === 'function') preloadTodayPageV57_({ silent: true, reason: 'home-idle-prewarm' }); } catch (err) { console.warn('오늘 할 일 프리로드 실패', err); } },
-    function(){ try { if (typeof preloadContractCompletePageP360_ === 'function') preloadContractCompletePageP360_({ silent: true }); } catch (err) { console.warn('계약종합관리 프리로드 실패', err); } },
-    function(){ try { if (typeof preloadFocusCustomerDefaultP330_ === 'function') preloadFocusCustomerDefaultP330_({ silent: true, reason: 'home-idle-prewarm' }); } catch (err) { console.warn('중점고객관리 프리로드 실패', err); } }
-  ];
-  let i = 0;
-  const runNext = function() {
-    if (i >= jobs.length) return;
-    // P462: 사용자가 이미 업무 메뉴를 누른 뒤에는 백그라운드 예열이 현재 작업을 방해하지 않도록 중단합니다.
-    if (window.__portalUserNavigatedP462) return;
-    // 사용자가 입력/저장 중이면 예열을 뒤로 미룹니다.
-    if (document.body && document.body.classList && document.body.classList.contains('portal-user-editing')) {
-      setTimeout(runNext, 2500);
-      return;
+// P546: 전체 주요 페이지 순차 예열 관리자
+// - GAS 호출을 동시에 쏟지 않고 반드시 한 작업씩 처리합니다.
+// - 사용자가 메뉴를 눌러도 예열을 중단하지 않고, 해당 페이지를 다음 순서로 끌어올립니다.
+// - 각 컴포넌트의 기존 메모리/localStorage 캐시를 그대로 사용합니다.
+let portalPagePrewarmStateP546_ = {
+  started: false,
+  running: false,
+  activeKey: '',
+  queue: [],
+  completed: {},
+  failed: {},
+  attempts: {},
+  timer: null,
+  pollTimer: null
+};
+
+function getPortalPagePrewarmJobsP546_() {
+  return [
+    {
+      key: 'favorites', page: 'favorites', timeoutMs: 12000,
+      start: function(){ if (typeof loadCustomerFavoriteMap_ === 'function') loadCustomerFavoriteMap_({ silent: true }); },
+      busy: function(){ return typeof customerFavoriteLoadingV60 !== 'undefined' && !!customerFavoriteLoadingV60; },
+      ready: function(){ return typeof customerFavoriteLoadedV60 !== 'undefined' && !!customerFavoriteLoadedV60; }
+    },
+    {
+      key: 'support', page: 'support', timeoutMs: 18000,
+      start: function(){ if (typeof preloadSupportPageV57_ === 'function') preloadSupportPageV57_({ silent: true, reason: 'portal-prewarm-p546' }); },
+      busy: function(){ return typeof supportLoadingV56 !== 'undefined' && !!supportLoadingV56; },
+      ready: function(){ return typeof supportCurrentData !== 'undefined' && !!supportCurrentData; }
+    },
+    {
+      key: 'today', page: 'today', timeoutMs: 16000,
+      start: function(){ if (typeof preloadTodayPageV57_ === 'function') preloadTodayPageV57_({ silent: true, reason: 'portal-prewarm-p546' }); },
+      busy: function(){
+        try {
+          const key = (typeof getTodayCacheKeyP360_ === 'function') ? getTodayCacheKeyP360_(todaySelectedDate) : '';
+          return !!(key && todayLoadingByDateV57 && todayLoadingByDateV57[key]);
+        } catch (err) { return false; }
+      },
+      ready: function(){
+        try {
+          const key = (typeof getTodayCacheKeyP360_ === 'function') ? getTodayCacheKeyP360_(todaySelectedDate) : '';
+          return !!(key && ((todayPreloadMemoryP360_ && todayPreloadMemoryP360_[key]) || (todayCacheByDateV57 && todayCacheByDateV57[key])));
+        } catch (err) { return false; }
+      }
+    },
+    {
+      key: 'contracts', page: 'contracts', timeoutMs: 20000,
+      start: function(){ if (typeof preloadContractCompletePageP360_ === 'function') preloadContractCompletePageP360_({ silent: true, reason: 'portal-prewarm-p546' }); },
+      busy: function(){ return typeof contractCompleteLoadingV69 !== 'undefined' && !!contractCompleteLoadingV69; },
+      ready: function(){ return typeof contractCompleteMetaV69 !== 'undefined' && contractCompleteMetaV69 !== null; }
+    },
+    {
+      key: 'focusCustomers', page: 'focusCustomers', timeoutMs: 20000,
+      start: function(){ if (typeof preloadFocusCustomerDefaultP330_ === 'function') preloadFocusCustomerDefaultP330_({ silent: true, reason: 'portal-prewarm-p546' }); },
+      busy: function(){ return typeof focusCustomerStateP290_ !== 'undefined' && !!(focusCustomerStateP290_.preloadLoading || focusCustomerStateP290_.loading); },
+      ready: function(){ return typeof focusCustomerStateP290_ !== 'undefined' && !!(focusCustomerStateP290_.preloadDone || focusCustomerStateP290_.data); }
+    },
+    {
+      key: 'notices', page: 'notices', timeoutMs: 12000,
+      start: function(){ if (typeof preloadNoticeTableP546_ === 'function') preloadNoticeTableP546_({ silent: true }); },
+      busy: function(){ return typeof noticeListLoadingP546 !== 'undefined' && !!noticeListLoadingP546; },
+      ready: function(){ return typeof noticeListLoadedP546 !== 'undefined' && !!noticeListLoadedP546; }
+    },
+    {
+      key: 'myCustomerFolder', page: 'myCustomerFolder', timeoutMs: 18000,
+      start: function(){ if (typeof preloadMyCustomerFolderPageP546_ === 'function') preloadMyCustomerFolderPageP546_({ silent: true }); },
+      busy: function(){ return typeof myCustomerFolderServerLoadingP497 !== 'undefined' && !!myCustomerFolderServerLoadingP497; },
+      ready: function(){ return typeof myCustomerFolderBundleP497 !== 'undefined' && !!myCustomerFolderBundleP497; }
+    },
+    {
+      key: 'myCustomerStatus', page: 'myCustomerStatus', timeoutMs: 30000,
+      start: function(){ if (typeof preloadMyCustomerStatusPageP546_ === 'function') preloadMyCustomerStatusPageP546_({ silent: true }); },
+      busy: function(){ return typeof myCustomerStatusLoadingP528 !== 'undefined' && !!myCustomerStatusLoadingP528; },
+      ready: function(){ return typeof myCustomerStatusBundleP528 !== 'undefined' && !!myCustomerStatusBundleP528; }
+    },
+    {
+      key: 'activityLog', page: 'activityLog', timeoutMs: 18000,
+      start: function(){ if (typeof preloadActivityLogPageP546_ === 'function') preloadActivityLogPageP546_({ silent: true }); },
+      busy: function(){ return typeof activityLogStateP110 !== 'undefined' && !!activityLogStateP110.loading; },
+      ready: function(){ return typeof activityLogStateP110 !== 'undefined' && !!activityLogStateP110.data; }
+    },
+    {
+      key: 'systemHealth', page: 'systemHealth', timeoutMs: 1000,
+      start: function(){
+        try {
+          const p = (typeof getPortalPermission_ === 'function') ? getPortalPermission_() : null;
+          if (typeof renderSystemHealthShellP503_ === 'function') renderSystemHealthShellP503_(!!(p && p.active !== false && p.canUseAdminHome));
+          if (typeof renderSystemHealthBrowserCacheCardP503_ === 'function') renderSystemHealthBrowserCacheCardP503_();
+        } catch (err) {}
+      },
+      busy: function(){ return false; },
+      ready: function(){ return !!document.getElementById('systemHealthPermissionCardP503'); }
     }
-    const job = jobs[i++];
-    const exec = function(){ try { job(); } finally { setTimeout(runNext, 3200); } };
-    if (window.requestIdleCallback) requestIdleCallback(exec, { timeout: 2500 });
-    else setTimeout(exec, 400);
+  ];
+}
+
+function getPortalPendingPrewarmJobsP546_() {
+  const jobs = getPortalPagePrewarmJobsP546_();
+  return jobs.filter(function(job) {
+    if (!job || portalPagePrewarmStateP546_.completed[job.key] || Number(portalPagePrewarmStateP546_.attempts[job.key] || 0) >= 1) return false;
+    try {
+      if (job.ready()) {
+        portalPagePrewarmStateP546_.completed[job.key] = Date.now();
+        return false;
+      }
+    } catch (err) {}
+    return true;
+  });
+}
+
+function schedulePortalPagePrewarmP546_(options) {
+  options = options || {};
+  portalPagePrewarmStateP546_.started = true;
+  if (!portalPagePrewarmStateP546_.queue.length) portalPagePrewarmStateP546_.queue = getPortalPendingPrewarmJobsP546_();
+  if (options.page) prioritizePortalPrewarmPageP546_(options.page);
+  if (portalPagePrewarmStateP546_.running || portalPagePrewarmStateP546_.timer) return;
+  const delay = Math.max(0, Number(options.delay || 0));
+  portalPagePrewarmStateP546_.timer = setTimeout(function() {
+    portalPagePrewarmStateP546_.timer = null;
+    runNextPortalPagePrewarmP546_();
+  }, delay);
+}
+
+function prioritizePortalPrewarmPageP546_(page) {
+  page = normalizePortalPageP470_(page || '');
+  const queue = portalPagePrewarmStateP546_.queue;
+  if (!Array.isArray(queue) || !queue.length) return;
+  const idx = queue.findIndex(function(job){ return job && job.page === page; });
+  if (idx > 0) queue.unshift(queue.splice(idx, 1)[0]);
+}
+
+function isPortalPrewarmPausedP546_() {
+  try {
+    return !!(document.body && document.body.classList && document.body.classList.contains('portal-user-editing'));
+  } catch (err) { return false; }
+}
+
+function runNextPortalPagePrewarmP546_() {
+  if (portalPagePrewarmStateP546_.running) return;
+  // 권한/HOME 최초 호출이 끝나기 전에는 사용자에게 가장 중요한 초기 로딩을 먼저 양보합니다.
+  if ((typeof portalPermissionLoadedV63 !== 'undefined' && !portalPermissionLoadedV63) ||
+      (typeof homeLoadInFlightV77 !== 'undefined' && homeLoadInFlightV77)) {
+    schedulePortalPagePrewarmP546_({ delay: 500 });
+    return;
+  }
+  if (isPortalPrewarmPausedP546_()) {
+    schedulePortalPagePrewarmP546_({ delay: 1200 });
+    return;
+  }
+  if (!portalPagePrewarmStateP546_.queue.length) portalPagePrewarmStateP546_.queue = getPortalPendingPrewarmJobsP546_();
+  const job = portalPagePrewarmStateP546_.queue.shift();
+  if (!job) return;
+
+  portalPagePrewarmStateP546_.running = true;
+  portalPagePrewarmStateP546_.activeKey = job.key;
+  portalPagePrewarmStateP546_.attempts[job.key] = Number(portalPagePrewarmStateP546_.attempts[job.key] || 0) + 1;
+  const startedAt = Date.now();
+  try { job.start(); }
+  catch (err) {
+    portalPagePrewarmStateP546_.failed[job.key] = String(err && err.message || err || 'start failed');
+  }
+
+  const finish = function(ok) {
+    if (portalPagePrewarmStateP546_.pollTimer) clearTimeout(portalPagePrewarmStateP546_.pollTimer);
+    portalPagePrewarmStateP546_.pollTimer = null;
+    portalPagePrewarmStateP546_.running = false;
+    portalPagePrewarmStateP546_.activeKey = '';
+    if (ok) portalPagePrewarmStateP546_.completed[job.key] = Date.now();
+    else if (!portalPagePrewarmStateP546_.failed[job.key]) portalPagePrewarmStateP546_.failed[job.key] = 'timeout-or-empty';
+    schedulePortalPagePrewarmP546_({ delay: 450 });
   };
-  runNext();
+
+  const poll = function() {
+    let ready = false, busy = false;
+    try { ready = !!job.ready(); } catch (err) {}
+    try { busy = !!job.busy(); } catch (err2) {}
+    if (ready) return finish(true);
+    if (Date.now() - startedAt >= Number(job.timeoutMs || 15000)) return finish(false);
+    // 호출이 즉시 종료되었지만 권한 재시도 등으로 아직 시작 전일 수 있으므로 잠깐 기다립니다.
+    if (!busy && Date.now() - startedAt > 1800) return finish(false);
+    portalPagePrewarmStateP546_.pollTimer = setTimeout(poll, 180);
+  };
+  portalPagePrewarmStateP546_.pollTimer = setTimeout(poll, 180);
+}
+
+// 구버전 호출 호환. 이제 60초 idle 전용이 아니라 P546 순차 큐를 시작합니다.
+function schedulePortalIdlePrewarmP461_() {
+  schedulePortalPagePrewarmP546_({ reason: 'legacy-alias', delay: 0 });
 }
 
 const keywordInput = document.getElementById('keyword');
@@ -628,6 +798,8 @@ function switchPage(page, skipSearch) {
   portalCurrentPageP469_ = page;
   try { sessionStorage.setItem('salesPortal.currentPage.p469', page); } catch (err) {}
   if (page !== 'home') window.__portalUserNavigatedP462 = true;
+  // P546: 사용자가 선택한 페이지를 예열 큐의 다음 순서로 올립니다. 진행 중인 다른 호출은 취소하지 않습니다.
+  try { schedulePortalPagePrewarmP546_({ page: page, delay: 0, reason: 'route-priority' }); } catch (err) {}
   if (!portalBootReadyP462 && page !== 'home' && page !== 'settings' && page !== 'systemHealth') {
     // P463: 초기 부팅 중에도 메뉴 진입을 막지 않습니다.
     // 이전 P462 방식은 메뉴를 큐에 넣고 전역 spinner를 띄워 랜덤 무한 로딩처럼 보였습니다.

@@ -10,6 +10,7 @@ let contractCompleteEditValuesV80 = {};
 let contractCompleteSavingRowNoV80 = null;
 let contractCompleteSortKeyP15 = '';
 let contractCompleteSortDirP15 = 'asc';
+let contractCompleteLoadedAtP546 = 0;
 
 const CONTRACT_COMPLETE_COLUMNS_V69 = [
   { key: 'contractNo', label: '계약번호', width: '7%', align: 'center' },
@@ -50,7 +51,7 @@ function loadContractCompletePageV69(options) {
   const force = options.force === true;
   if (contractCompleteLoadingV69) return;
 
-  if (contractCompleteRowsV69.length && !force) {
+  if (contractCompleteMetaV69 !== null && !force) {
     renderContractCompleteListV69_();
     return;
   }
@@ -61,7 +62,8 @@ function loadContractCompletePageV69(options) {
   google.script.run
     .withSuccessHandler(function(res) {
       contractCompleteLoadingV69 = false;
-      contractCompleteMetaV69 = res || null;
+      contractCompleteMetaV69 = res || {};
+      contractCompleteLoadedAtP546 = Date.now();
       contractCompleteRowsV69 = normalizeContractCompleteRowsV81_((res && Array.isArray(res.rows)) ? res.rows : []);
       if (contractCompleteMetaV69) contractCompleteMetaV69.total = contractCompleteRowsV69.length;
       renderContractCompleteListV69_();
@@ -557,12 +559,13 @@ function syncContractCompleteDriveDocsV270() {
 
 function preloadContractCompletePageP360_(options) {
   options = options || {};
-  if (contractCompleteLoadingV69 || contractCompleteRowsV69.length) return;
+  if (contractCompleteLoadingV69 || contractCompleteMetaV69 !== null) return;
   contractCompleteLoadingV69 = true;
   google.script.run
     .withSuccessHandler(function(res) {
       contractCompleteLoadingV69 = false;
-      contractCompleteMetaV69 = res || null;
+      contractCompleteMetaV69 = res || {};
+      contractCompleteLoadedAtP546 = Date.now();
       contractCompleteRowsV69 = normalizeContractCompleteRowsV81_((res && Array.isArray(res.rows)) ? res.rows : []);
       if (contractCompleteMetaV69) contractCompleteMetaV69.total = contractCompleteRowsV69.length;
       const section = document.getElementById('contractCompleteSection');

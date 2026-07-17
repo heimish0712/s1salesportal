@@ -3,21 +3,88 @@ let activityLogStateP110 = {
   initialized: false,
   data: null,
   sortKey: 'atText',
-  sortDir: 'desc'
+  sortDir: 'desc',
+  loading: false,
+  loadedAt: 0,
+  filtersKey: ''
 };
+const ACTIVITY_LOG_CACHE_KEY_P546 = 'salesPortal.activityLog.p546';
+const ACTIVITY_LOG_FRESH_MS_P546 = 90 * 1000;
 
-function loadActivityLogPage(force) {
+function getActivityLogFiltersKeyP546_(filters) {
+  try { return JSON.stringify(filters || {}); } catch (err) { return ''; }
+}
+
+function getActivityLogCacheKeyP546_() {
+  let owner = 'UNKNOWN';
+  try {
+    const p = getPortalPermission_();
+    owner = String(p && (p.email || p.name || p.salesRepName) || 'UNKNOWN').toLowerCase();
+  } catch (err) {}
+  return ACTIVITY_LOG_CACHE_KEY_P546 + ':' + owner.replace(/[^a-z0-9가-힣_.-]+/gi, '_');
+}
+
+function readActivityLogCacheP546_() {
+  try {
+    const raw = sessionStorage.getItem(getActivityLogCacheKeyP546_());
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.data || !obj.filtersKey) return null;
+    if (Date.now() - Number(obj.cachedAt || 0) > 10 * 60 * 1000) return null;
+    return obj;
+  } catch (err) { return null; }
+}
+
+function saveActivityLogCacheP546_(data, filtersKey) {
+  try { sessionStorage.setItem(getActivityLogCacheKeyP546_(), JSON.stringify({ cachedAt: Date.now(), filtersKey: filtersKey || '', data: data || { rows: [] } })); } catch (err) {}
+}
+
+function preloadActivityLogPageP546_(options) {
+  options = options || {};
+  loadActivityLogPage(false, { preload: true, silent: options.silent !== false });
+}
+
+function loadActivityLogPage(force, options) {
+  options = options || {};
   if (!activityLogStateP110.initialized || force) renderActivityLogShellP110_();
   const filters = collectActivityLogFiltersP110_();
+  const filtersKey = getActivityLogFiltersKeyP546_(filters);
   const area = document.getElementById('activityLogResultArea');
-  if (area) area.innerHTML = '<div class="loading">작업로그를 불러오는 중입니다.</div>';
+  const sameMemory = !!(activityLogStateP110.data && activityLogStateP110.filtersKey === filtersKey);
+  const cache = !force ? readActivityLogCacheP546_() : null;
+  const sameStored = !!(cache && cache.filtersKey === filtersKey);
 
+  if (!force && sameMemory) {
+    renderActivityLogDataP110_(activityLogStateP110.data);
+    if (Date.now() - Number(activityLogStateP110.loadedAt || 0) < ACTIVITY_LOG_FRESH_MS_P546) return;
+  } else if (!force && sameStored) {
+    activityLogStateP110.data = cache.data;
+    activityLogStateP110.loadedAt = Number(cache.cachedAt || Date.now());
+    activityLogStateP110.filtersKey = filtersKey;
+    renderActivityLogDataP110_(cache.data);
+    if (Date.now() - Number(cache.cachedAt || 0) < ACTIVITY_LOG_FRESH_MS_P546) return;
+  } else if (area) {
+    area.innerHTML = '<div class="loading">작업로그를 불러오는 중입니다.</div>';
+  }
+
+  if (activityLogStateP110.loading) return;
+  activityLogStateP110.loading = true;
   google.script.run
     .withSuccessHandler(function(res) {
+      activityLogStateP110.loading = false;
       activityLogStateP110.data = res || { rows: [] };
-      renderActivityLogDataP110_(res || { rows: [] });
+      activityLogStateP110.loadedAt = Date.now();
+      activityLogStateP110.filtersKey = filtersKey;
+      saveActivityLogCacheP546_(activityLogStateP110.data, filtersKey);
+      const section = document.getElementById('activityLogSection');
+      if (!options.preload || (section && section.classList.contains('active'))) renderActivityLogDataP110_(activityLogStateP110.data);
     })
     .withFailureHandler(function(err) {
+      activityLogStateP110.loading = false;
+      if (sameMemory || sameStored) {
+        if (!options.silent) console.warn('작업로그 최신 조회 실패. 캐시를 유지합니다.', err);
+        return;
+      }
       if (area) area.innerHTML = '<div class="loading">작업로그 조회 실패: ' + esc(getErrorMessage_(err)) + '</div>';
     })
     .getPortalActivityLogData(filters);
