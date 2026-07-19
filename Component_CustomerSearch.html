@@ -951,6 +951,226 @@ function getCustomerSaveQueueSizeP220_(rowNo, customerNo) {
 }
 
 
+// P548: 프론트 optimistic UI는 그대로 유지하되, 서버에는 고객별 저장 체인/순번/선행 작업을 전달합니다.
+function getCustomerSaveClientSessionIdP548_() {
+  try {
+    const key = 's1portal:saveSession:P548:v1';
+    let id = sessionStorage.getItem(key);
+    if (!id) {
+      id = 'SAVESESS_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+      sessionStorage.setItem(key, id);
+    }
+    return id;
+  } catch (err) {
+    if (!window.__customerSaveClientSessionIdP548) window.__customerSaveClientSessionIdP548 = 'SAVESESS_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+    return window.__customerSaveClientSessionIdP548;
+  }
+}
+
+function attachCustomerSaveChainMetadataP548_(payload) {
+  payload = payload || {};
+  const key = getCustomerSaveQueueKeyP220_(payload.rowNo, payload.customerNo);
+  const state = key && customerSaveQueueMapP220 ? customerSaveQueueMapP220[key] : null;
+  const ctx = state && state.activeContext ? state.activeContext : null;
+  if (ctx) {
+    if (!payload.saveChainId) payload.saveChainId = ctx.chainId;
+    if (!payload.saveChainSequence) payload.saveChainSequence = ctx.sequence;
+    if (!payload.dependsOnOperationId && ctx.dependsOnOperationId) payload.dependsOnOperationId = ctx.dependsOnOperationId;
+  }
+  if (!payload.clientSessionId) payload.clientSessionId = getCustomerSaveClientSessionIdP548_();
+  return payload;
+}
+
+function isPortalServerQueuedSaveResponseP548_(res) {
+  return !!(res && res.applied === false && res.queuedFallbackP473 && !res.conflictP473 && !res.conflictP474);
+}
+
+// P548: 후속 저장의 expectedValues는 최초 마스터값이 아니라 직전 미반영 operation의 입력값을 이어받아야 합니다.
+// 같은 고객을 빠르게 여러 번 저장해도 op1 -> op2 -> op3의 실제 입력 기준이 끊기지 않도록 브라우저 내 operation 의도를 보존합니다.
+const customerSaveOperationIntentMapP548 = window.customerSaveOperationIntentMapP548 || {};
+window.customerSaveOperationIntentMapP548 = customerSaveOperationIntentMapP548;
+
+function getCustomerSavePayloadPatchP548_(payload) {
+  payload = payload || {};
+  if (payload.values && typeof payload.values === 'object') return Object.assign({}, payload.values || {});
+  if (payload.patch && typeof payload.patch === 'object') return Object.assign({}, payload.patch || {});
+  if (Object.prototype.hasOwnProperty.call(payload, 'memo')) return { memo: payload.memo };
+  return {};
+}
+
+function rememberCustomerSaveOperationIntentP548_(payload, status) {
+  payload = payload || {};
+  const operationId = String(payload.clientOperationId || payload.operationId || '').trim();
+  if (!operationId) return null;
+  const previous = customerSaveOperationIntentMapP548[operationId] || {};
+  const item = Object.assign({}, previous, {
+    operationId: operationId,
+    rowNo: Number(payload.rowNo || previous.rowNo || 0) || 0,
+    customerNo: normalizeCustomerNoForKey_(payload.customerNo || previous.customerNo || ''),
+    saveChainId: String(payload.saveChainId || previous.saveChainId || ''),
+    saveChainSequence: Number(payload.saveChainSequence || previous.saveChainSequence || 0) || 0,
+    dependsOnOperationId: String(payload.dependsOnOperationId || previous.dependsOnOperationId || ''),
+    patch: getCustomerSavePayloadPatchP548_(payload),
+    expectedValues: Object.assign({}, payload.expectedValues || previous.expectedValues || {}),
+    status: String(status || previous.status || 'REQUESTING'),
+    createdAt: Number(previous.createdAt || Date.now()) || Date.now(),
+    updatedAt: Date.now()
+  });
+  customerSaveOperationIntentMapP548[operationId] = item;
+
+  // 장시간 탭을 열어 둬도 메모리가 무한히 늘지 않게 최근 operation만 유지합니다.
+  const ids = Object.keys(customerSaveOperationIntentMapP548);
+  if (ids.length > 120) {
+    ids.sort(function(a, b) {
+      return Number(customerSaveOperationIntentMapP548[a] && customerSaveOperationIntentMapP548[a].updatedAt || 0) -
+        Number(customerSaveOperationIntentMapP548[b] && customerSaveOperationIntentMapP548[b].updatedAt || 0);
+    }).slice(0, ids.length - 100).forEach(function(id) { delete customerSaveOperationIntentMapP548[id]; });
+  }
+  return item;
+}
+
+function updateCustomerSaveOperationIntentStatusP548_(operationId, status) {
+  operationId = String(operationId || '').trim();
+  if (!operationId) return;
+  const item = customerSaveOperationIntentMapP548[operationId];
+  if (!item) return;
+  item.status = String(status || item.status || '');
+  item.updatedAt = Date.now();
+}
+
+function findCustomerSaveOperationIntentP548_(operationId) {
+  operationId = String(operationId || '').trim();
+  if (!operationId) return null;
+  if (customerSaveOperationIntentMapP548[operationId]) return customerSaveOperationIntentMapP548[operationId];
+
+  // 새로고침 뒤에도 서버 큐 대기 operation은 P468/P458 durable 저장소에서 복구합니다.
+  try {
+    if (typeof getCustomerSaveDurableOpsP468_ === 'function') {
+      const op = getCustomerSaveDurableOpsP468_().find(function(item) { return item && String(item.id || '') === operationId; });
+      if (op) {
+        const payload = Object.assign({}, op.payload || {}, {
+          clientOperationId: operationId,
+          saveChainId: op.saveChainId || op.payload && op.payload.saveChainId || '',
+          saveChainSequence: op.saveChainSequence || op.payload && op.payload.saveChainSequence || 0,
+          dependsOnOperationId: op.dependsOnOperationId || op.payload && op.payload.dependsOnOperationId || ''
+        });
+        return rememberCustomerSaveOperationIntentP548_(payload, op.state || 'SERVER_QUEUED');
+      }
+    }
+  } catch (err) {}
+  try {
+    if (typeof getDetailDurableOpsP458_ === 'function') {
+      const op = getDetailDurableOpsP458_().find(function(item) { return item && String(item.opId || '') === operationId; });
+      if (op) {
+        return rememberCustomerSaveOperationIntentP548_({
+          clientOperationId: operationId,
+          rowNo: op.rowNo,
+          customerNo: op.customerNo,
+          values: Object.assign({}, op.patch || {}),
+          expectedValues: Object.assign({}, op.baseValues || {}),
+          saveChainId: op.saveChainId || '',
+          saveChainSequence: op.saveChainSequence || 0,
+          dependsOnOperationId: op.dependsOnOperationId || ''
+        }, op.status || 'SERVER_QUEUED');
+      }
+    }
+  } catch (err) {}
+  return null;
+}
+
+function applyCustomerSaveChainExpectedValuesP548_(payload) {
+  payload = payload || {};
+  const patch = getCustomerSavePayloadPatchP548_(payload);
+  const keys = Object.keys(patch || {});
+  let cursorStart = String(payload.dependsOnOperationId || '').trim();
+  if (!cursorStart || !keys.length) return payload;
+
+  const expected = Object.assign({}, payload.expectedValues || {});
+  keys.forEach(function(key) {
+    let cursor = cursorStart;
+    const visited = {};
+    let depth = 0;
+    while (cursor && !visited[cursor] && depth++ < 50) {
+      visited[cursor] = true;
+      const predecessor = findCustomerSaveOperationIntentP548_(cursor);
+      if (!predecessor) break;
+      const status = String(predecessor.status || '').toUpperCase();
+      // 실제 충돌/영구실패한 값은 다음 저장의 정상 기준값으로 승계하지 않습니다.
+      if (status !== 'CONFLICT' && status !== 'SERVER_FAILED' && status !== 'FAIL' && status !== 'FAILED') {
+        if (predecessor.patch && Object.prototype.hasOwnProperty.call(predecessor.patch, key)) {
+          expected[key] = predecessor.patch[key];
+          break;
+        }
+      }
+      cursor = String(predecessor.dependsOnOperationId || '').trim();
+    }
+  });
+  payload.expectedValues = expected;
+  return payload;
+}
+
+function shouldTrackServerQueuedInCommonQueueP548_(payload) {
+  const source = String(payload && payload.clientSaveSource || '');
+  return !/detailModal/i.test(source);
+}
+
+
+function markCustomerSaveChainOperationResolvedP548_(operationId, finalStatus) {
+  operationId = String(operationId || '').trim();
+  if (!operationId) return;
+  updateCustomerSaveOperationIntentStatusP548_(operationId, finalStatus || '');
+  if (!customerSaveQueueMapP220) return;
+  Object.keys(customerSaveQueueMapP220).forEach(function(key) {
+    const state = customerSaveQueueMapP220[key];
+    if (!state || String(state.lastOperationId || '') !== operationId) return;
+    state.pendingServerQueue = false;
+    state.lastServerStatus = String(finalStatus || '');
+    if (!Number(state.size || 0)) delete customerSaveQueueMapP220[key];
+  });
+}
+
+
+function findLatestPendingServerOperationForCustomerP548_(rowNo, customerNo) {
+  rowNo = Number(rowNo || 0) || 0;
+  customerNo = normalizeCustomerNoForKey_(customerNo || '');
+  const found = [];
+  try {
+    if (typeof getCustomerSaveDurableOpsP468_ === 'function') {
+      getCustomerSaveDurableOpsP468_().forEach(function(op) {
+        if (!op || op.state !== 'SERVER_QUEUED') return;
+        if (rowNo && Number(op.rowNo || 0) && Number(op.rowNo || 0) !== rowNo) return;
+        if (customerNo && normalizeCustomerNoForKey_(op.customerNo || '') !== customerNo) return;
+        found.push({
+          operationId: String(op.id || ''),
+          chainId: String(op.saveChainId || op.payload && op.payload.saveChainId || ''),
+          sequence: Number(op.saveChainSequence || op.payload && op.payload.saveChainSequence || 0) || 0,
+          createdAt: Number(op.createdAt || 0) || 0
+        });
+      });
+    }
+  } catch (err) {}
+  try {
+    if (typeof getDetailDurableOpsP458_ === 'function') {
+      getDetailDurableOpsP458_().forEach(function(op) {
+        if (!op || op.status !== 'SERVER_QUEUED') return;
+        if (rowNo && Number(op.rowNo || 0) && Number(op.rowNo || 0) !== rowNo) return;
+        if (customerNo && normalizeCustomerNoForKey_(op.customerNo || '') !== customerNo) return;
+        found.push({
+          operationId: String(op.opId || ''),
+          chainId: String(op.saveChainId || ''),
+          sequence: Number(op.saveChainSequence || 0) || 0,
+          createdAt: Number(op.createdAt || 0) || 0
+        });
+      });
+    }
+  } catch (err) {}
+  found.sort(function(a, b) {
+    return (Number(b.sequence || 0) - Number(a.sequence || 0)) || (Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  });
+  return found[0] || null;
+}
+
+
 // P468: 고객 저장 공통 내구 재시도 큐
 // - "다른 작업 처리 중" 같은 일시 busy는 사용자 실패로 확정하지 않고 localStorage에 남겨 자동 재시도합니다.
 // - 새로고침 후에도 저장 operation을 잃지 않게 하기 위한 얇은 안전망입니다.
@@ -1007,6 +1227,11 @@ function persistCustomerSaveDurableOperationP468_(methodName, payload, options) 
     customerNo: normalizeCustomerNoForKey_(payload.customerNo || ''),
     source: String(options.source || payload.clientSaveSource || ''),
     key: String(options.key || ''),
+    state: String(options.state || options.status || 'LOCAL_RETRY'),
+    queueRowNo: Number(options.queueRowNo || 0) || 0,
+    saveChainId: String(payload.saveChainId || options.saveChainId || ''),
+    saveChainSequence: Number(payload.saveChainSequence || options.saveChainSequence || 0) || 0,
+    dependsOnOperationId: String(payload.dependsOnOperationId || options.dependsOnOperationId || ''),
     createdAt: Number(options.createdAt || Date.now()) || Date.now(),
     attemptCount: Number(options.attemptCount || 0) || 0,
     nextRetryAt: Number(options.nextRetryAt || (Date.now() + getCustomerSaveRetryDelayP468_(0))) || 0,
@@ -1031,6 +1256,79 @@ function removeCustomerSaveDurableOperationP468_(id) {
   id = String(id || '');
   if (!id) return;
   setCustomerSaveDurableOpsP468_(getCustomerSaveDurableOpsP468_().filter(function(op) { return op && op.id !== id; }));
+}
+
+
+function trackCustomerServerQueuedResponseP548_(methodName, payload, res) {
+  payload = attachCustomerSaveChainMetadataP548_(payload || {});
+  res = res || {};
+  const op = persistCustomerSaveDurableOperationP468_(methodName, payload, {
+    source: payload.clientSaveSource || 'customer.serverQueue',
+    key: Object.keys(payload.values || (Object.prototype.hasOwnProperty.call(payload, 'memo') ? { memo: payload.memo } : {})).join(','),
+    state: 'SERVER_QUEUED',
+    queueRowNo: res.queueRowNo || 0,
+    nextRetryAt: 0,
+    lastError: 'serverQueuedP548'
+  });
+  scheduleCustomerServerQueueStatusPollP548_(1500);
+  return op;
+}
+
+function scheduleCustomerServerQueueStatusPollP548_(delayMs) {
+  try { if (window.__customerServerQueuePollTimerP548) clearTimeout(window.__customerServerQueuePollTimerP548); } catch (err) {}
+  window.__customerServerQueuePollTimerP548 = setTimeout(function() {
+    pollCustomerServerQueuedOperationsP548_('timer');
+  }, Math.max(1000, Number(delayMs || 0) || 0));
+}
+
+function pollCustomerServerQueuedOperationsP548_(reason) {
+  if (window.__customerServerQueuePollRunningP548) return Promise.resolve({ ok: true, skipped: true });
+  const ops = getCustomerSaveDurableOpsP468_().filter(function(op) { return op && op.state === 'SERVER_QUEUED'; }).slice(0, 20);
+  if (!ops.length) return Promise.resolve({ ok: true, processed: 0 });
+  window.__customerServerQueuePollRunningP548 = true;
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(reject)
+      .getPortalSaveQueueOperationStatusesP548({
+        operationIds: ops.map(function(op) { return op.id; }),
+        tryProcess: true
+      });
+  }).then(function(res) {
+    const items = res && Array.isArray(res.items) ? res.items : [];
+    const map = {};
+    items.forEach(function(item) { if (item && item.operationId) map[item.operationId] = item; });
+    ops.forEach(function(op) {
+      const item = map[op.id];
+      if (!item) return;
+      if (item.applied) {
+        const result = item.result && typeof item.result === 'object' ? item.result : {};
+        try { applyCustomerSaveDurableSuccessP468_(op, result); } catch(e) {}
+        try {
+          if (op.methodName === 'saveCustomerMemoFast') {
+            const memo = Object.prototype.hasOwnProperty.call(result, 'memo') ? result.memo : op.payload && op.payload.memo;
+            if (memo != null) markExpandedMemoSaveDoneP473_(op.rowNo, op.customerNo, op.id, memo);
+          }
+        } catch(e) {}
+        removeCustomerSaveDurableOperationP468_(op.id);
+        markCustomerSaveChainOperationResolvedP548_(op.id, 'DONE');
+      } else if (item.conflict || item.failed) {
+        op.state = item.conflict ? 'CONFLICT' : 'SERVER_FAILED';
+        op.lastError = item.lastError || (item.conflict ? '저장 충돌 확인 필요' : '저장 실패');
+        op.nextRetryAt = 0;
+        persistCustomerSaveDurableOperationP468_(op.methodName, op.payload, op);
+        markCustomerSaveChainOperationResolvedP548_(op.id, item.conflict ? 'CONFLICT' : 'FAIL');
+        try { if (item.conflict) toast('백그라운드 저장 중 실제 충돌이 확인되었습니다. 입력값은 보존했습니다.'); } catch(e) {}
+      }
+    });
+    return res || { ok: true };
+  }).catch(function() {
+    return { ok: false };
+  }).finally(function() {
+    window.__customerServerQueuePollRunningP548 = false;
+    const remain = getCustomerSaveDurableOpsP468_().some(function(op) { return op && op.state === 'SERVER_QUEUED'; });
+    if (remain) scheduleCustomerServerQueueStatusPollP548_(4000);
+  });
 }
 
 function scheduleCustomerSaveDurableFlushP468_(delayMs) {
@@ -1076,27 +1374,49 @@ function flushCustomerSaveDurableQueueP468_(reason) {
   if (customerSaveDurableFlushRunningP468) return Promise.resolve({ ok: true, skipped: true });
   const now = Date.now();
   const due = getCustomerSaveDurableOpsP468_().filter(function(op) {
-    return op && (!Number(op.nextRetryAt || 0) || now >= Number(op.nextRetryAt || 0));
+    if (!op || op.state === 'SERVER_QUEUED' || op.state === 'CONFLICT' || op.state === 'SERVER_FAILED') return false;
+    return !Number(op.nextRetryAt || 0) || now >= Number(op.nextRetryAt || 0);
   }).slice(0, 2);
-  if (!due.length) return Promise.resolve({ ok: true, processed: 0 });
+  if (!due.length) {
+    const hasServerQueuedP548 = getCustomerSaveDurableOpsP468_().some(function(op) { return op && op.state === 'SERVER_QUEUED'; });
+    if (hasServerQueuedP548) scheduleCustomerServerQueueStatusPollP548_(1200);
+    return Promise.resolve({ ok: true, processed: 0 });
+  }
 
   customerSaveDurableFlushRunningP468 = true;
   let chain = Promise.resolve();
   due.forEach(function(op) {
     chain = chain.then(function() {
-      return runCustomerSaveRequestOnceP468_(op.methodName, op.payload).then(function(res) {
+      return runCustomerSaveRequestOnceP468_(op.methodName, attachCustomerSaveChainMetadataP548_(op.payload)).then(function(res) {
+        if (isPortalServerQueuedSaveResponseP548_(res)) {
+          op.state = 'SERVER_QUEUED';
+          op.queueRowNo = Number(res.queueRowNo || 0) || 0;
+          op.lastError = 'serverQueuedP548';
+          op.nextRetryAt = 0;
+          persistCustomerSaveDurableOperationP468_(op.methodName, op.payload, op);
+          scheduleCustomerServerQueueStatusPollP548_(1200);
+          return res;
+        }
+        if (isPortalSaveConflictResponseP474_(res)) {
+          op.state = 'CONFLICT';
+          op.lastError = '저장 충돌 확인 필요';
+          op.nextRetryAt = 0;
+          persistCustomerSaveDurableOperationP468_(op.methodName, op.payload, op);
+          return res;
+        }
         applyCustomerSaveDurableSuccessP468_(op, res || {});
         removeCustomerSaveDurableOperationP468_(op.id);
         return res;
       }, function(err) {
         if (typeof isPortalTransientWriteErrorP460_ === 'function' && isPortalTransientWriteErrorP460_(err)) {
+          op.state = 'LOCAL_RETRY';
           op.attemptCount = Number(op.attemptCount || 0) + 1;
           op.lastError = (typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : String(err || '');
           op.nextRetryAt = Date.now() + getCustomerSaveRetryDelayP468_(op.attemptCount);
           persistCustomerSaveDurableOperationP468_(op.methodName, op.payload, op);
           return null;
         }
-        // 비일시 오류는 무한 반복하지 않되, 사용자가 원인을 확인할 수 있게 1회 보존 후 다음 수동 저장에 맡깁니다.
+        op.state = 'FAILED';
         op.lastError = (typeof getErrorMessage_ === 'function') ? getErrorMessage_(err) : String(err || '');
         op.nextRetryAt = Date.now() + CUSTOMER_SAVE_DURABLE_MAX_DELAY_MS_P468;
         persistCustomerSaveDurableOperationP468_(op.methodName, op.payload, op);
@@ -1106,8 +1426,13 @@ function flushCustomerSaveDurableQueueP468_(reason) {
   });
   return chain.finally(function() {
     customerSaveDurableFlushRunningP468 = false;
-    const remain = getCustomerSaveDurableOpsP468_().filter(function(op) { return op && (!Number(op.nextRetryAt || 0) || Date.now() >= Number(op.nextRetryAt || 0)); });
+    const remain = getCustomerSaveDurableOpsP468_().filter(function(op) {
+      return op && op.state !== 'SERVER_QUEUED' && op.state !== 'CONFLICT' && op.state !== 'SERVER_FAILED' && (!Number(op.nextRetryAt || 0) || Date.now() >= Number(op.nextRetryAt || 0));
+    });
     if (remain.length) scheduleCustomerSaveDurableFlushP468_(2000);
+    if (getCustomerSaveDurableOpsP468_().some(function(op) { return op && op.state === 'SERVER_QUEUED'; })) {
+      scheduleCustomerServerQueueStatusPollP548_(1500);
+    }
   });
 }
 
@@ -1786,45 +2111,97 @@ function enqueueCustomerSaveP220_(rowNo, customerNo, workFn, options) {
     return Promise.reject(new Error('고객 저장 큐 등록 실패: 대상 고객 또는 작업이 없습니다.'));
   }
 
-  const existing = customerSaveQueueMapP220[key];
-  const previousTail = existing && existing.tail ? existing.tail : Promise.resolve();
+  let state = customerSaveQueueMapP220[key];
+  if (!state) {
+    const recoveredP548 = findLatestPendingServerOperationForCustomerP548_(rowNo, customerNo);
+    state = {
+      tail: Promise.resolve(),
+      size: 0,
+      chainId: recoveredP548 && recoveredP548.chainId
+        ? recoveredP548.chainId
+        : ('SCH_P548_' + getCustomerSaveClientSessionIdP548_() + '_' + key + '_' + Date.now()),
+      nextSequence: recoveredP548 && recoveredP548.sequence ? recoveredP548.sequence : 0,
+      lastOperationId: recoveredP548 && recoveredP548.operationId ? recoveredP548.operationId : '',
+      lastResult: null,
+      pendingServerQueue: !!(recoveredP548 && recoveredP548.operationId),
+      lastServerStatus: '',
+      activeContext: null,
+      rowNo: Number(rowNo) || 0,
+      customerNo: normalizeCustomerNoForKey_(customerNo || ''),
+      startedAt: Date.now()
+    };
+    customerSaveQueueMapP220[key] = state;
+  }
+
+  const previousTail = state.tail || Promise.resolve();
+  state.size = Number(state.size || 0) + 1;
+  const queuedCount = state.size;
   const queueSeq = ++customerSaveQueueSeqP220;
-  const queuedCount = existing ? (Number(existing.size || 0) + 1) : 1;
+  const chainSequence = ++state.nextSequence;
 
   if (queuedCount > 1 && !options.silentQueued) {
-    try { toast('같은 고객의 이전 저장이 끝난 뒤 순서대로 저장합니다.'); } catch (e) {}
+    try { toast('같은 고객의 이전 저장 뒤에 최신 수정값을 순서대로 반영합니다.'); } catch (e) {}
   }
 
   const runPromise = previousTail.catch(function() { return null; }).then(function() {
-    const perfMarkP460 = (typeof portalPerfStartP460_ === 'function') ? portalPerfStartP460_('customerSaveQueue.run', { rowNo: rowNo, customerNo: customerNo, queuedCount: queuedCount, source: options.source || 'customer.save', key: options.key || '' }) : null;
-    return Promise.resolve(workFn({ key: key, queueSeq: queueSeq, queuedCount: queuedCount, options: options })).then(function(res) {
-      if (typeof portalPerfEndP460_ === 'function') portalPerfEndP460_(perfMarkP460, { status: 'ok' });
+    const contextP548 = {
+      key: key,
+      queueSeq: queueSeq,
+      queuedCount: queuedCount,
+      chainId: state.chainId,
+      sequence: chainSequence,
+      dependsOnOperationId: String(state.lastOperationId || ''),
+      options: options
+    };
+    state.activeContext = contextP548;
+    const perfMarkP460 = (typeof portalPerfStartP460_ === 'function')
+      ? portalPerfStartP460_('customerSaveQueue.run', {
+          rowNo: rowNo,
+          customerNo: customerNo,
+          queuedCount: queuedCount,
+          source: options.source || 'customer.save',
+          key: options.key || '',
+          saveChainId: state.chainId,
+          saveChainSequence: chainSequence,
+          dependsOnOperationId: contextP548.dependsOnOperationId
+        })
+      : null;
+    return Promise.resolve(workFn(contextP548)).then(function(res) {
+      const operationIdP548 = String(res && res.clientOperationId || '');
+      if (operationIdP548) state.lastOperationId = operationIdP548;
+      state.lastResult = res || null;
+      state.pendingServerQueue = isPortalServerQueuedSaveResponseP548_(res);
+      state.lastServerStatus = String(res && res.status || (state.pendingServerQueue ? 'QUEUED' : 'APPLIED'));
+      if (typeof portalPerfEndP460_ === 'function') {
+        portalPerfEndP460_(perfMarkP460, {
+          status: isPortalServerQueuedSaveResponseP548_(res) ? 'queued' : 'ok',
+          applied: !(res && res.applied === false)
+        });
+      }
       return res;
     }, function(err) {
       if (typeof portalPerfErrorP460_ === 'function') portalPerfErrorP460_(perfMarkP460, err, { source: options.source || 'customer.save', key: options.key || '' });
       throw err;
+    }).finally(function() {
+      if (state.activeContext === contextP548) state.activeContext = null;
     });
   });
 
-  const tail = runPromise.catch(function() { return null; }).then(function() {
-    const current = customerSaveQueueMapP220[key];
-    if (current && current.tail === tail) delete customerSaveQueueMapP220[key];
-    else if (current) current.size = Math.max(0, Number(current.size || 1) - 1);
+  state.tail = runPromise.catch(function() { return null; }).then(function() {
+    state.size = Math.max(0, Number(state.size || 1) - 1);
+    if (!state.size && !state.pendingServerQueue && customerSaveQueueMapP220[key] === state) {
+      delete customerSaveQueueMapP220[key];
+    }
     return null;
   });
 
-  customerSaveQueueMapP220[key] = {
-    tail: tail,
-    size: queuedCount,
-    lastSeq: queueSeq,
-    rowNo: Number(rowNo) || 0,
-    customerNo: normalizeCustomerNoForKey_(customerNo || ''),
-    startedAt: Date.now()
-  };
   return runPromise;
 }
 
 function runCustomerSaveRequestP220_(methodName, payload) {
+  payload = attachCustomerSaveChainMetadataP548_(payload || {});
+  payload = applyCustomerSaveChainExpectedValuesP548_(payload);
+  rememberCustomerSaveOperationIntentP548_(payload, 'REQUESTING');
   const runOnce = function() {
     return new Promise(function(resolve, reject) {
       try {
@@ -1844,17 +2221,42 @@ function runCustomerSaveRequestP220_(methodName, payload) {
       }
     });
   };
+
+  let request;
   if (typeof runPortalPromiseWithTransientRetryP460_ === 'function') {
-    return runPortalPromiseWithTransientRetryP460_(runOnce, {
+    request = runPortalPromiseWithTransientRetryP460_(runOnce, {
       event: 'googleScript.' + methodName,
       methodName: methodName,
       rowNo: payload && payload.rowNo || 0,
       customerNo: payload && payload.customerNo || '',
       clientOperationId: payload && payload.clientOperationId || '',
+      saveChainId: payload && payload.saveChainId || '',
+      saveChainSequence: payload && payload.saveChainSequence || 0,
+      dependsOnOperationId: payload && payload.dependsOnOperationId || '',
       keys: Object.keys((payload && payload.values) || (payload && Object.prototype.hasOwnProperty.call(payload, 'memo') ? { memo: payload.memo } : {}) || {})
     }, { maxAttempts: 4 });
+  } else {
+    request = runOnce();
   }
-  return runOnce();
+
+  return Promise.resolve(request).then(function(res) {
+    res = res || {};
+    if (!res.clientOperationId) res.clientOperationId = String(payload.clientOperationId || '');
+    if (!res.saveChainId) res.saveChainId = String(payload.saveChainId || '');
+    if (!res.saveChainSequence) res.saveChainSequence = Number(payload.saveChainSequence || 0) || 0;
+    if (!res.dependsOnOperationId) res.dependsOnOperationId = String(payload.dependsOnOperationId || '');
+    const operationStatusP548 = isPortalSaveConflictResponseP474_(res)
+      ? 'CONFLICT'
+      : (isPortalServerQueuedSaveResponseP548_(res) ? 'SERVER_QUEUED' : (res.applied === false ? 'FAILED' : 'APPLIED'));
+    updateCustomerSaveOperationIntentStatusP548_(res.clientOperationId || payload.clientOperationId || '', operationStatusP548);
+    if (isPortalServerQueuedSaveResponseP548_(res) && shouldTrackServerQueuedInCommonQueueP548_(payload)) {
+      try { trackCustomerServerQueuedResponseP548_(methodName, payload, res); } catch (err) {}
+    }
+    return res;
+  }, function(err) {
+    updateCustomerSaveOperationIntentStatusP548_(payload.clientOperationId || '', 'LOCAL_RETRY');
+    throw err;
+  });
 }
 
 function makeCustomerMemoSavePayloadP220_(rowNo, customerNo, memoValue, options) {
@@ -2227,13 +2629,15 @@ function markCustomerDetailServerSaveFinishedP430_(guardId, result) {
   if (guardId && customerDetailServerSaveGuardMapP430) delete customerDetailServerSaveGuardMapP430[guardId];
   cleanupCustomerDetailServerSaveGuardsP430_();
   const stillPending = !!Object.keys(customerDetailServerSaveGuardMapP430 || {}).length;
-  const isSuccess = !!(result && result.ok !== false);
+  const isServerQueuedP548 = isPortalServerQueuedSaveResponseP548_(result);
+  const isSuccess = !!(result && result.ok !== false && result.applied !== false);
   if (!stillPending) {
     try { document.body.classList.remove('customer-detail-save-pending-p430'); } catch (err) {}
   }
   try {
     if (typeof setCustomerDetailSaveUiP430_ === 'function') {
       if (stillPending) setCustomerDetailSaveUiP430_(true, '아직 완료되지 않은 고객상세 저장이 있습니다.');
+      else if (isServerQueuedP548) setCustomerDetailSaveUiP430_(false, (result && result.message) || '저장 동기화 중');
       else if (isSuccess) setCustomerDetailSaveUiP430_(false, (result && result.message) || '마스터시트 저장 완료', { success: true });
       else setCustomerDetailSaveUiP430_(false);
     }
@@ -3445,7 +3849,7 @@ function saveExpandedCustomerMemo(rowNo) {
           showPortalSaveConflictDialogP474_(res, { rowNo: rowNo, customerNo: targetCustomerNo, key: 'memo', label: '마스터시트 메모' });
         } else if (res && res.queuedFallbackP473) {
           markExpandedMemoSavePendingP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
-          try { persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'customer.expandedMemo', key: 'memo', lastError: 'serverQueuedP473' }); } catch(e) {}
+          try { persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'customer.expandedMemo', key: 'memo', state: 'SERVER_QUEUED', queueRowNo: res && res.queueRowNo || 0, nextRetryAt: 0, lastError: 'serverQueuedP548' }); } catch(e) {}
           toast('메모 저장 대기 중입니다. 완료 전 발송은 자동으로 차단됩니다.');
         } else {
           markExpandedMemoSaveDoneP473_(rowNo, targetCustomerNo, operationIdP473, memoValue);
@@ -3575,7 +3979,7 @@ function saveExpandedCustomerMemoBeforeSendP520_(rowNo, customerNo, options) {
       }
       if (res && res.queuedFallbackP473) {
         markExpandedMemoSavePendingP473_(rowNo, cno, operationId, memoValue);
-        try { persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'sendPreflight.expandedMemo', key: 'memo', lastError: 'serverQueuedP473' }); } catch(e) {}
+        try { persistCustomerSaveDurableOperationP468_('saveCustomerMemoFast', payload, { source: 'sendPreflight.expandedMemo', key: 'memo', state: 'SERVER_QUEUED', queueRowNo: res && res.queueRowNo || 0, nextRetryAt: 0, lastError: 'serverQueuedP548' }); } catch(e) {}
         return res;
       }
       markExpandedMemoSaveDoneP473_(rowNo, cno, operationId, memoValue);

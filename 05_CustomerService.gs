@@ -1405,6 +1405,10 @@ function putPortalCachedOperationResultP458_(payload, result) {
       verified: result.verified === true,
       fastPatch: result.fastPatch !== false,
       clientOperationId: result.clientOperationId || payload.clientOperationId || '',
+      saveChainId: result.saveChainId || payload.saveChainId || '',
+      saveChainSequence: Number(result.saveChainSequence || payload.saveChainSequence || 0) || 0,
+      dependsOnOperationId: result.dependsOnOperationId || payload.dependsOnOperationId || '',
+      applied: result.applied !== false,
       noSynchronousRefresh: result.noSynchronousRefresh === true,
       message: result.message || '저장 완료'
     };
@@ -1821,9 +1825,14 @@ function isPortalStrictConflictFieldP513_(key) {
 
 function shouldPortalAutoRebaseDetailFieldP513_(key, payload, values) {
   key = String(key || '').trim();
+  payload = payload || {};
   if (!key || isPortalStrictConflictFieldP513_(key)) return false;
   if (key === 'memo') return false; // memo는 전용 merge 정책 사용
-  return true;
+
+  // P548: 일반 상세 필드의 expectedValues 불일치를 무조건 최신값 위에 덮어쓰면
+  // 실제 다른 사용자의 동시 수정까지 사라집니다. 연속 저장은 saveChain/dependency로 순서를 보장하므로,
+  // 명시적인 관리자 강제저장 경로가 아닌 한 자동 rebase를 하지 않습니다.
+  return payload.forceAutoRebaseP513 === true || payload.forceApplyP522 === true;
 }
 
 function makePortalRebaseInfoP513_(key, label, expectedValue, currentValue, attemptedValue) {

@@ -11,6 +11,9 @@ const PORTAL_SAVE_QUEUE_P473 = {
     '등록일시',
     '수정일시',
     '작업ID',
+    '체인ID',
+    '체인순번',
+    '선행작업ID',
     '사용자',
     '세션ID',
     '고객번호',
@@ -35,9 +38,8 @@ const PORTAL_SAVE_QUEUE_P473 = {
     CONFLICT: 'CONFLICT',
     FAIL: 'FAIL'
   },
-  MAX_JOBS_PER_RUN: 5,
+  MAX_JOBS_PER_RUN: 8,
   STALE_RUNNING_MINUTES: 3,
-  MAX_CONFLICT_REBASE_ATTEMPTS: 3,
   TRIGGER_HANDLER: 'processSaveQueueP473'
 };
 
@@ -90,6 +92,59 @@ function getPortalSaveOperationIdP473_(methodName, payload) {
   const existing = String(payload.clientOperationId || payload.operationId || '').trim();
   if (existing) return existing;
   return 'SQP473_' + String(methodName || 'save') + '_' + new Date().getTime() + '_' + Math.floor(Math.random() * 1000000);
+}
+
+// P548: 같은 브라우저/같은 고객의 연속 저장을 하나의 저장 체인으로 식별합니다.
+// 프론트는 즉시 optimistic 반영을 유지하고, 서버 저장큐는 이 메타정보로 실제 적용 순서를 보장합니다.
+function getPortalSaveChainMetaP548_(payload) {
+  payload = payload || {};
+  return {
+    chainId: String(payload.saveChainId || payload.clientSaveChainId || '').trim(),
+    sequence: Math.max(0, Number(payload.saveChainSequence || payload.clientSaveSequence || 0) || 0),
+    dependsOnOperationId: String(payload.dependsOnOperationId || payload.previousOperationId || '').trim()
+  };
+}
+
+function findPortalSaveQueueOperationStateP548_(sheet, idx, operationId) {
+  operationId = String(operationId || '').trim();
+  if (!sheet || !idx || !operationId || !idx['작업ID']) return null;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const opValues = sheet.getRange(2, idx['작업ID'], lastRow - 1, 1).getDisplayValues();
+  for (let i = opValues.length - 1; i >= 0; i--) {
+    if (String(opValues[i][0] || '').trim() !== operationId) continue;
+    const rowNo = i + 2;
+    return {
+      rowNo: rowNo,
+      operationId: operationId,
+      status: idx['상태'] ? String(sheet.getRange(rowNo, idx['상태']).getDisplayValue() || '').trim() : '',
+      chainId: idx['체인ID'] ? String(sheet.getRange(rowNo, idx['체인ID']).getDisplayValue() || '').trim() : '',
+      sequence: idx['체인순번'] ? (Number(sheet.getRange(rowNo, idx['체인순번']).getDisplayValue() || 0) || 0) : 0,
+      customerNo: idx['고객번호'] ? String(sheet.getRange(rowNo, idx['고객번호']).getDisplayValue() || '').trim() : '',
+      customerRowNo: idx['rowNo'] ? (Number(sheet.getRange(rowNo, idx['rowNo']).getDisplayValue() || 0) || 0) : 0,
+      result: idx['resultJson'] ? parsePortalSaveQueueJsonP473_(sheet.getRange(rowNo, idx['resultJson']).getDisplayValue(), {}) : {}
+    };
+  }
+  return null;
+}
+
+function shouldDeferPortalStaleSaveBehindChainP548_(sheet, idx, payload, err) {
+  if (!isPortalServerStaleErrorP473_(err)) return false;
+  const meta = getPortalSaveChainMetaP548_(payload);
+  if (!meta.chainId || !meta.dependsOnOperationId) return false;
+  const predecessor = findPortalSaveQueueOperationStateP548_(sheet, idx, meta.dependsOnOperationId);
+  if (!predecessor) return false; // 직전 작업이 저장큐에 없으면 직접 반영 완료였던 것으로 봅니다.
+  if (predecessor.chainId && predecessor.chainId !== meta.chainId) return false;
+  if (meta.sequence && predecessor.sequence && predecessor.sequence >= meta.sequence) return false;
+  const customerNo = String(payload && payload.customerNo || '').trim();
+  const customerRowNo = Number(payload && payload.rowNo || 0) || 0;
+  if (customerNo && predecessor.customerNo && predecessor.customerNo !== customerNo) return false;
+  if (customerRowNo && predecessor.customerRowNo && predecessor.customerRowNo !== customerRowNo) return false;
+  return [
+    PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED,
+    PORTAL_SAVE_QUEUE_P473.STATUS.RETRY,
+    PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING
+  ].indexOf(predecessor.status) >= 0;
 }
 
 function getPortalSavePatchP473_(methodName, payload) {
@@ -203,12 +258,18 @@ function enqueueSaveFallbackP473_(methodName, payload, reason, err, statusOverri
   const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
   const lastRow = sheet.getLastRow();
   const statusDone = PORTAL_SAVE_QUEUE_P473.STATUS.DONE;
-  const status = statusOverride || (isPortalServerStaleErrorP473_(err) ? PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT : PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED);
+  const staleP548 = isPortalServerStaleErrorP473_(err);
+  const deferredBehindChainP548 = !statusOverride && staleP548 && shouldDeferPortalStaleSaveBehindChainP548_(sheet, idx, payload, err);
+  const status = statusOverride || (staleP548 && !deferredBehindChainP548 ? PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT : PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED);
   const user = getPortalActiveUserEmailP473_();
   const patch = getPortalSavePatchP473_(methodName, payload);
   const expected = payload.expectedValues || (Object.prototype.hasOwnProperty.call(payload, 'expectedMemo') ? { memo: payload.expectedMemo } : {});
+  const chainMetaP548 = getPortalSaveChainMetaP548_(payload);
   const now = new Date();
-  const errText = String(err && (err.stack || err.message) || reason || '').slice(0, 3000);
+  const rawErrTextP548 = String(err && (err.stack || err.message) || reason || '').slice(0, 2600);
+  const errText = (deferredBehindChainP548
+    ? ('P548_CHAIN_WAIT: 선행 작업 ' + chainMetaP548.dependsOnOperationId + ' 적용 후 순차 재시도\n')
+    : '') + rawErrTextP548;
 
   if (lastRow >= 2 && idx['작업ID']) {
     const opValues = sheet.getRange(2, idx['작업ID'], lastRow - 1, 1).getDisplayValues();
@@ -229,7 +290,7 @@ function enqueueSaveFallbackP473_(methodName, payload, reason, err, statusOverri
         if (idx['상태'] && currentStatus !== statusDone) sheet.getRange(rowNo, idx['상태']).setValue(status);
         if (idx['마지막오류'] && errText) sheet.getRange(rowNo, idx['마지막오류']).setValue(errText);
         ensureSaveQueueTriggerP473_();
-        return buildQueuedSaveResponseP473_(payload, methodName, status, reason || errText, rowNo, err);
+        return buildQueuedSaveResponseP473_(payload, methodName, status, deferredBehindChainP548 ? errText : (reason || errText), rowNo, err);
       }
     }
   }
@@ -239,6 +300,9 @@ function enqueueSaveFallbackP473_(methodName, payload, reason, err, statusOverri
     '등록일시': now,
     '수정일시': now,
     '작업ID': operationId,
+    '체인ID': chainMetaP548.chainId,
+    '체인순번': chainMetaP548.sequence || '',
+    '선행작업ID': chainMetaP548.dependsOnOperationId,
     '사용자': user,
     '세션ID': String(payload.sessionId || payload.clientSessionId || ''),
     '고객번호': String(payload.customerNo || ''),
@@ -257,7 +321,7 @@ function enqueueSaveFallbackP473_(methodName, payload, reason, err, statusOverri
   };
   sheet.appendRow(headers.map(function(h) { return Object.prototype.hasOwnProperty.call(rowObj, h) ? rowObj[h] : ''; }));
   ensureSaveQueueTriggerP473_();
-  return buildQueuedSaveResponseP473_(payload, methodName, status, reason || errText, sheet.getLastRow(), err);
+  return buildQueuedSaveResponseP473_(payload, methodName, status, deferredBehindChainP548 ? errText : (reason || errText), sheet.getLastRow(), err);
 }
 
 function buildQueuedSaveResponseP473_(payload, methodName, status, message, queueRowNo, err) {
@@ -274,6 +338,11 @@ function buildQueuedSaveResponseP473_(payload, methodName, status, message, queu
     rowNo: Number(payload && payload.rowNo || 0) || 0,
     customerNo: String(payload && payload.customerNo || ''),
     clientOperationId: String(payload && (payload.clientOperationId || payload.operationId) || ''),
+    saveChainId: getPortalSaveChainMetaP548_(payload).chainId,
+    saveChainSequence: getPortalSaveChainMetaP548_(payload).sequence,
+    dependsOnOperationId: getPortalSaveChainMetaP548_(payload).dependsOnOperationId,
+    serverQueueOwnedP548: !isConflict,
+    dependencyWaitP548: !isConflict && String(message || '').indexOf('P548_CHAIN_WAIT') >= 0,
     queueRowNo: queueRowNo || '',
     status: status,
     values: patch,
@@ -315,12 +384,20 @@ function processSaveQueueP473(options) {
   let retry = 0;
   let conflict = 0;
   let fail = 0;
+  let waitingDependency = 0;
 
   try {
     const width = sheet.getLastColumn();
     const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
     const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function(v) { return String(v || '').trim(); });
-    const maxJobs = Math.max(1, Number(options.maxJobs || PORTAL_SAVE_QUEUE_P473.MAX_JOBS_PER_RUN) || 5);
+    const maxJobs = Math.max(1, Number(options.maxJobs || PORTAL_SAVE_QUEUE_P473.MAX_JOBS_PER_RUN) || 8);
+    const operationStatusMapP548 = {};
+
+    values.forEach(function(row) {
+      const opId = idx['작업ID'] ? String(row[idx['작업ID'] - 1] || '').trim() : '';
+      const st = idx['상태'] ? String(row[idx['상태'] - 1] || '').trim() : '';
+      if (opId) operationStatusMapP548[opId] = st;
+    });
 
     for (let i = 0; i < values.length && processed < maxJobs; i++) {
       const rowNo = i + 2;
@@ -331,39 +408,74 @@ function processSaveQueueP473(options) {
       const runningAt = obj['수정일시'];
       if (status === PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING && runningAt instanceof Date) {
         const ageMin = (now.getTime() - runningAt.getTime()) / 60000;
-        if (ageMin >= PORTAL_SAVE_QUEUE_P473.STALE_RUNNING_MINUTES) status = PORTAL_SAVE_QUEUE_P473.STATUS.RETRY;
+        if (ageMin >= PORTAL_SAVE_QUEUE_P473.STALE_RUNNING_MINUTES) {
+          status = PORTAL_SAVE_QUEUE_P473.STATUS.RETRY;
+          const staleOpIdP548 = String(obj['작업ID'] || '').trim();
+          if (staleOpIdP548) operationStatusMapP548[staleOpIdP548] = status;
+        }
       }
-      const previousAttemptsP513 = Number(obj['시도횟수'] || 0) || 0;
-      const conflictRebaseEligibleP513 = status === PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT && previousAttemptsP513 < (PORTAL_SAVE_QUEUE_P473.MAX_CONFLICT_REBASE_ATTEMPTS || 3);
-      if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY].indexOf(status) < 0 && !conflictRebaseEligibleP513) continue;
+
+      // P548: CONFLICT는 같은 payload를 반복 실행해도 해결되지 않습니다.
+      // 일시 오류인 QUEUED/RETRY만 재실행하며, 실제 충돌은 사용자 확인 상태로 보존합니다.
+      if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY].indexOf(status) < 0) continue;
+
+      const operationIdP548 = String(obj['작업ID'] || '').trim();
+      const dependsOnP548 = String(obj['선행작업ID'] || '').trim();
+      if (dependsOnP548) {
+        const predecessorStatusP548 = String(operationStatusMapP548[dependsOnP548] || '').trim();
+        if (predecessorStatusP548 && predecessorStatusP548 !== PORTAL_SAVE_QUEUE_P473.STATUS.DONE) {
+          waitingDependency++;
+          if (idx['마지막오류']) {
+            const waitMessageP548 = [PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT, PORTAL_SAVE_QUEUE_P473.STATUS.FAIL].indexOf(predecessorStatusP548) >= 0
+              ? ('P548_CHAIN_BLOCKED: 선행 작업 ' + dependsOnP548 + ' 상태가 ' + predecessorStatusP548 + '이므로 후속 저장을 보류합니다.')
+              : ('P548_CHAIN_WAIT: 선행 작업 ' + dependsOnP548 + ' 적용 후 순차 처리합니다.');
+            sheet.getRange(rowNo, idx['마지막오류']).setValue(waitMessageP548);
+          }
+          continue;
+        }
+      }
 
       processed++;
       if (idx['상태']) sheet.getRange(rowNo, idx['상태']).setValue(PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING);
       if (idx['수정일시']) sheet.getRange(rowNo, idx['수정일시']).setValue(new Date());
+      if (operationIdP548) operationStatusMapP548[operationIdP548] = PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING;
       SpreadsheetApp.flush();
 
-      let attempt = Number(obj['시도횟수'] || 0) + 1;
+      const attempt = Number(obj['시도횟수'] || 0) + 1;
       try {
         const payload = parsePortalSaveQueueJsonP473_(obj['payloadJson'], {});
         const methodName = String(obj['methodName'] || 'saveCustomerDetailFast');
-        const result = applyPortalQueuedSaveJobP473_(methodName, payload);
+        let result = applyPortalQueuedSaveJobP473_(methodName, payload);
+        result = Object.assign({}, result || {}, {
+          ok: true,
+          applied: true,
+          fromSaveQueueP473: true,
+          serverQueueAppliedP548: true,
+          queueRowNo: rowNo,
+          clientOperationId: operationIdP548 || String(payload.clientOperationId || ''),
+          saveChainId: String(obj['체인ID'] || payload.saveChainId || ''),
+          saveChainSequence: Number(obj['체인순번'] || payload.saveChainSequence || 0) || 0,
+          dependsOnOperationId: dependsOnP548
+        });
         if (idx['상태']) sheet.getRange(rowNo, idx['상태']).setValue(PORTAL_SAVE_QUEUE_P473.STATUS.DONE);
         if (idx['수정일시']) sheet.getRange(rowNo, idx['수정일시']).setValue(new Date());
         if (idx['시도횟수']) sheet.getRange(rowNo, idx['시도횟수']).setValue(attempt);
         if (idx['resultJson']) sheet.getRange(rowNo, idx['resultJson']).setValue(stringifyPortalSaveQueueJsonP473_(result).slice(0, 45000));
         if (idx['마지막오류']) sheet.getRange(rowNo, idx['마지막오류']).setValue('');
         if (idx['적용일시']) sheet.getRange(rowNo, idx['적용일시']).setValue(new Date());
+        if (operationIdP548) operationStatusMapP548[operationIdP548] = PORTAL_SAVE_QUEUE_P473.STATUS.DONE;
         done++;
       } catch (err) {
-        const staleP513 = isPortalServerStaleErrorP473_(err);
-        const transientP513 = !staleP513 && isPortalServerTransientWriteErrorP473_(err);
-        const nextStatus = staleP513
+        const staleP548 = isPortalServerStaleErrorP473_(err);
+        const transientP548 = !staleP548 && isPortalServerTransientWriteErrorP473_(err);
+        const nextStatus = staleP548
           ? PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT
-          : (transientP513 ? PORTAL_SAVE_QUEUE_P473.STATUS.RETRY : PORTAL_SAVE_QUEUE_P473.STATUS.FAIL);
+          : (transientP548 ? PORTAL_SAVE_QUEUE_P473.STATUS.RETRY : PORTAL_SAVE_QUEUE_P473.STATUS.FAIL);
         if (idx['상태']) sheet.getRange(rowNo, idx['상태']).setValue(nextStatus);
         if (idx['수정일시']) sheet.getRange(rowNo, idx['수정일시']).setValue(new Date());
         if (idx['시도횟수']) sheet.getRange(rowNo, idx['시도횟수']).setValue(attempt);
         if (idx['마지막오류']) sheet.getRange(rowNo, idx['마지막오류']).setValue(String(err && (err.stack || err.message) || err).slice(0, 45000));
+        if (operationIdP548) operationStatusMapP548[operationIdP548] = nextStatus;
         if (nextStatus === PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT) conflict++;
         else if (nextStatus === PORTAL_SAVE_QUEUE_P473.STATUS.RETRY) retry++;
         else fail++;
@@ -372,7 +484,80 @@ function processSaveQueueP473(options) {
   } finally {
     try { lock.releaseLock(); } catch (e) {}
   }
-  return { ok: true, processed: processed, done: done, retry: retry, conflict: conflict, fail: fail };
+  return {
+    ok: true,
+    processed: processed,
+    done: done,
+    retry: retry,
+    conflict: conflict,
+    fail: fail,
+    waitingDependency: waitingDependency
+  };
+}
+
+// P548: 브라우저가 optimistic UI는 유지한 채 서버 저장큐의 실제 적용 상태만 확인하는 읽기 API입니다.
+// tryProcess=true인 경우 짧게 저장큐를 한 번 처리한 뒤 결과를 반환합니다.
+function getPortalSaveQueueOperationStatusesP548(input) {
+  input = input || {};
+  const ids = Array.isArray(input.operationIds) ? input.operationIds : [];
+  const operationIds = ids.map(function(v) { return String(v || '').trim(); }).filter(Boolean).slice(0, 30);
+  if (!operationIds.length) return { ok: true, items: [], processed: null };
+
+  let processed = null;
+  if (input.tryProcess === true) {
+    try { processed = processSaveQueueP473({ maxJobs: Math.min(12, Math.max(4, operationIds.length * 2)), lockWaitMs: 250 }); } catch (err) {}
+  }
+
+  const wanted = {};
+  operationIds.forEach(function(id) { wanted[id] = true; });
+  const sheet = getPortalSaveQueueSheetP473_();
+  const idx = getPortalSaveQueueHeaderIndexP473_(sheet);
+  const lastRow = sheet.getLastRow();
+  const itemsById = {};
+  if (lastRow >= 2 && idx['작업ID']) {
+    const width = sheet.getLastColumn();
+    const rows = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i];
+      const operationId = String(row[idx['작업ID'] - 1] || '').trim();
+      if (!wanted[operationId] || itemsById[operationId]) continue;
+      const status = idx['상태'] ? String(row[idx['상태'] - 1] || '').trim() : '';
+      const result = idx['resultJson'] ? parsePortalSaveQueueJsonP473_(row[idx['resultJson'] - 1], {}) : {};
+      itemsById[operationId] = {
+        operationId: operationId,
+        status: status,
+        applied: status === PORTAL_SAVE_QUEUE_P473.STATUS.DONE,
+        conflict: status === PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT,
+        failed: status === PORTAL_SAVE_QUEUE_P473.STATUS.FAIL,
+        queued: [PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY, PORTAL_SAVE_QUEUE_P473.STATUS.RUNNING].indexOf(status) >= 0,
+        rowNo: idx['rowNo'] ? (Number(row[idx['rowNo'] - 1] || 0) || 0) : 0,
+        customerNo: idx['고객번호'] ? String(row[idx['고객번호'] - 1] || '') : '',
+        queueRowNo: i + 2,
+        saveChainId: idx['체인ID'] ? String(row[idx['체인ID'] - 1] || '') : '',
+        saveChainSequence: idx['체인순번'] ? (Number(row[idx['체인순번'] - 1] || 0) || 0) : 0,
+        dependsOnOperationId: idx['선행작업ID'] ? String(row[idx['선행작업ID'] - 1] || '') : '',
+        result: result,
+        lastError: idx['마지막오류'] ? String(row[idx['마지막오류'] - 1] || '') : '',
+        appliedAt: idx['적용일시'] ? String(row[idx['적용일시'] - 1] || '') : ''
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    processed: processed,
+    items: operationIds.map(function(id) {
+      return itemsById[id] || {
+        operationId: id,
+        status: 'NOT_FOUND',
+        applied: false,
+        conflict: false,
+        failed: false,
+        queued: false,
+        result: {}
+      };
+    })
+  };
 }
 
 
