@@ -1,13 +1,13 @@
 /***************************************
  * S1 Sales Portal - 30_MyCustomerAiAnalysisService.gs
- * P537: 나의 고객 현황 - GPT 애매건 분석 큐/DB
- * - 규칙 기반 분석 결과 중 애매건만 OpenAI API로 보조 분석합니다.
- * - GPT 결과는 바로 상태값을 바꾸지 않고 고객AI분석_DB에 저장합니다.
- * - 최종 상태변경 허용 여부는 서버 업무규칙(P536 전이표)로 다시 검증합니다.
+ * P547: 나의 고객 현황 - AI 독립판정 / 근거 ID / 오탐 차단
+ * - P537 공개 함수명은 기존 호출 호환성을 위해 유지합니다.
+ * - 규칙 추천값은 큐 선별·사후 대조에만 쓰고 OpenAI 입력에서는 제외합니다.
+ * - GPT 결과는 바로 상태값을 바꾸지 않고 서버 증거/전이 규칙으로 재검증합니다.
  ***************************************/
 
-const MY_CUSTOMER_AI_ANALYZER_VERSION_P537 = 'P544_AI_PARSE_STABLE_CANDIDATE_SLIM';
-const MY_CUSTOMER_AI_PROMPT_VERSION_P537 = 'P544_STATUS_RULES_SLIM_V2';
+const MY_CUSTOMER_AI_ANALYZER_VERSION_P537 = 'P547_AI_INDEPENDENT_EVIDENCE_GUARD';
+const MY_CUSTOMER_AI_PROMPT_VERSION_P537 = 'P547_STATUS_INDEPENDENT_EVIDENCE_V3';
 const MY_CUSTOMER_AI_ANALYSIS_SHEET_P537 = '고객AI분석_DB';
 const MY_CUSTOMER_AI_QUEUE_SHEET_P537 = '고객AI분석큐_DB';
 const MY_CUSTOMER_AI_DEFAULT_QUEUE_LIMIT_P537 = 120;
@@ -19,9 +19,10 @@ const MY_CUSTOMER_AI_API_URL_P537 = 'https://api.openai.com/v1/responses';
 const MY_CUSTOMER_AI_ANALYSIS_HEADERS_P537 = [
   '분석일시', '분석ID', '고객번호', 'rowNo', '회사명', '영업담당자', '현재상태', '규칙추천상태',
   'GPT추천상태', '최종추천상태', 'decision', 'recommendationAllowed', 'serverAllowed', 'confidence',
-  'falsePositiveRisk', 'insightType', 'summary', 'reason', 'nextAction', 'evidenceJson', 'blockedReason',
-  'inputHash', 'promptVersion', 'model', 'tokensInput', 'tokensOutput', 'estimatedCostUsd',
-  'rawRequestJson', 'rawResponseJson', '검토상태', '검토자', '검토일시', '검토메모'
+  'falsePositiveRisk', 'insightType', 'summary', 'reason', 'nextAction', 'evidenceJson', 'evidenceIdsJson',
+  'ambiguityFlagsJson', 'ruleAiMismatch', 'serverDecision', 'blockedReason', 'inputHash', 'promptVersion',
+  'model', 'tokensInput', 'tokensOutput', 'estimatedCostUsd', 'rawRequestJson', 'rawResponseJson',
+  '검토상태', '검토자', '검토일시', '검토메모'
 ];
 
 const MY_CUSTOMER_AI_QUEUE_HEADERS_P537 = [
@@ -248,16 +249,22 @@ function buildMyCustomerAiCandidateFromAnalysisRowP537_(row, includeProtected) {
   if (!priority) return null;
 
   const evidence = parseJsonSafeMyCustomerAiP537_(row['근거JSON']) || {};
-  const events = parseJsonSafeMyCustomerAiP537_(row['이벤트JSON']);
-  const compactEvents = Array.isArray(events) ? events
-    .filter(function(ev) {
-      const txt = ev && (ev.text || ev.summary || '');
-      return txt && !isMyCustomerAiSystemMetaTextP544_(txt);
-    })
-    .slice(0, 5)
-    .map(function(ev) {
-      return slimMyCustomerAiEventP544_(ev, 180);
-    }) : [];
+  const parsedEvents = parseJsonSafeMyCustomerAiP537_(row['이벤트JSON']);
+  const fallbackEvents = [
+    {
+      source: row['최신판정이벤트출처'] || row['최근이벤트출처'] || '',
+      date: row['최신판정이벤트일자'] || '',
+      text: row['최신판정이벤트요약'] || row['최근이벤트요약'] || '',
+      declaredLatest: true
+    },
+    {
+      source: row['최신전체이벤트출처'] || '',
+      date: row['최신전체이벤트일자'] || '',
+      text: row['최신전체이벤트요약'] || '',
+      declaredLatest: true
+    }
+  ];
+  const evidencePack = buildMyCustomerAiEvidencePackP547_(Array.isArray(parsedEvents) ? parsedEvents : [], fallbackEvents);
   const contractInfo = evidence && evidence.contractCompletionInfo ? evidence.contractCompletionInfo : {};
   const candidate = {
     analysisId: row['분석ID'] || '',
@@ -266,26 +273,21 @@ function buildMyCustomerAiCandidateFromAnalysisRowP537_(row, includeProtected) {
     company: row['회사명'] || '',
     salesRep: row['영업담당자'] || '',
     currentStatus: currentStatus,
+
+    // 규칙 결과는 큐 우선순위 및 사후 대조/로그에만 사용합니다.
+    // OpenAI 프롬프트에는 전달하지 않아 독립 판단을 보장합니다.
     ruleRecommendedStatus: row['상태변경추천상태'] || row['추천상태'] || currentStatus,
     ruleStateChangeRecommended: stateChangeYn,
     confidence: confidence,
     insightType: insightType,
     insightSummary: row['업무인사이트요약'] || '',
     reason: row['보수판정사유'] || row['판정유형'] || reason,
-    latestDecisionEvent: {
-      date: row['최신판정이벤트일자'] || '',
-      source: row['최신판정이벤트출처'] || row['최근이벤트출처'] || '',
-      text: row['최신판정이벤트요약'] || row['최근이벤트요약'] || ''
-    },
-    latestAnyEvent: { text: row['최신전체이벤트요약'] || '' },
-    keywords: {
-      negative: row['강한부정키워드'] || '',
-      order: row['계약진행키워드'] || '',
-      quote: row['자료발송키워드'] || '',
-      long: row['장기추진키워드'] || '',
-      data: row['데이터누락키워드'] || ''
-    },
-    events: compactEvents,
+
+    latestDecisionEvent: evidencePack.latestDecisionEvent || {},
+    latestAnyEvent: evidencePack.latestAnyEvent || {},
+    events: evidencePack.events.slice(0, 8),
+    ambiguityFlags: evidencePack.ambiguityFlags,
+    dateCoverage: evidencePack.dateCoverage,
     contractCompletionInfo: {
       ready: !!contractInfo.ready,
       summary: shortenMyCustomerStatusTextP528_(contractInfo.summary || '', 200),
@@ -297,16 +299,15 @@ function buildMyCustomerAiCandidateFromAnalysisRowP537_(row, includeProtected) {
   };
   const skipReason = shouldSkipMyCustomerAiCandidateP544_(candidate);
   if (skipReason) return null;
+  if (!candidate.events.length && !(candidate.currentStatus === '발주완료' && candidate.contractCompletionInfo.ready)) return null;
+
   candidate.inputHash = hashMyCustomerStatusTextP529_(safeStringifyMyCustomerAiP537_({
     v: MY_CUSTOMER_AI_PROMPT_VERSION_P537,
     customerNo: candidate.customerNo,
     rowNo: candidate.rowNo,
     currentStatus: candidate.currentStatus,
-    ruleRecommendedStatus: candidate.ruleRecommendedStatus,
-    insightType: candidate.insightType,
-    latestDecisionEvent: candidate.latestDecisionEvent,
     events: candidate.events,
-    keywords: candidate.keywords,
+    ambiguityFlags: candidate.ambiguityFlags,
     contractReady: candidate.contractCompletionInfo && candidate.contractCompletionInfo.ready
   }, 20000));
   return candidate;
@@ -347,11 +348,12 @@ function processMyCustomerAiAnalysisQueueP537(options) {
     const attempts = (Number(row[qMap['시도횟수']] || 0) || 0) + 1;
     setMyCustomerAiQueueRowStatusP537_(queueSheet, qMap, qHeaders.length, sheetRow, row, 'RUNNING', attempts, '', '');
     try {
-      const candidate = parseJsonSafeMyCustomerAiP537_(row[qMap['candidateJson']]);
-      if (!candidate || !candidate.customerNo) throw new Error('candidateJson이 올바르지 않습니다.');
+      const parsedCandidate = parseJsonSafeMyCustomerAiP537_(row[qMap['candidateJson']]);
+      if (!parsedCandidate || !parsedCandidate.customerNo) throw new Error('candidateJson이 올바르지 않습니다.');
+      const candidate = upgradeMyCustomerAiCandidateP547_(parsedCandidate);
       const request = buildMyCustomerAiOpenAiRequestP537_(candidate);
       const apiRes = callOpenAiForMyCustomerStatusP537_(apiKey, request);
-      const ai = normalizeMyCustomerAiApiResultP537_(apiRes);
+      const ai = normalizeMyCustomerAiApiResultP537_(apiRes, candidate);
       const validated = validateMyCustomerAiRecommendationP537_(candidate, ai);
       const saveRes = appendMyCustomerAiAnalysisResultP537_(analysisSheet, candidate, ai, validated, request, apiRes);
       setMyCustomerAiQueueRowStatusP537_(queueSheet, qMap, qHeaders.length, sheetRow, row, 'DONE', attempts, safeStringifyMyCustomerAiP537_({ ai: ai, validated: validated, save: saveRes }, 8000), '');
@@ -405,25 +407,29 @@ function buildMyCustomerAiOpenAiRequestP537_(candidate) {
 
 function buildMyCustomerAiSystemPromptP537_() {
   return [
-    '당신은 S1 Sales Portal의 영업 상태 분석 보조자입니다.',
-    '목표는 상태값을 자동으로 바꾸는 것이 아니라, 규칙 기반 분석의 애매건을 검토하고 오탐을 줄이는 것입니다.',
+    '당신은 S1 Sales Portal의 영업 상태 독립 검증자입니다.',
+    '입력에는 규칙 엔진의 추천상태나 신뢰도가 제공되지 않습니다. evidenceEvents만 보고 독립적으로 판단하세요.',
+    '목표는 자동변경을 많이 만드는 것이 아니라 오탐을 차단하고 사람이 검토할 애매건을 정확히 분리하는 것입니다.',
     '상태 정의:',
-    '- 견적제출완료: 견적 제출 후 영업팀이 추가 컨택 영업해야 하는 상태.',
-    '- 장기 추진건: 금년도 대상이 아니거나 기타 사유로 내년/추후 컨택해야 하는 상태.',
-    '- 고객 설득 중: 영업팀이 추가 컨택 영업중인 상태.',
-    '- 발주완료: 수주 확정됐지만 필수 서류 미취합.',
-    '- 계약완료: 수주 확정 + 필수 서류 취합 완료.',
-    '- 수주실패: 확실한 거절/타사 확정/진행 불가.',
-    '절대 규칙:',
-    '1. 어떤 경우에도 발주완료를 추천하지 마세요.',
-    '2. 수주실패/계약완료는 보호 상태이므로 다른 상태로 변경 추천하지 마세요.',
-    '3. 발주완료는 보호 상태지만, 서버 규칙이 contractCompletionInfo.ready=true라고 제공한 경우에만 계약완료 전환은 허용됩니다. 이 경우 서버 판단을 존중하세요.',
-    '4. 계약완료 추천은 메모만으로 판단하지 말고 서버가 제공한 contractCompletionInfo.ready=true일 때만 동의할 수 있습니다.',
-    '5. 타사 계약완료는 우리 계약완료가 아니라 수주실패 신호입니다.',
-    '6. 전화연결 불가/담당자 부재/직통번호 안내 불가는 수주실패가 아니라 연락장애입니다.',
-    '7. 과거 키워드보다 최신 고객 의사 이벤트를 우선하세요.',
-    '8. 애매하면 STATUS_CHANGE가 아니라 HUMAN_REVIEW 또는 INSIGHT_ONLY를 선택하세요.',
-    '출력은 반드시 JSON Schema에 맞는 JSON만 반환하고, 긴 근거문/원문 인용을 반복하지 마세요.'
+    '- 견적제출완료: 실제 견적/자료가 제출되었고 영업팀의 추가 컨택이 필요한 상태.',
+    '- 장기 추진건: 금년도 대상이 아니거나 내년/추후/예산 편성 후 재접촉해야 하는 상태.',
+    '- 고객 설득 중: 현재 영업 협의와 설득이 진행 중이나 견적 제출만으로 상태를 확정하기 어려운 상태.',
+    '- 발주완료: 수주가 확정됐지만 필수 서류 미취합. 절대 추천하지 마세요.',
+    '- 계약완료: 수주 확정 + 필수 서류 취합 완료. contractCompletionInfo.ready=true인 발주완료 고객만 추천할 수 있습니다.',
+    '- 수주실패: 명확한 거절, 타사 선정/계약 확정, 진행 불가가 확인된 상태.',
+    '판정 원칙:',
+    '1. 현재상태가 수주실패 또는 계약완료인 경우에만 보호상태입니다. 추천하려는 목표상태가 수주실패라는 이유로 보호상태라고 해석하지 마세요.',
+    '2. 타업체 견적을 받음, 가격 비교, 네고 문의, 견적가가 다양함은 타사 선정이 아닙니다. 이런 경우 타사비교 또는 진행중추적으로 분류하세요.',
+    '3. 타사/타업체 선정, 타사로 결정, 타업체와 계약, 기존업체 유지가 명확하게 확인될 때만 수주실패 후보가 될 수 있습니다.',
+    '4. 자체적으로 진행, 관리업체 있음, 전화가 끊김처럼 범위나 의도가 불명확한 최신 이력은 HUMAN_REVIEW로 처리하세요.',
+    '5. 정상 통화에서 검토 중이거나 견적 재발송을 요청한 경우 연락장애로 분류하지 마세요.',
+    '6. 과거 자료발송보다 최신 고객 의사 이벤트를 우선하고, 상충하는 이벤트가 있으면 HUMAN_REVIEW로 처리하세요.',
+    '7. STATUS_CHANGE는 목표상태를 직접 지지하는 날짜가 있는 evidenceId가 최소 1개이고 중대한 ambiguityFlag가 없을 때만 선택하세요.',
+    '8. 날짜가 없거나 근거가 약하면 HUMAN_REVIEW 또는 INSIGHT_ONLY를 선택하세요.',
+    '9. STATUS_CHANGE가 아니면 recommendedStatus=현재상태유지, recommendationAllowed=false로 출력하세요.',
+    '10. evidenceIds에는 실제 판단에 사용한 E01 형식의 ID만 1~4개 넣으세요. 입력에 없는 ID를 만들지 마세요.',
+    'confidence는 독립적으로 산정하고 외부 점수를 추측하거나 복제하지 마세요.',
+    '출력은 JSON Schema에 맞는 JSON만 반환하세요.'
   ].join('\n');
 }
 
@@ -438,29 +444,31 @@ function buildMyCustomerAiPromptInputP537_(candidate) {
       salesRep: candidate.salesRep || '',
       currentStatus: candidate.currentStatus || ''
     },
-    ruleAnalysis: {
-      ruleRecommendedStatus: candidate.ruleRecommendedStatus || '',
-      ruleStateChangeRecommended: !!candidate.ruleStateChangeRecommended,
-      confidence: candidate.confidence || 0,
-      insightType: candidate.insightType || '',
-      insightSummary: shortenMyCustomerStatusTextP528_(candidate.insightSummary || '', 180),
-      reason: shortenMyCustomerStatusTextP528_(candidate.reason || '', 180),
-      queueReason: candidate.queueReason || ''
+    evidenceSummary: {
+      latestEventId: candidate.latestAnyEvent && candidate.latestAnyEvent.evidenceId || '',
+      latestDecisionEventId: candidate.latestDecisionEvent && candidate.latestDecisionEvent.evidenceId || '',
+      ambiguityFlags: candidate.ambiguityFlags || [],
+      dateCoverage: candidate.dateCoverage || {}
     },
-    latestDecisionEvent: slimMyCustomerAiEventP544_(candidate.latestDecisionEvent, 180),
-    latestAnyEvent: slimMyCustomerAiEventP544_(candidate.latestAnyEvent, 160),
-    recentEvents: (candidate.events || []).slice(0, 5).map(function(ev) { return slimMyCustomerAiEventP544_(ev, 180); }),
+    evidenceEvents: (candidate.events || []).slice(0, 8).map(function(ev) {
+      return {
+        evidenceId: ev.evidenceId || '',
+        source: ev.sourceLabel || ev.source || '',
+        date: ev.date || '',
+        text: shortenMyCustomerStatusTextP528_(ev.text || '', 220)
+      };
+    }),
     contractCompletionInfo: {
       ready: !!contractInfo.ready,
       summary: shortenMyCustomerStatusTextP528_(contractInfo.summary || '', 180),
       orderNo: contractInfo.orderNo || '',
       contractNo: contractInfo.contractNo || ''
     },
-    allowedTransitionReminder: {
+    transitionConstraints: {
       neverRecommend: ['발주완료'],
-      protectedStatuses: ['수주실패', '계약완료'],
-      orderCompleteException: '현재상태가 발주완료이고 contractCompletionInfo.ready=true이면 계약완료 전환만 허용',
-      uncertainShouldBe: 'HUMAN_REVIEW 또는 INSIGHT_ONLY'
+      protectedOnlyWhenCurrentStatusIs: ['수주실패', '계약완료'],
+      orderCompleteException: '현재상태가 발주완료이고 contractCompletionInfo.ready=true인 경우에만 계약완료 추천 가능',
+      uncertainDecision: 'HUMAN_REVIEW 또는 INSIGHT_ONLY'
     }
   };
 }
@@ -469,7 +477,7 @@ function getMyCustomerAiStructuredSchemaP537_() {
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['decision','recommendedStatus','recommendationAllowed','confidence','falsePositiveRisk','insightType','summary','reason','blockedReason','nextAction'],
+    required: ['decision','recommendedStatus','recommendationAllowed','confidence','falsePositiveRisk','insightType','summary','reason','blockedReason','nextAction','evidenceIds','ambiguityFlags'],
     properties: {
       decision: { type: 'string', enum: ['STATUS_CHANGE','INSIGHT_ONLY','KEEP_CURRENT','HUMAN_REVIEW'] },
       recommendedStatus: { type: 'string', enum: ['고객 설득 중','견적제출완료','장기 추진건','수주실패','계약완료','현재상태유지'] },
@@ -480,7 +488,18 @@ function getMyCustomerAiStructuredSchemaP537_() {
       summary: { type: 'string' },
       reason: { type: 'string' },
       blockedReason: { type: 'string' },
-      nextAction: { type: 'string' }
+      nextAction: { type: 'string' },
+      evidenceIds: {
+        type: 'array',
+        items: { type: 'string' }
+      },
+      ambiguityFlags: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: ['DATE_MISSING','CONFLICTING_EVENTS','SELF_HANDLED_AMBIGUOUS','EXISTING_VENDOR_AMBIGUOUS','CALL_ENDED_AMBIGUOUS','THIRD_PARTY_COMPARISON_ONLY','SCOPE_UNCLEAR','EVIDENCE_WEAK']
+        }
+      }
     }
   };
 }
@@ -515,7 +534,7 @@ function callOpenAiForMyCustomerStatusP537_(apiKey, request) {
   return json;
 }
 
-function normalizeMyCustomerAiApiResultP537_(apiRes) {
+function normalizeMyCustomerAiApiResultP537_(apiRes, candidate) {
   const text = extractOpenAiResponseTextP537_(apiRes);
   if (!text) {
     const e = new Error('OpenAI 응답에서 output_text를 찾지 못했습니다.');
@@ -524,9 +543,10 @@ function normalizeMyCustomerAiApiResultP537_(apiRes) {
     throw e;
   }
   const parsed = parseOpenAiStructuredJsonP544_(text);
-  parsed.__rawText = text;
-  parsed.__usage = apiRes && apiRes.usage || {};
-  return parsed;
+  const normalized = normalizeMyCustomerAiDecisionP547_(candidate || {}, parsed || {});
+  normalized.__rawText = text;
+  normalized.__usage = apiRes && apiRes.usage || {};
+  return normalized;
 }
 
 function extractOpenAiResponseTextP537_(apiRes) {
@@ -577,19 +597,58 @@ function validateMyCustomerAiRecommendationP537_(candidate, ai) {
   if (!target || target === '현재상태유지') target = currentStatus;
   let serverAllowed = !!ai.recommendationAllowed && ai.decision === 'STATUS_CHANGE';
   const reasons = [];
-  if (target === '발주완료') { serverAllowed = false; reasons.push('발주완료는 AI/자동추천 금지'); }
-  if (['수주실패','계약완료'].indexOf(currentStatus) >= 0 && target !== currentStatus) { serverAllowed = false; reasons.push('보호 상태 변경 금지: ' + currentStatus); }
-  if (currentStatus === '발주완료' && target !== '계약완료' && target !== currentStatus) { serverAllowed = false; reasons.push('발주완료는 계약완료만 추천 가능'); }
-  if (String(ai.falsePositiveRisk || '').toUpperCase() === 'HIGH') { serverAllowed = false; reasons.push('오탐위험 HIGH'); }
+  const ambiguityFlags = uniqueMyCustomerAiStringsP547_([].concat(candidate.ambiguityFlags || [], ai.ambiguityFlags || []));
+  const evidence = Array.isArray(ai.evidence) ? ai.evidence : [];
+
+  if (ai.decision !== 'STATUS_CHANGE') {
+    serverAllowed = false;
+    reasons.push('AI 판단이 ' + (ai.decision || '미지정') + '이므로 상태변경하지 않음');
+  }
+  if (!evidence.length) {
+    serverAllowed = false;
+    reasons.push('판단 근거 evidenceId 없음');
+  }
+  if (serverAllowed && !evidence.some(function(ev) { return !!String(ev && ev.date || '').trim(); })) {
+    serverAllowed = false;
+    reasons.push('상태변경을 지지하는 날짜 있는 근거 없음');
+  }
+  if (hasMyCustomerAiHardAmbiguityP547_(ambiguityFlags)) {
+    serverAllowed = false;
+    reasons.push('최신 이력의 의미/범위가 불명확함: ' + ambiguityFlags.join(','));
+  }
+  if (target === '수주실패' && ambiguityFlags.indexOf('THIRD_PARTY_COMPARISON_ONLY') >= 0) {
+    serverAllowed = false;
+    reasons.push('타업체 견적/가격 비교만으로 수주실패 전환 금지');
+  }
+  if (target === '발주완료') {
+    serverAllowed = false;
+    reasons.push('발주완료는 AI/자동추천 금지');
+  }
+  if (['수주실패','계약완료'].indexOf(currentStatus) >= 0 && target !== currentStatus) {
+    serverAllowed = false;
+    reasons.push('현재 보호 상태 변경 금지: ' + currentStatus);
+  }
+  if (currentStatus === '발주완료' && target !== '계약완료' && target !== currentStatus) {
+    serverAllowed = false;
+    reasons.push('발주완료는 계약완료만 추천 가능');
+  }
+  if (String(ai.falsePositiveRisk || '').toUpperCase() === 'HIGH') {
+    serverAllowed = false;
+    reasons.push('오탐위험 HIGH');
+  }
   if (target && target !== currentStatus) {
     try {
       const detail = getCustomerDetail(Number(candidate.rowNo || 0) || candidate.rowNo);
-      const contractInfo = getMyCustomerContractCompletionInfoP536_(detail || {}, getMyCustomerContractCompleteMapP536_());
+      const liveContractInfo = getMyCustomerContractCompletionInfoP536_(detail || {}, getMyCustomerContractCompleteMapP536_());
+      const contractInfo = liveContractInfo || candidate.contractCompletionInfo || {};
       const ok = isMyCustomerStatusAllowedTransitionP536_(currentStatus, target, {
         contractCompleteReady: !!(contractInfo && contractInfo.ready),
         strongFailure: target === '수주실패'
       });
-      if (!ok) { serverAllowed = false; reasons.push(getMyCustomerStatusTransitionBlockReasonP536_(currentStatus, target, contractInfo)); }
+      if (!ok) {
+        serverAllowed = false;
+        reasons.push(getMyCustomerStatusTransitionBlockReasonP536_(currentStatus, target, contractInfo));
+      }
     } catch (err) {
       serverAllowed = false;
       reasons.push('서버 전이 검증 실패: ' + (err && err.message ? err.message : String(err || '')));
@@ -598,11 +657,16 @@ function validateMyCustomerAiRecommendationP537_(candidate, ai) {
     serverAllowed = false;
     reasons.push('현재상태 유지 또는 추천상태 없음');
   }
+
+  const ruleMismatch = getMyCustomerAiRuleMismatchP547_(candidate, ai);
   return {
     serverAllowed: serverAllowed,
     finalStatus: serverAllowed ? target : currentStatus,
     blockedReason: reasons.join(' / ') || String(ai.blockedReason || ''),
-    targetStatus: target
+    targetStatus: target,
+    ambiguityFlags: ambiguityFlags,
+    ruleAiMismatch: ruleMismatch,
+    serverDecision: serverAllowed ? 'ALLOW_STATUS_CHANGE' : (ai.decision === 'HUMAN_REVIEW' ? 'HUMAN_REVIEW' : 'KEEP_CURRENT')
   };
 }
 
@@ -635,7 +699,11 @@ function appendMyCustomerAiAnalysisResultP537_(sheet, candidate, ai, validated, 
     'summary': ai.summary || '',
     'reason': ai.reason || '',
     'nextAction': ai.nextAction || '',
-    'evidenceJson': safeStringifyMyCustomerAiP537_(ai.evidence || [], 1200),
+    'evidenceJson': safeStringifyMyCustomerAiP537_(ai.evidence || [], 2200),
+    'evidenceIdsJson': safeStringifyMyCustomerAiP537_(ai.evidenceIds || [], 500),
+    'ambiguityFlagsJson': safeStringifyMyCustomerAiP537_(validated.ambiguityFlags || ai.ambiguityFlags || [], 800),
+    'ruleAiMismatch': validated.ruleAiMismatch || '',
+    'serverDecision': validated.serverDecision || '',
     'blockedReason': validated.blockedReason || ai.blockedReason || '',
     'inputHash': candidate.inputHash || '',
     'promptVersion': MY_CUSTOMER_AI_PROMPT_VERSION_P537,
@@ -733,6 +801,325 @@ function extractFirstJsonObjectMyCustomerAiP545_(src) {
   return '';
 }
 
+function upgradeMyCustomerAiCandidateP547_(candidate) {
+  candidate = candidate || {};
+  const alreadyPrepared = Array.isArray(candidate.events) && candidate.events.length && candidate.events.every(function(ev) { return !!(ev && ev.evidenceId); });
+  if (alreadyPrepared) {
+    candidate.ambiguityFlags = uniqueMyCustomerAiStringsP547_(candidate.ambiguityFlags || []);
+    return candidate;
+  }
+  const pack = buildMyCustomerAiEvidencePackP547_(candidate.events || [], [
+    Object.assign({}, candidate.latestDecisionEvent || {}, { declaredLatest: true }),
+    Object.assign({}, candidate.latestAnyEvent || {}, { declaredLatest: true })
+  ]);
+  candidate.events = pack.events.slice(0, 8);
+  candidate.latestDecisionEvent = pack.latestDecisionEvent || {};
+  candidate.latestAnyEvent = pack.latestAnyEvent || {};
+  candidate.ambiguityFlags = pack.ambiguityFlags || [];
+  candidate.dateCoverage = pack.dateCoverage || {};
+  return candidate;
+}
+
+function buildMyCustomerAiEvidencePackP547_(events, fallbackEvents) {
+  const combined = [].concat(Array.isArray(events) ? events : [], Array.isArray(fallbackEvents) ? fallbackEvents : []);
+  const dedupedByKey = {};
+  combined.forEach(function(ev, idx) {
+    const normalized = normalizeMyCustomerAiEvidenceEventP547_(ev, idx);
+    if (!normalized || !normalized.text || isMyCustomerAiSystemMetaTextP544_(normalized.text)) return;
+    const key = normalizeMyCustomerAiEventTextKeyP547_(normalized.text);
+    if (!key) return;
+    const existing = dedupedByKey[key];
+    if (!existing) {
+      dedupedByKey[key] = normalized;
+    } else if (isMyCustomerAiEvidenceEventBetterP547_(normalized, existing)) {
+      normalized.__declaredLatest = !!(normalized.__declaredLatest || existing.__declaredLatest);
+      dedupedByKey[key] = normalized;
+    } else {
+      existing.__declaredLatest = !!(existing.__declaredLatest || normalized.__declaredLatest);
+    }
+  });
+
+  const normalizedEvents = Object.keys(dedupedByKey).map(function(k) { return dedupedByKey[k]; });
+  normalizedEvents.sort(function(a, b) {
+    const ad = getMyCustomerAiEventDateMsP547_(a);
+    const bd = getMyCustomerAiEventDateMsP547_(b);
+    if (!!a.__declaredLatest !== !!b.__declaredLatest && (!ad || !bd)) return a.__declaredLatest ? -1 : 1;
+    if (ad !== bd) return bd - ad;
+    if ((b.__sourcePriority || 0) !== (a.__sourcePriority || 0)) return (b.__sourcePriority || 0) - (a.__sourcePriority || 0);
+    return (b.__inputOrder || 0) - (a.__inputOrder || 0);
+  });
+
+  const outEvents = normalizedEvents.slice(0, 12).map(function(ev, idx) {
+    return {
+      evidenceId: 'E' + String(idx + 1).padStart(2, '0'),
+      source: ev.source || '',
+      sourceLabel: ev.sourceLabel || ev.source || '',
+      date: ev.date || '',
+      text: ev.text || '',
+      actor: ev.actor || ''
+    };
+  });
+  const latestAny = outEvents.length ? outEvents[0] : {};
+  const latestDecision = outEvents.filter(isMyCustomerAiDecisionEvidenceP547_)[0] || latestAny || {};
+  const dated = outEvents.filter(function(ev) { return !!String(ev.date || '').trim(); }).length;
+  const ambiguityFlags = getMyCustomerAiDeterministicFlagsP547_(outEvents, latestAny, latestDecision);
+  return {
+    events: outEvents,
+    latestAnyEvent: latestAny,
+    latestDecisionEvent: latestDecision,
+    ambiguityFlags: ambiguityFlags,
+    dateCoverage: {
+      total: outEvents.length,
+      dated: dated,
+      undated: Math.max(0, outEvents.length - dated),
+      latestDate: latestAny && latestAny.date || '',
+      latestEventHasDate: !!(latestAny && latestAny.date)
+    }
+  };
+}
+
+function normalizeMyCustomerAiEvidenceEventP547_(ev, inputOrder) {
+  ev = ev || {};
+  const text = shortenMyCustomerStatusTextP528_(ev.text || ev.summary || ev.rawText || '', 260);
+  if (!text) return null;
+  const rawDate = ev.dateText || ev.date || '';
+  const parsedDate = coerceMyCustomerStatusDateP535_(rawDate) || parseLoosePortalDateP528_(text);
+  const dateText = parsedDate ? formatMyCustomerStatusDateP528_(parsedDate) : '';
+  const source = String(ev.source || '').trim();
+  const sourceLabel = String(ev.sourceLabel || ev.source || '').trim();
+  return {
+    source: source,
+    sourceLabel: sourceLabel,
+    date: dateText,
+    text: text,
+    actor: String(ev.actor || '').trim(),
+    __sourcePriority: getMyCustomerAiSourcePriorityP547_(source, sourceLabel),
+    __inputOrder: Number(inputOrder || 0) || 0,
+    __declaredLatest: !!ev.declaredLatest
+  };
+}
+
+function getMyCustomerAiSourcePriorityP547_(source, sourceLabel) {
+  const text = [source, sourceLabel].join(' ').toLowerCase();
+  if (/컨택이력|contact/.test(text)) return 50;
+  if (/tm/.test(text)) return 45;
+  if (/마스터|memo/.test(text)) return 30;
+  if (/자료발송|send/.test(text)) return 20;
+  return 10;
+}
+
+function normalizeMyCustomerAiEventTextKeyP547_(text) {
+  text = String(text || '').toLowerCase().trim();
+  text = text.replace(/^\s*(?:\[[^\]]+\]\s*)+/, '');
+  text = text.replace(/^\s*(?:20)?\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2}\s*[.]?\s*/, '');
+  text = text.replace(/\([^()]{0,20}\)\s*$/, '');
+  return text.replace(/[\s.,;:!?()[\]{}<>…'\"“”‘’·~`@#$%^&*+=|\\/_\-]+/g, '');
+}
+
+function isMyCustomerAiEvidenceEventBetterP547_(a, b) {
+  const ad = getMyCustomerAiEventDateMsP547_(a);
+  const bd = getMyCustomerAiEventDateMsP547_(b);
+  if (!!ad !== !!bd) return !!ad;
+  if (ad !== bd) return ad > bd;
+  return (a.__sourcePriority || 0) > (b.__sourcePriority || 0);
+}
+
+function getMyCustomerAiEventDateMsP547_(ev) {
+  const d = coerceMyCustomerStatusDateP535_(ev && ev.date);
+  return d ? d.getTime() : 0;
+}
+
+function isMyCustomerAiDecisionEvidenceP547_(ev) {
+  const text = String(ev && ev.text || '');
+  if (!text) return false;
+  if (hasMyCustomerAiMaterialSendTextP544_(text) && !/(검토|결정|진행|계약|선정|거절|자체|관리업체|타사|타업체|기존업체|내년|하반기|예산|전화|통화)/.test(text)) return false;
+  return /(검토|결정|진행|계약|선정|거절|안\s*한다고|필요\s*없|자체|관리업체|타사|타업체|다른\s*업체|기존\s*업체|내년|하반기|예산|전화|통화|부재|연락)/.test(text);
+}
+
+function getMyCustomerAiDeterministicFlagsP547_(events, latestAny, latestDecision) {
+  const flags = [];
+  const latestText = [latestAny && latestAny.text || '', latestDecision && latestDecision.text || ''].join('\n');
+  const allText = (events || []).map(function(ev) { return ev.text || ''; }).join('\n');
+  if (!(events || []).some(function(ev) { return !!String(ev.date || '').trim(); }) || (latestAny && !String(latestAny.date || '').trim())) flags.push('DATE_MISSING');
+  if (/(자체적으로\s*진행|자체\s*진행)/.test(latestText) && !/(관리자|선임|유지보수|성능점검|공사|점검)/.test(latestText)) {
+    flags.push('SELF_HANDLED_AMBIGUOUS');
+    flags.push('SCOPE_UNCLEAR');
+  }
+  if (/(관리\s*업체\s*(있음|있다|있다고)|기존\s*업체\s*(있음|있다))/.test(latestText) && !/(유지|계약|선정|결정|진행|교체|변경|계속)/.test(latestText)) {
+    flags.push('EXISTING_VENDOR_AMBIGUOUS');
+    flags.push('SCOPE_UNCLEAR');
+  }
+  if (/(전화|통화).{0,12}(끊|종료)|바로\s*끊/.test(latestText)) flags.push('CALL_ENDED_AMBIGUOUS');
+  const hasComparison = /(타사|타업체|다른\s*업체).{0,20}(견적|가격|금액|비교|네고)|(견적|가격|금액).{0,20}(타사|타업체|다른\s*업체)/.test(allText);
+  const hasSelection = isMyCustomerAiThirdPartySelectionTextP547_(allText);
+  if (hasComparison && !hasSelection) flags.push('THIRD_PARTY_COMPARISON_ONLY');
+  if (hasSelection) {
+    const selectedIndex = (events || []).findIndex(function(ev) { return isMyCustomerAiThirdPartySelectionTextP547_(ev.text || ''); });
+    const newerActive = (events || []).slice(0, Math.max(0, selectedIndex)).some(function(ev) {
+      return /(재견적|견적.{0,8}(요청|재발송)|검토\s*중|네고|가격\s*조율|진행\s*문의)/.test(ev.text || '');
+    });
+    if (newerActive) flags.push('CONFLICTING_EVENTS');
+  }
+  return uniqueMyCustomerAiStringsP547_(flags);
+}
+
+function isMyCustomerAiThirdPartySelectionTextP547_(text) {
+  text = String(text || '');
+  const uncertain = /(언제\s*(결정|선정)|(결정|선정).{0,10}(모르|못|미정|안\s*됨|전)|아직.{0,14}(결정|선정).{0,8}(못|안)|검토\s*중|비교\s*중)/.test(text);
+  if (uncertain) return false;
+  return /(타사|타업체|다른\s*업체|다른\s*곳).{0,16}(선정\s*(완료|함|했다|됨)|결정\s*(완료|함|했다|됨)|계약\s*(완료|체결|함|했다|진행)|진행하기로)|(기존\s*업체).{0,12}(유지|계속|계약)/.test(text);
+}
+
+function normalizeMyCustomerAiDecisionP547_(candidate, ai) {
+  candidate = candidate || {};
+  ai = ai || {};
+  const allowedDecisions = ['STATUS_CHANGE','INSIGHT_ONLY','KEEP_CURRENT','HUMAN_REVIEW'];
+  const allowedStatuses = ['고객 설득 중','견적제출완료','장기 추진건','수주실패','계약완료','현재상태유지'];
+  const allowedRisks = ['LOW','MEDIUM','HIGH'];
+  const allowedInsights = ['자료발송후미후속','연락장애','장기재접촉','타사비교','타사선정','계약발주확인필요','데이터확인필요','진행중추적','없음'];
+  const evidenceById = {};
+  (candidate.events || []).forEach(function(ev) { if (ev && ev.evidenceId) evidenceById[ev.evidenceId] = ev; });
+
+  let decision = allowedDecisions.indexOf(String(ai.decision || '')) >= 0 ? String(ai.decision) : 'HUMAN_REVIEW';
+  let recommendedStatus = allowedStatuses.indexOf(String(ai.recommendedStatus || '')) >= 0 ? String(ai.recommendedStatus) : '현재상태유지';
+  let recommendationAllowed = !!ai.recommendationAllowed;
+  let confidence = Math.max(0, Math.min(100, Number(ai.confidence || 0) || 0));
+  let falsePositiveRisk = allowedRisks.indexOf(String(ai.falsePositiveRisk || '').toUpperCase()) >= 0 ? String(ai.falsePositiveRisk).toUpperCase() : 'HIGH';
+  let insightType = allowedInsights.indexOf(String(ai.insightType || '')) >= 0 ? String(ai.insightType) : '데이터확인필요';
+  let blockedReason = String(ai.blockedReason || '').trim();
+  const modelEvidenceIds = uniqueMyCustomerAiStringsP547_(Array.isArray(ai.evidenceIds) ? ai.evidenceIds : []);
+  const evidenceIds = modelEvidenceIds.filter(function(id) { return !!evidenceById[id]; }).slice(0, 4);
+  let ambiguityFlags = uniqueMyCustomerAiStringsP547_([].concat(candidate.ambiguityFlags || [], Array.isArray(ai.ambiguityFlags) ? ai.ambiguityFlags : []));
+  const guardReasons = [];
+
+  if (evidenceIds.length !== modelEvidenceIds.length) {
+    ambiguityFlags.push('EVIDENCE_WEAK');
+    guardReasons.push('입력에 없는 evidenceId 제거');
+  }
+  if (!evidenceIds.length) {
+    ambiguityFlags.push('EVIDENCE_WEAK');
+    decision = 'HUMAN_REVIEW';
+    recommendationAllowed = false;
+    recommendedStatus = '현재상태유지';
+    falsePositiveRisk = 'HIGH';
+    confidence = Math.min(confidence, 55);
+    guardReasons.push('유효한 판단 근거 없음');
+  }
+  const evidence = evidenceIds.map(function(id) { return evidenceById[id]; });
+  if (decision === 'STATUS_CHANGE' && !evidence.some(function(ev) { return !!String(ev && ev.date || '').trim(); })) {
+    ambiguityFlags.push('DATE_MISSING');
+    decision = 'HUMAN_REVIEW';
+    recommendationAllowed = false;
+    recommendedStatus = '현재상태유지';
+    falsePositiveRisk = 'HIGH';
+    confidence = Math.min(confidence, 55);
+    guardReasons.push('날짜가 확인된 상태변경 근거 없음');
+  }
+  if (decision === 'STATUS_CHANGE' && !recommendationAllowed) {
+    decision = 'HUMAN_REVIEW';
+    recommendedStatus = '현재상태유지';
+    falsePositiveRisk = 'HIGH';
+    confidence = Math.min(confidence, 55);
+    guardReasons.push('STATUS_CHANGE와 recommendationAllowed 값 모순');
+  }
+  if (decision !== 'STATUS_CHANGE') {
+    recommendationAllowed = false;
+    recommendedStatus = '현재상태유지';
+  }
+  if (hasMyCustomerAiHardAmbiguityP547_(ambiguityFlags) && decision === 'STATUS_CHANGE') {
+    decision = 'HUMAN_REVIEW';
+    recommendationAllowed = false;
+    recommendedStatus = '현재상태유지';
+    falsePositiveRisk = 'HIGH';
+    confidence = Math.min(confidence, 55);
+    guardReasons.push('최신 이력 의미 또는 범위 불명확');
+  }
+  if (recommendedStatus === '수주실패' && ambiguityFlags.indexOf('THIRD_PARTY_COMPARISON_ONLY') >= 0) {
+    decision = 'HUMAN_REVIEW';
+    recommendationAllowed = false;
+    recommendedStatus = '현재상태유지';
+    falsePositiveRisk = 'HIGH';
+    confidence = Math.min(confidence, 55);
+    insightType = '타사비교';
+    guardReasons.push('타업체 견적/가격 비교는 타사 선정이 아님');
+  }
+  if (['수주실패','계약완료'].indexOf(String(candidate.currentStatus || '').trim()) >= 0) {
+    decision = 'KEEP_CURRENT';
+    recommendationAllowed = false;
+    recommendedStatus = '현재상태유지';
+    guardReasons.push('현재상태가 보호 상태임');
+  }
+  if (String(candidate.currentStatus || '').trim() === '발주완료') {
+    if (!(recommendedStatus === '계약완료' && candidate.contractCompletionInfo && candidate.contractCompletionInfo.ready)) {
+      decision = 'KEEP_CURRENT';
+      recommendationAllowed = false;
+      recommendedStatus = '현재상태유지';
+      guardReasons.push('발주완료→계약완료 서류 조건 미충족 또는 다른 상태 추천');
+    }
+  }
+  insightType = normalizeMyCustomerAiInsightTypeP547_(candidate, insightType, recommendedStatus, ambiguityFlags);
+  ambiguityFlags = uniqueMyCustomerAiStringsP547_(ambiguityFlags);
+  if (guardReasons.length) blockedReason = [blockedReason, guardReasons.join(' / ')].filter(Boolean).join(' / ');
+
+  return {
+    decision: decision,
+    recommendedStatus: recommendedStatus,
+    recommendationAllowed: recommendationAllowed,
+    confidence: confidence,
+    falsePositiveRisk: falsePositiveRisk,
+    insightType: insightType,
+    summary: shortenMyCustomerStatusTextP528_(ai.summary || '', 260),
+    reason: shortenMyCustomerStatusTextP528_(ai.reason || '', 360),
+    blockedReason: shortenMyCustomerStatusTextP528_(blockedReason, 360),
+    nextAction: shortenMyCustomerStatusTextP528_(ai.nextAction || '', 260),
+    evidenceIds: evidenceIds,
+    evidence: evidence,
+    ambiguityFlags: ambiguityFlags
+  };
+}
+
+function normalizeMyCustomerAiInsightTypeP547_(candidate, insightType, recommendedStatus, ambiguityFlags) {
+  const allText = (candidate.events || []).map(function(ev) { return ev.text || ''; }).join('\n');
+  const hasContactBlocker = /(부재|전화\s*연결\s*불가|전화\s*안\s*받|연락\s*안\s*됨|자리\s*비움|담당자\s*부재|안내\s*불가)/.test(allText);
+  const hasContractSignal = /(계약서|용역신청서|사업자등록증|발주|계약\s*진행|계약완료)/.test(allText);
+  const hasMaterialSend = hasMyCustomerAiMaterialSendTextP544_(allText);
+  if (recommendedStatus === '계약완료') return '계약발주확인필요';
+  if (recommendedStatus === '수주실패' && isMyCustomerAiThirdPartySelectionTextP547_(allText)) return '타사선정';
+  if ((ambiguityFlags || []).indexOf('THIRD_PARTY_COMPARISON_ONLY') >= 0) return '타사비교';
+  if ((ambiguityFlags || []).some(function(f) { return ['SELF_HANDLED_AMBIGUOUS','EXISTING_VENDOR_AMBIGUOUS','SCOPE_UNCLEAR'].indexOf(f) >= 0; })) return '데이터확인필요';
+  if (insightType === '연락장애' && !hasContactBlocker) return hasMaterialSend ? '자료발송후미후속' : '진행중추적';
+  if (insightType === '계약발주확인필요' && !hasContractSignal) return hasMaterialSend ? '자료발송후미후속' : '진행중추적';
+  return insightType || '없음';
+}
+
+function hasMyCustomerAiHardAmbiguityP547_(flags) {
+  return (flags || []).some(function(f) {
+    return ['DATE_MISSING','CONFLICTING_EVENTS','SELF_HANDLED_AMBIGUOUS','EXISTING_VENDOR_AMBIGUOUS','CALL_ENDED_AMBIGUOUS','SCOPE_UNCLEAR','EVIDENCE_WEAK'].indexOf(f) >= 0;
+  });
+}
+
+function getMyCustomerAiRuleMismatchP547_(candidate, ai) {
+  const ruleTarget = String(candidate.ruleRecommendedStatus || candidate.currentStatus || '').trim();
+  const aiTarget = ai.decision === 'STATUS_CHANGE' ? String(ai.recommendedStatus || '').trim() : String(candidate.currentStatus || '').trim();
+  if (!!candidate.ruleStateChangeRecommended !== (ai.decision === 'STATUS_CHANGE')) {
+    return candidate.ruleStateChangeRecommended ? '규칙=변경추천 / AI=보류' : '규칙=유지 / AI=변경추천';
+  }
+  if (candidate.ruleStateChangeRecommended && ruleTarget !== aiTarget) return '추천상태 불일치: 규칙=' + ruleTarget + ' / AI=' + aiTarget;
+  return '';
+}
+
+function uniqueMyCustomerAiStringsP547_(values) {
+  const out = [];
+  const seen = {};
+  (values || []).forEach(function(v) {
+    const key = String(v || '').trim();
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    out.push(key);
+  });
+  return out;
+}
+
 function slimMyCustomerAiEventP544_(ev, maxLen) {
   ev = ev || {};
   return {
@@ -744,7 +1131,7 @@ function slimMyCustomerAiEventP544_(ev, maxLen) {
 
 function isMyCustomerAiSystemMetaTextP544_(text) {
   text = String(text || '');
-  return /(기존\s*담당자별\s*시트|마스터시트로\s*이관|이관\.|중복\s*삭제|데이터\s*병합|정보\s*확인해보시고|TM\s*콜\s*원하시면|삭제\s*고객번호|대표전화번호|담당자\s*이메일\s*주소|연면적)/i.test(text);
+  return /(기존\s*담당자별\s*시트|마스터시트로\s*이관|이관|중복\s*삭제|데이터\s*병합|정보\s*확인해보시고|TM\s*콜\s*원하시면|삭제\s*고객번호|대표전화번호|담당자\s*이메일\s*주소|연면적)/i.test(text);
 }
 
 function isMyCustomerAiContactBlockerOnlyTextP544_(text) {
