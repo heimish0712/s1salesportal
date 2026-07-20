@@ -126,6 +126,12 @@
       <section class="panel page-section customer-favorites-panel" id="customerFavoritesSection">
         <div class="customer-search-header favorite-search-header customer-search-header-no-title">
           <div class="customer-search-controls favorite-search-controls">
+            <div id="favoriteOwnerFilterWrapP549" class="favorite-owner-filter-wrap-p549" style="display:none;">
+              <label for="favoriteOwnerFilterP549">등록자</label>
+              <select id="favoriteOwnerFilterP549" onchange="changeFavoriteOwnerScopeP549_(this.value)">
+                <option value="ALL">전체 즐겨찾기</option>
+              </select>
+            </div>
             <input id="favoriteKeyword" placeholder="즐겨찾기 고객 검색" onkeydown="if(event.key==='Enter') renderFavoritePage()">
             <button onclick="renderFavoritePage()">검색</button>
             <button class="secondary" onclick="refreshFavoriteCustomers(true)">새로고침</button>

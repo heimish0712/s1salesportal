@@ -8,6 +8,11 @@ let favoriteExpandedRowNoV63 = null;
 let favoriteSortKeyP15 = '';
 let favoriteSortDirP15 = 'asc';
 
+// P549: 관리자 즐겨찾기 조회 범위와 행 단위 해제 처리 상태
+let favoriteOwnerScopeP549 = 'ALL';
+let favoriteOwnerScopeInitializedP549 = false;
+let favoritePendingRowKeysP549 = {};
+
 function refreshFavoriteCustomers(force) {
   force = !!force;
   const area = document.getElementById('favoriteResultArea');
@@ -46,10 +51,12 @@ function refreshFavoriteCustomers(force) {
   google.script.run
     .withSuccessHandler(function(res) {
       if (res && res.ok) {
-        setCustomerFavoriteMapFromServer_(res.map || {});
+        if (typeof setCustomerFavoriteDataFromServerP549_ === 'function') setCustomerFavoriteDataFromServerP549_(res);
+        else setCustomerFavoriteMapFromServer_(res.map || {});
         // 서버 snapshot rows가 있으면 fallback으로만 보관합니다.
         if (Array.isArray(res.rows)) customerFavoriteRowsV60 = res.rows;
       }
+      refreshFavoriteOwnerFilterP549_();
       renderFavoritePage();
       startFavoriteRenderPollV61_();
     })
@@ -76,21 +83,136 @@ function startFavoriteRenderPollV61_() {
   }, 300);
 }
 
+function isFavoriteAdminViewP549_() {
+  return !!(customerFavoriteAdminViewP549 && customerFavoriteAdminViewP549.allowed);
+}
+
+function refreshFavoriteOwnerFilterP549_() {
+  const wrap = document.getElementById('favoriteOwnerFilterWrapP549');
+  const select = document.getElementById('favoriteOwnerFilterP549');
+  if (!wrap || !select) return;
+  const allowed = isFavoriteAdminViewP549_();
+  wrap.style.display = allowed ? '' : 'none';
+  if (!allowed) {
+    favoriteOwnerScopeP549 = 'MY';
+    favoriteOwnerScopeInitializedP549 = false;
+    return;
+  }
+
+  const view = customerFavoriteAdminViewP549 || {};
+  const owners = Array.isArray(view.owners) ? view.owners : [];
+  if (!favoriteOwnerScopeInitializedP549) {
+    favoriteOwnerScopeP549 = 'ALL';
+    favoriteOwnerScopeInitializedP549 = true;
+  }
+
+  const options = [
+    { value: 'ALL', label: '전체 즐겨찾기 (' + (Number(view.totalCustomers) || 0) + ')' },
+    { value: 'MY', label: '내 즐겨찾기 (' + Object.keys(customerFavoriteMapV60 || {}).filter(function(k) { return customerFavoriteMapV60[k]; }).length + ')' }
+  ];
+  owners.forEach(function(owner) {
+    if (!owner || owner.isCurrentUser) return;
+    options.push({
+      value: 'OWNER:' + encodeURIComponent(String(owner.userKey || '')),
+      label: String(owner.userLabel || owner.userKey || '사용자') + ' (' + (Number(owner.count) || 0) + ')'
+    });
+  });
+
+  const validValues = {};
+  options.forEach(function(opt) { validValues[opt.value] = true; });
+  if (!validValues[favoriteOwnerScopeP549]) favoriteOwnerScopeP549 = 'ALL';
+
+  select.innerHTML = '';
+  options.forEach(function(opt) {
+    const el = document.createElement('option');
+    el.value = opt.value;
+    el.textContent = opt.label;
+    select.appendChild(el);
+  });
+  select.value = favoriteOwnerScopeP549;
+}
+
+function changeFavoriteOwnerScopeP549_(value) {
+  favoriteOwnerScopeP549 = String(value || 'ALL');
+  favoriteExpandedRowNoV63 = null;
+  renderFavoritePage();
+}
+
+function getFavoriteScopeRelationsP549_() {
+  const ownMap = customerFavoriteMapV60 || {};
+  const adminAllowed = isFavoriteAdminViewP549_();
+  const keyMap = {};
+  const ownersByCustomer = {};
+  const entriesByCustomer = {};
+
+  if (!adminAllowed) {
+    Object.keys(ownMap).forEach(function(key) {
+      if (ownMap[key]) keyMap[key] = true;
+    });
+    // 해제 저장이 끝나기 전에는 행을 목록에 고정합니다. 별표는 즉시 빈 별로 바뀌지만
+    // 다른 고객이 같은 자리를 메우는 전체 재렌더링은 발생하지 않습니다.
+    Object.keys(favoritePendingRowKeysP549 || {}).forEach(function(key) {
+      const desired = (typeof getCustomerFavoritePendingDesired_ === 'function') ? getCustomerFavoritePendingDesired_(key) : null;
+      if (desired === false) keyMap[key] = true;
+    });
+    return { keyMap: keyMap, ownersByCustomer: ownersByCustomer, entriesByCustomer: entriesByCustomer, admin: false };
+  }
+
+  const view = customerFavoriteAdminViewP549 || {};
+  const currentUserKey = String(view.currentUserKey || '').trim();
+  const scope = String(favoriteOwnerScopeP549 || 'ALL');
+  let targetOwnerKey = '';
+  if (scope === 'MY') targetOwnerKey = currentUserKey;
+  else if (scope.indexOf('OWNER:') === 0) {
+    try { targetOwnerKey = decodeURIComponent(scope.slice(6)); } catch (err) { targetOwnerKey = scope.slice(6); }
+  }
+
+  (Array.isArray(view.entries) ? view.entries : []).forEach(function(entry) {
+    entry = entry || {};
+    const ownerKey = String(entry.userKey || '').trim();
+    const customerKey = String(entry.customerKey || '').trim() || getFavoriteCustomerKey_(entry);
+    if (!ownerKey || !customerKey) return;
+    if (targetOwnerKey && ownerKey !== targetOwnerKey) return;
+    keyMap[customerKey] = true;
+    if (!ownersByCustomer[customerKey]) ownersByCustomer[customerKey] = [];
+    if (!ownersByCustomer[customerKey].some(function(owner) { return String(owner.userKey || '') === ownerKey; })) {
+      ownersByCustomer[customerKey].push({
+        userKey: ownerKey,
+        userLabel: String(entry.userLabel || ownerKey).trim() || ownerKey,
+        addedAt: String(entry.addedAt || '').trim(),
+        isCurrentUser: ownerKey === currentUserKey
+      });
+    }
+    if (!entriesByCustomer[customerKey]) entriesByCustomer[customerKey] = entry;
+  });
+
+  Object.keys(ownersByCustomer).forEach(function(key) {
+    ownersByCustomer[key].sort(function(a, b) {
+      if (!!a.isCurrentUser !== !!b.isCurrentUser) return a.isCurrentUser ? -1 : 1;
+      return String(a.userLabel || '').localeCompare(String(b.userLabel || ''), 'ko');
+    });
+  });
+
+  return { keyMap: keyMap, ownersByCustomer: ownersByCustomer, entriesByCustomer: entriesByCustomer, admin: true };
+}
+
 function getFavoriteRowsFromClientIndexV61_() {
-  const map = customerFavoriteMapV60 || {};
-  const mapKeys = Object.keys(map).filter(function(k) { return !!map[k]; });
+  const scopeData = getFavoriteScopeRelationsP549_();
+  const keyMap = scopeData.keyMap || {};
+  const mapKeys = Object.keys(keyMap).filter(function(k) { return !!keyMap[k]; });
   const byKey = {};
   const rows = [];
 
   function addRow(row) {
     row = row || {};
     const key = getFavoriteCustomerKey_(row);
-    if (!key) return;
-    // map이 로딩된 상태에서는 map에 있는 것만 표시합니다.
-    if (customerFavoriteLoadedV60 && !map[key]) return;
-    if (byKey[key]) return;
+    if (!key || !keyMap[key] || byKey[key]) return;
     const copy = Object.assign({}, row);
-    copy.favorite = true;
+    copy.favorite = isCustomerFavorite_(copy);
+    copy.favoriteOwners = (scopeData.ownersByCustomer[key] || []).slice();
+    copy.favoriteOwnerLabels = copy.favoriteOwners.map(function(owner) { return owner.userLabel || owner.userKey || ''; }).filter(Boolean).join(' ');
+    const snapshot = scopeData.entriesByCustomer[key] || {};
+    copy.favoriteAddedAt = String(snapshot.addedAt || copy.favoriteAddedAt || '');
     byKey[key] = true;
     rows.push(copy);
   }
@@ -98,16 +220,30 @@ function getFavoriteRowsFromClientIndexV61_() {
   if (customerSearchIndexState && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length) {
     filterCustomerRowsByPermissionClient_(customerSearchIndexState.rows).forEach(function(row) {
       const key = getFavoriteCustomerKey_(row);
-      if (key && map[key]) addRow(row);
+      if (key && keyMap[key]) addRow(row);
     });
   }
 
-  // 서버/토글 응답 snapshot은 검색인덱스에서 못 찾을 때만 fallback으로 사용합니다.
+  // 현재 사용자 전용 snapshot fallback
   filterCustomerRowsByPermissionClient_(customerFavoriteRowsV60 || []).forEach(function(row) {
     addRow(row);
   });
 
-  // map은 있는데 아직 검색인덱스가 안 뜬 경우에는 로딩 상태를 구분하기 위해 marker를 남깁니다.
+  // 관리자 전체 조회에서 검색인덱스에 없는 고객은 즐겨찾기 DB snapshot으로라도 표시합니다.
+  if (scopeData.admin) {
+    Object.keys(scopeData.entriesByCustomer || {}).forEach(function(key) {
+      if (byKey[key]) return;
+      const entry = scopeData.entriesByCustomer[key] || {};
+      addRow({
+        rowNo: Number(entry.rowNo) || 0,
+        customerNo: String(entry.customerNo || '').trim(),
+        company: String(entry.company || '').trim(),
+        status: '', salesRep: '', contact: '', phone: '', directPhone: '', email: '', vendor: '', finalQuote: '', memo: '',
+        __source: 'favoriteAdminSnapshotP549'
+      });
+    });
+  }
+
   rows.__hasFavoriteKeys = mapKeys.length > 0;
   return rows;
 }
@@ -134,19 +270,20 @@ function renderFavoritePage() {
   const area = document.getElementById('favoriteResultArea');
   if (!area) return;
 
+  refreshFavoriteOwnerFilterP549_();
   const keywordEl = document.getElementById('favoriteKeyword');
   const keyword = String(keywordEl && keywordEl.value || '').trim().toLowerCase();
   let rows = getFavoriteRowsFromClientIndexV61_();
 
   if (keyword) {
     rows = rows.filter(function(r) {
-      return [r.customerNo, r.company, r.salesRep, r.status, r.contact, r.phone, r.directPhone, r.email, r.vendor, r.finalQuote, r.memo]
+      return [r.customerNo, r.company, r.salesRep, r.status, r.contact, r.phone, r.directPhone, r.email, r.vendor, r.finalQuote, r.memo, r.favoriteOwnerLabels]
         .join(' ').toLowerCase().indexOf(keyword) >= 0;
     });
   }
   rows = sortFavoriteRowsP15_(rows);
 
-  const hasFavoriteKeys = rows.__hasFavoriteKeys || Object.keys(customerFavoriteMapV60 || {}).length > 0;
+  const hasFavoriteKeys = rows.__hasFavoriteKeys || Object.keys(getFavoriteScopeRelationsP549_().keyMap || {}).length > 0;
   const indexReady = !!(customerSearchIndexState && customerSearchIndexState.ready && Array.isArray(customerSearchIndexState.rows) && customerSearchIndexState.rows.length);
 
   if (!rows.length) {
@@ -164,17 +301,22 @@ function renderFavoritePage() {
 
   let html = '<div class="customer-table-scroll"><table class="customer-result-table favorite-result-table"><colgroup>';
   html += '<col style="width:42px">';
+  const showFavoriteOwnersP549 = isFavoriteAdminViewP549_();
+  if (showFavoriteOwnersP549) html += '<col style="width:150px">';
   CUSTOMER_RESULT_TABLE.columns.forEach(function(col) { html += '<col style="width:' + escAttr(col.width || 'auto') + '">'; });
   html += '<col style="width:' + escAttr(CUSTOMER_RESULT_TABLE.actionWidth || '76px') + '">';
   html += '</colgroup><thead><tr><th></th>';
+  if (showFavoriteOwnersP549) html += '<th>즐겨찾기 등록자</th>';
   CUSTOMER_RESULT_TABLE.columns.forEach(function(col) { html += renderFavoriteSortableThP15_(col); });
   html += '<th></th></tr></thead><tbody>';
 
   rows.forEach(function(r) {
     const rowNo = Number(r.rowNo) || 0;
     const isExpanded = favoriteExpandedRowNoV63 === rowNo;
-    html += '<tr class="customer-main-row' + (isExpanded ? ' customer-expanded' : '') + '" data-row-no="' + rowNo + '">';
+    const favoriteKey = getFavoriteCustomerKey_(r);
+    html += '<tr class="customer-main-row' + (isExpanded ? ' customer-expanded' : '') + (favoritePendingRowKeysP549[favoriteKey] ? ' favorite-removal-pending-p549' : '') + '" data-row-no="' + rowNo + '" data-favorite-key="' + escAttr(favoriteKey) + '">';
     html += renderCustomerFavoriteCell_(r);
+    if (showFavoriteOwnersP549) html += renderFavoriteOwnersCellP549_(r);
     CUSTOMER_RESULT_TABLE.columns.forEach(function(col) { html += renderFavoriteResultCellV63_(r, col); });
     html += '<td><div class="customer-actions">' +
       '<button type="button" class="customer-row-btn primary" onclick="event.stopPropagation(); openDetailSafe_(' + rowNo + ')">상세</button>' +
@@ -184,7 +326,7 @@ function renderFavoritePage() {
     html += '</tr>';
 
     if (isExpanded) {
-      const colspan = CUSTOMER_RESULT_TABLE.columns.length + 2;
+      const colspan = CUSTOMER_RESULT_TABLE.columns.length + 2 + (showFavoriteOwnersP549 ? 1 : 0);
       html += '<tr class="customer-expand-row favorite-expand-row" id="favoriteExpandRow_' + rowNo + '"><td colspan="' + colspan + '">' + renderFavoriteExpandedContentV63_(rowNo, r) + '</td></tr>';
     }
   });
@@ -197,6 +339,101 @@ function renderFavoritePage() {
       prefetchCustomerDetailsForRows_(rows, { delayBase: 450 });
     }
   } catch (err) {}
+}
+
+
+function renderFavoriteOwnersCellP549_(row) {
+  const owners = Array.isArray(row && row.favoriteOwners) ? row.favoriteOwners : [];
+  if (!owners.length) return '<td class="favorite-owner-cell-p549"><span class="favorite-owner-empty-p549">-</span></td>';
+  const chips = owners.map(function(owner) {
+    const label = String(owner && (owner.userLabel || owner.userKey) || '').trim() || '사용자';
+    return '<span class="favorite-owner-chip-p549' + (owner && owner.isCurrentUser ? ' mine' : '') + '">' + esc(label) + '</span>';
+  }).join('');
+  return '<td class="favorite-owner-cell-p549"><div class="favorite-owner-chips-p549">' + chips + '</div></td>';
+}
+
+function findFavoriteMainRowByKeyP549_(key) {
+  key = String(key || '');
+  if (!key) return null;
+  const rows = Array.prototype.slice.call(document.querySelectorAll('#favoriteResultArea tr.customer-main-row[data-favorite-key]'));
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i].getAttribute('data-favorite-key') || '') === key) return rows[i];
+  }
+  return null;
+}
+
+function handleFavoriteMutationOptimisticP549_(row, nextFavorite, mutation) {
+  if (!isCustomerFavoritePageVisibleP207_()) return false;
+  const key = mutation && mutation.key ? mutation.key : getFavoriteCustomerKey_(row || {});
+  const tr = findFavoriteMainRowByKeyP549_(key);
+  if (!tr) return false;
+  if (!nextFavorite) {
+    favoritePendingRowKeysP549[key] = true;
+    tr.classList.add('favorite-removal-pending-p549');
+  }
+  const btn = tr.querySelector('.customer-favorite-star');
+  if (btn) {
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+  }
+  return true;
+}
+
+function isFavoriteKeyVisibleInCurrentScopeP549_(key) {
+  return !!(getFavoriteScopeRelationsP549_().keyMap || {})[String(key || '')];
+}
+
+function handleFavoriteMutationSettledP549_(payload, success) {
+  if (!isCustomerFavoritePageVisibleP207_()) return;
+  payload = payload || {};
+  const key = getFavoriteCustomerKey_(payload);
+  const tr = findFavoriteMainRowByKeyP549_(key);
+  delete favoritePendingRowKeysP549[key];
+
+  if (!success) {
+    if (tr) {
+      tr.classList.remove('favorite-removal-pending-p549');
+      const btn = tr.querySelector('.customer-favorite-star');
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+
+  const stillVisible = isFavoriteKeyVisibleInCurrentScopeP549_(key);
+  if (!stillVisible && tr) {
+    const rowNo = Number(tr.getAttribute('data-row-no')) || 0;
+    const expanded = rowNo ? document.getElementById('favoriteExpandRow_' + rowNo) : null;
+    tr.classList.add('favorite-row-removed-p549');
+    if (expanded) expanded.classList.add('favorite-row-removed-p549');
+    setTimeout(function() {
+      if (expanded && expanded.parentNode) expanded.parentNode.removeChild(expanded);
+      if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+      if (favoriteExpandedRowNoV63 === rowNo) favoriteExpandedRowNoV63 = null;
+      const remaining = document.querySelector('#favoriteResultArea tr.customer-main-row');
+      if (!remaining) renderFavoritePage();
+    }, 260);
+    return;
+  }
+
+  if (!tr) {
+    renderFavoritePage();
+    return;
+  }
+
+  tr.classList.remove('favorite-removal-pending-p549');
+  const btn = tr.querySelector('.customer-favorite-star');
+  if (btn) btn.disabled = false;
+  // 등록자 관계가 바뀐 경우 해당 행만 갱신하기보다 현재 스크롤 위치를 보존한 채 재렌더링합니다.
+  const area = document.getElementById('favoriteResultArea');
+  const scrollBox = area && area.querySelector('.customer-table-scroll');
+  const scrollTop = scrollBox ? scrollBox.scrollTop : 0;
+  const scrollLeft = scrollBox ? scrollBox.scrollLeft : 0;
+  renderFavoritePage();
+  const nextScrollBox = area && area.querySelector('.customer-table-scroll');
+  if (nextScrollBox) {
+    nextScrollBox.scrollTop = scrollTop;
+    nextScrollBox.scrollLeft = scrollLeft;
+  }
 }
 
 

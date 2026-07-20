@@ -2471,7 +2471,9 @@ function refreshFavoritePageIfVisibleP207_() {
 
 function toggleCustomerFavoriteFromList(rowNo) {
   rowNo = Number(rowNo) || 0;
-  const row = findCustomerRowSummaryByRowNo_(rowNo) || {};
+  const row = ((typeof isCustomerFavoritePageVisibleP207_ === 'function' && isCustomerFavoritePageVisibleP207_() && typeof findFavoriteRowSummaryByRowNoV63_ === 'function')
+    ? findFavoriteRowSummaryByRowNoV63_(rowNo)
+    : null) || findCustomerRowSummaryByRowNo_(rowNo) || {};
   if (!rowNo && !row.customerNo) return;
 
   const wasFavorite = isCustomerFavorite_(row);
@@ -2482,7 +2484,10 @@ function toggleCustomerFavoriteFromList(rowNo) {
   // 전체 목록을 다시 그리면 정렬/페이지 위치가 순간적으로 재계산되어 행 순서가 튀는 문제가 생깁니다.
   // 별표 버튼만 즉시 갱신하고, 즐겨찾기 전용 화면이 열려 있을 때만 그 화면을 갱신합니다.
   try { refreshCustomerFavoriteStarButtonsP207_(favoriteMutation && favoriteMutation.key ? favoriteMutation.key : row); } catch (err) {}
-  refreshFavoritePageIfVisibleP207_();
+  const favoriteUiHandledP549 = (typeof handleFavoriteMutationOptimisticP549_ === 'function')
+    ? handleFavoriteMutationOptimisticP549_(row, nextFavorite, favoriteMutation)
+    : false;
+  if (!favoriteUiHandledP549) refreshFavoritePageIfVisibleP207_();
 
   // P2-4: 연속 클릭은 화면에서 즉시 반영하고, 마지막 상태만 지연 저장합니다.
   if (typeof scheduleCustomerFavoritePushP204_ === 'function') {
@@ -2493,12 +2498,19 @@ function toggleCustomerFavoriteFromList(rowNo) {
   // 하위 호환 fallback
   google.script.run
     .withSuccessHandler(function(res) {
-      if (res && res.ok) commitFavoriteStateOptimistic_(favoriteMutation, res.map || customerFavoriteMapV60 || {});
+      if (res && res.ok) {
+        commitFavoriteStateOptimistic_(favoriteMutation, res.map || customerFavoriteMapV60 || {});
+        try { if (typeof applyCustomerFavoriteAdminRelationP549_ === 'function') applyCustomerFavoriteAdminRelationP549_(row, nextFavorite); } catch (err) {}
+        try { if (typeof handleFavoriteMutationSettledP549_ === 'function') handleFavoriteMutationSettledP549_(Object.assign({}, row, { favorite: nextFavorite }), true); } catch (err) {}
+      }
     })
     .withFailureHandler(function(err) {
       rollbackFavoriteStateOptimistic_(favoriteMutation, wasFavorite);
       try { refreshCustomerFavoriteStarButtonsP207_(favoriteMutation && favoriteMutation.key ? favoriteMutation.key : row); } catch (btnErr) {}
-      refreshFavoritePageIfVisibleP207_();
+      try {
+        if (typeof handleFavoriteMutationSettledP549_ === 'function') handleFavoriteMutationSettledP549_(Object.assign({}, row, { favorite: nextFavorite }), false);
+        else refreshFavoritePageIfVisibleP207_();
+      } catch (renderErr) {}
       toast('즐겨찾기 변경이 지연되었습니다. 잠시 후 다시 눌러주세요.');
     })
     .setPortalCustomerFavorite({

@@ -18,13 +18,104 @@ const PORTAL_FAVORITE_HEADERS = [
 ];
 
 function getPortalCustomerFavoriteMap() {
+  const user = getPortalFavoriteUser_();
   const rows = getPortalFavoriteRows_({ includeDeleted: false });
   const map = {};
   rows.forEach(function(r) {
     const key = makePortalFavoriteCustomerKey_(r.customerNo, r.rowNo);
     if (key) map[key] = true;
   });
-  return { ok: true, map: map, total: rows.length };
+
+  const response = {
+    ok: true,
+    map: map,
+    total: rows.length,
+    currentUserKey: user.key,
+    currentUserLabel: user.label
+  };
+
+  // P549: 관리자/서무는 모든 사용자의 활성 즐겨찾기를 조회할 수 있습니다.
+  // 단, map은 항상 현재 로그인 사용자의 즐겨찾기만 반환하여 별표 추가/해제가
+  // 다른 사용자의 즐겨찾기를 건드리지 않도록 분리합니다.
+  if (canPortalViewAllFavoritesP549_()) {
+    const allRows = getPortalFavoriteRows_({ includeDeleted: false, allUsers: true });
+    response.adminView = buildPortalFavoriteAdminViewP549_(allRows, user);
+  } else {
+    response.adminView = { allowed: false, entries: [], owners: [] };
+  }
+  return response;
+}
+
+function canPortalViewAllFavoritesP549_() {
+  let perm = null;
+  try { perm = getPortalCurrentPermission_(); } catch (err) {}
+  return !!(perm && perm.active !== false && (perm.isAdmin || perm.canUseAdminHome || String(perm.level || '').toUpperCase() === 'ADMIN'));
+}
+
+function buildPortalFavoriteAdminViewP549_(rows, currentUser) {
+  rows = Array.isArray(rows) ? rows : [];
+  currentUser = currentUser || getPortalFavoriteUser_();
+  const entryByRelation = {};
+
+  rows.forEach(function(r) {
+    const customerKey = makePortalFavoriteCustomerKey_(r.customerNo, r.rowNo);
+    const userKey = String(r.userKey || '').trim();
+    if (!customerKey || !userKey) return;
+    const relationKey = userKey + '||' + customerKey;
+    const previous = entryByRelation[relationKey];
+    if (previous && String(previous.addedAt || '') >= String(r.addedAt || '')) return;
+    entryByRelation[relationKey] = {
+      userKey: userKey,
+      userLabel: String(r.userLabel || userKey).trim() || userKey,
+      customerKey: customerKey,
+      customerNo: String(r.customerNo || '').trim(),
+      rowNo: Number(r.rowNo) || 0,
+      company: String(r.company || '').trim(),
+      addedAt: String(r.addedAt || '').trim()
+    };
+  });
+
+  const entries = Object.keys(entryByRelation).map(function(k) { return entryByRelation[k]; });
+  entries.sort(function(a, b) {
+    const byDate = String(b.addedAt || '').localeCompare(String(a.addedAt || ''));
+    if (byDate) return byDate;
+    return String(a.userLabel || '').localeCompare(String(b.userLabel || ''), 'ko');
+  });
+
+  const ownerMap = {};
+  entries.forEach(function(entry) {
+    const ownerKey = entry.userKey;
+    if (!ownerMap[ownerKey]) {
+      ownerMap[ownerKey] = {
+        userKey: ownerKey,
+        userLabel: entry.userLabel || ownerKey,
+        customerKeys: {}
+      };
+    }
+    ownerMap[ownerKey].customerKeys[entry.customerKey] = true;
+  });
+
+  const owners = Object.keys(ownerMap).map(function(k) {
+    return {
+      userKey: ownerMap[k].userKey,
+      userLabel: ownerMap[k].userLabel,
+      count: Object.keys(ownerMap[k].customerKeys || {}).length,
+      isCurrentUser: String(ownerMap[k].userKey || '') === String(currentUser.key || '')
+    };
+  }).sort(function(a, b) {
+    if (!!a.isCurrentUser !== !!b.isCurrentUser) return a.isCurrentUser ? -1 : 1;
+    return String(a.userLabel || '').localeCompare(String(b.userLabel || ''), 'ko');
+  });
+
+  return {
+    allowed: true,
+    currentUserKey: currentUser.key,
+    currentUserLabel: currentUser.label,
+    totalRelations: entries.length,
+    totalCustomers: Object.keys(entries.reduce(function(acc, e) { acc[e.customerKey] = true; return acc; }, {})).length,
+    entries: entries,
+    owners: owners
+  };
 }
 
 function getPortalFavoriteCustomers() {
@@ -252,6 +343,7 @@ function ensurePortalFavoriteSheet_() {
 function getPortalFavoriteRows_(options) {
   options = options || {};
   const user = getPortalFavoriteUser_();
+  const allowAllUsers = !!options.allUsers && canPortalViewAllFavoritesP549_();
   const sheet = ensurePortalFavoriteSheet_();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
@@ -269,7 +361,8 @@ function getPortalFavoriteRows_(options) {
       deletedAt: String(r[8] || '').trim()
     };
   }).filter(function(r) {
-    if (r.userKey !== user.key) return false;
+    // P549: allUsers는 서버에서 관리자 권한을 다시 확인한 경우에만 허용합니다.
+    if (!allowAllUsers && r.userKey !== user.key) return false;
     if (!options.includeDeleted && String(r.deleted || '').toUpperCase() === 'Y') return false;
     return !!makePortalFavoriteCustomerKey_(r.customerNo, r.rowNo);
   });

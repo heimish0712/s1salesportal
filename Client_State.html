@@ -67,6 +67,19 @@ let customerFavoriteLoadingV60 = false;
 let customerFavoriteLoadedV60 = false;
 let customerFavoriteLastLoadedAtV60 = 0;
 
+// P549: 관리자 전체 즐겨찾기 조회 데이터.
+// map은 계속 현재 로그인 사용자의 별표 상태만 보관하고,
+// adminView는 다른 사용자들의 즐겨찾기 관계를 조회용으로만 보관합니다.
+let customerFavoriteAdminViewP549 = {
+  allowed: false,
+  currentUserKey: '',
+  currentUserLabel: '',
+  entries: [],
+  owners: [],
+  totalRelations: 0,
+  totalCustomers: 0
+};
+
 // PATCH O-FIX2: 즐겨찾기 동시 클릭 시 서버 응답 순서가 뒤섞여도
 // 사용자가 방금 누른 별 상태가 중간에 사라지지 않도록 pending mutation을 유지합니다.
 let customerFavoritePendingMapV62 = {};
@@ -714,6 +727,85 @@ function setCustomerFavoriteMapFromServer_(map) {
   customerFavoriteLastLoadedAtV60 = Date.now();
 }
 
+function setCustomerFavoriteDataFromServerP549_(res) {
+  res = res || {};
+  setCustomerFavoriteMapFromServer_(res.map || {});
+  const adminView = res.adminView || {};
+  customerFavoriteAdminViewP549 = {
+    allowed: !!adminView.allowed,
+    currentUserKey: String(adminView.currentUserKey || res.currentUserKey || '').trim(),
+    currentUserLabel: String(adminView.currentUserLabel || res.currentUserLabel || '').trim(),
+    entries: Array.isArray(adminView.entries) ? adminView.entries.slice() : [],
+    owners: Array.isArray(adminView.owners) ? adminView.owners.slice() : [],
+    totalRelations: Number(adminView.totalRelations) || 0,
+    totalCustomers: Number(adminView.totalCustomers) || 0
+  };
+}
+
+function rebuildCustomerFavoriteAdminOwnersP549_() {
+  const view = customerFavoriteAdminViewP549 || {};
+  const entries = Array.isArray(view.entries) ? view.entries : [];
+  const ownerMap = {};
+  const customerMap = {};
+  entries.forEach(function(entry) {
+    entry = entry || {};
+    const userKey = String(entry.userKey || '').trim();
+    const customerKey = String(entry.customerKey || '').trim();
+    if (!userKey || !customerKey) return;
+    customerMap[customerKey] = true;
+    if (!ownerMap[userKey]) {
+      ownerMap[userKey] = {
+        userKey: userKey,
+        userLabel: String(entry.userLabel || userKey).trim() || userKey,
+        customerKeys: {}
+      };
+    }
+    ownerMap[userKey].customerKeys[customerKey] = true;
+  });
+  const currentUserKey = String(view.currentUserKey || '').trim();
+  view.owners = Object.keys(ownerMap).map(function(key) {
+    return {
+      userKey: key,
+      userLabel: ownerMap[key].userLabel,
+      count: Object.keys(ownerMap[key].customerKeys || {}).length,
+      isCurrentUser: key === currentUserKey
+    };
+  }).sort(function(a, b) {
+    if (!!a.isCurrentUser !== !!b.isCurrentUser) return a.isCurrentUser ? -1 : 1;
+    return String(a.userLabel || '').localeCompare(String(b.userLabel || ''), 'ko');
+  });
+  view.totalRelations = entries.length;
+  view.totalCustomers = Object.keys(customerMap).length;
+  customerFavoriteAdminViewP549 = view;
+}
+
+function applyCustomerFavoriteAdminRelationP549_(payload, favorite) {
+  const view = customerFavoriteAdminViewP549 || {};
+  if (!view.allowed) return;
+  payload = payload || {};
+  const customerKey = getFavoriteCustomerKey_(payload);
+  const currentUserKey = String(view.currentUserKey || '').trim();
+  if (!customerKey || !currentUserKey) return;
+  const entries = Array.isArray(view.entries) ? view.entries.slice() : [];
+  const kept = entries.filter(function(entry) {
+    return !(String(entry && entry.userKey || '').trim() === currentUserKey && String(entry && entry.customerKey || '').trim() === customerKey);
+  });
+  if (favorite) {
+    kept.push({
+      userKey: currentUserKey,
+      userLabel: String(view.currentUserLabel || currentUserKey).trim() || currentUserKey,
+      customerKey: customerKey,
+      customerNo: String(payload.customerNo || '').trim(),
+      rowNo: Number(payload.rowNo) || 0,
+      company: String(payload.company || '').trim(),
+      addedAt: new Date().toISOString()
+    });
+  }
+  view.entries = kept;
+  customerFavoriteAdminViewP549 = view;
+  rebuildCustomerFavoriteAdminOwnersP549_();
+}
+
 function refreshAllVisibleCustomerFavoriteStarsP207_() {
   const buttons = Array.prototype.slice.call(document.querySelectorAll('.customer-favorite-star[data-favorite-key]'));
   const seen = {};
@@ -735,7 +827,7 @@ function loadCustomerFavoriteMap_(options) {
   google.script.run
     .withSuccessHandler(function(res) {
       customerFavoriteLoadingV60 = false;
-      if (res && res.ok) setCustomerFavoriteMapFromServer_(res.map || {});
+      if (res && res.ok) setCustomerFavoriteDataFromServerP549_(res);
       // P2-7: 즐겨찾기 map 로딩은 고객 목록 전체를 다시 그리지 않고 별표만 갱신합니다.
       try { refreshAllVisibleCustomerFavoriteStarsP207_(); } catch (err) {}
       try { if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_(); } catch (err) {}
@@ -860,14 +952,21 @@ function sendCustomerFavoriteQueuedP204_(key, attempt) {
       if (res && res.ok) {
         delete customerFavoritePushPayloadsP204[key];
         commitFavoriteStateOptimistic_(item.mutation, null);
+        applyCustomerFavoriteAdminRelationP549_(item.payload, !!item.payload.favorite);
         try { if (typeof refreshCustomerFavoriteStarButtonsP207_ === 'function') refreshCustomerFavoriteStarButtonsP207_(key); } catch (err) {}
-        try { if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_(); } catch (err) {}
+        try {
+          if (typeof handleFavoriteMutationSettledP549_ === 'function') handleFavoriteMutationSettledP549_(item.payload, true);
+          else if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_();
+        } catch (err) {}
         return;
       }
       rollbackFavoriteStateOptimistic_(item.mutation, item.previousFavorite);
       delete customerFavoritePushPayloadsP204[key];
       try { if (typeof refreshCustomerFavoriteStarButtonsP207_ === 'function') refreshCustomerFavoriteStarButtonsP207_(key); } catch (err) {}
-      try { if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_(); } catch (err) {}
+      try {
+        if (typeof handleFavoriteMutationSettledP549_ === 'function') handleFavoriteMutationSettledP549_(item.payload, false);
+        else if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_();
+      } catch (err) {}
       toast('즐겨찾기 변경을 저장하지 못했습니다. 잠시 후 다시 눌러주세요.');
     })
     .withFailureHandler(function(err) {
@@ -885,7 +984,10 @@ function sendCustomerFavoriteQueuedP204_(key, attempt) {
       rollbackFavoriteStateOptimistic_(item.mutation, item.previousFavorite);
       delete customerFavoritePushPayloadsP204[key];
       try { if (typeof refreshCustomerFavoriteStarButtonsP207_ === 'function') refreshCustomerFavoriteStarButtonsP207_(key); } catch (renderErr) {}
-      try { if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_(); } catch (renderErr2) {}
+      try {
+        if (typeof handleFavoriteMutationSettledP549_ === 'function') handleFavoriteMutationSettledP549_(item.payload, false);
+        else if (typeof refreshFavoritePageIfVisibleP207_ === 'function') refreshFavoritePageIfVisibleP207_();
+      } catch (renderErr2) {}
       toast('즐겨찾기 변경이 지연되었습니다. 잠시 후 다시 눌러주세요.');
     })
     .setPortalCustomerFavoriteStateP204(item.payload);
