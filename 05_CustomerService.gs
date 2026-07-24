@@ -1797,6 +1797,24 @@ function resolvePortalMemoSaveValueP513_(currentMemo, nextMemo, expectedMemo, ex
   if (!expectedProvided) return { ok: true, memo: nextMemo, changed: currentMemo !== nextMemo, reason: 'NO_EXPECTED_DIRECT_P513', appendText: '' };
   if (currentMemo === expectedMemo) return { ok: true, memo: nextMemo, changed: currentMemo !== nextMemo, reason: 'EXPECTED_MATCH_DIRECT_P513', appendText: '' };
 
+  // P550 긴급복구: DraftGuard 기준값이 사용자 입력 후 값으로 뒤집히면서
+  // expectedMemo = 현재 마스터 + 신규 메모, nextMemo = 신규 메모만 전달되는 케이스를 복원합니다.
+  // 이 경우 기존 마스터는 보존하고 신규 메모만 뒤에 붙입니다.
+  if (expectedMemo.indexOf(currentMemo) === 0 && expectedMemo !== currentMemo) {
+    const expectedAppendP550 = expectedMemo.slice(currentMemo.length);
+    const expectedAppendTokenP550 = normalizePortalMemoTokenP513_(expectedAppendP550);
+    const nextTokenP550 = normalizePortalMemoTokenP513_(nextMemo);
+    if (expectedAppendTokenP550 && nextTokenP550 && expectedAppendTokenP550 === nextTokenP550) {
+      return {
+        ok: true,
+        memo: concatPortalMemoAppendP513_(currentMemo, expectedAppendP550),
+        changed: true,
+        reason: 'MERGED_REVERSED_EXPECTED_APPEND_P550',
+        appendText: expectedAppendP550
+      };
+    }
+  }
+
   // 현재 마스터 최신값이 내가 저장하려던 값의 앞부분이면, 최신값 뒤에 추가한 정상 append입니다.
   if (nextMemo.indexOf(currentMemo) === 0) {
     return { ok: true, memo: nextMemo, changed: true, reason: 'NEXT_EXTENDS_CURRENT_P513', appendText: nextMemo.slice(currentMemo.length) };
@@ -1813,6 +1831,18 @@ function resolvePortalMemoSaveValueP513_(currentMemo, nextMemo, expectedMemo, ex
     return { ok: true, memo: concatPortalMemoAppendP513_(currentMemo, appendText), changed: true, reason: 'MERGED_APPEND_ON_CURRENT_P513', appendText: appendText };
   }
 
+  // P550: expected가 이미 신규 메모를 포함한 전체 문자열인데 next에는 신규 입력분만 남은 경우입니다.
+  // 최신 마스터에 동일 문구가 없다면 append-only 입력으로 간주하여 데이터 삭제 없이 병합합니다.
+  const currentTokenP550 = normalizePortalMemoTokenP513_(currentMemo);
+  const expectedTokenP550 = normalizePortalMemoTokenP513_(expectedMemo);
+  const nextTokenP550 = normalizePortalMemoTokenP513_(nextMemo);
+  if (nextTokenP550 && expectedTokenP550 && expectedTokenP550 !== nextTokenP550 && expectedTokenP550.slice(-nextTokenP550.length) === nextTokenP550) {
+    if (currentTokenP550.indexOf(nextTokenP550) >= 0) {
+      return { ok: true, memo: currentMemo, changed: false, reason: 'APPEND_ALREADY_IN_CURRENT_P550', appendText: nextMemo };
+    }
+    return { ok: true, memo: concatPortalMemoAppendP513_(currentMemo, nextMemo), changed: true, reason: 'MERGED_APPEND_ONLY_PAYLOAD_P550', appendText: nextMemo };
+  }
+
   return { ok: false, memo: nextMemo, changed: false, reason: 'REAL_MEMO_CONFLICT_P513', appendText: '' };
 }
 
@@ -1823,15 +1853,26 @@ function isPortalStrictConflictFieldP513_(key) {
   return key === 'customerNo' || key === 'orderNo';
 }
 
+function isPortalDetailModalStaleBaseRebaseAllowedP550_(payload) {
+  payload = payload || {};
+  if (payload.allowStaleBaseRebaseP550 === true) return true;
+  const source = String(payload.clientSaveSource || payload.source || '').trim().toLowerCase();
+  // 기존 브라우저/저장큐 payload도 배포 즉시 복구되도록 출처를 함께 확인합니다.
+  return source.indexOf('detailmodal') >= 0;
+}
+
 function shouldPortalAutoRebaseDetailFieldP513_(key, payload, values) {
   key = String(key || '').trim();
   payload = payload || {};
   if (!key || isPortalStrictConflictFieldP513_(key)) return false;
   if (key === 'memo') return false; // memo는 전용 merge 정책 사용
 
-  // P548: 일반 상세 필드의 expectedValues 불일치를 무조건 최신값 위에 덮어쓰면
-  // 실제 다른 사용자의 동시 수정까지 사라집니다. 연속 저장은 saveChain/dependency로 순서를 보장하므로,
-  // 명시적인 관리자 강제저장 경로가 아닌 한 자동 rebase를 하지 않습니다.
+  // P550 긴급패치:
+  // 마스터시트에서 상태값/신축DB 구분 등을 직접 수정하면 포털 상세창의 expectedValues가 오래될 수 있습니다.
+  // 상세창은 사용자가 실제로 dirty 처리한 필드만 values에 보내므로, 해당 필드의 명시적 입력값은
+  // 최신 마스터 행 위에 재기준 적용합니다. customerNo/orderNo 식별자는 계속 엄격 충돌로 보호합니다.
+  if (isPortalDetailModalStaleBaseRebaseAllowedP550_(payload)) return true;
+
   return payload.forceAutoRebaseP513 === true || payload.forceApplyP522 === true;
 }
 

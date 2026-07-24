@@ -1395,7 +1395,8 @@ function flushDetailDurableSaveQueueP458_(reason) {
           expectedValues: op.baseValues || {},
           requireAuditLog: false,
           fastMode: true,
-          noSynchronousRefresh: true
+          noSynchronousRefresh: true,
+          allowStaleBaseRebaseP550: true
         });
         if (op.saveChainId) retryPayloadP548.saveChainId = op.saveChainId;
         if (op.saveChainSequence) retryPayloadP548.saveChainSequence = op.saveChainSequence;
@@ -2660,7 +2661,8 @@ function saveDetailFields() {
         fastMode: true,
         noSynchronousRefresh: true,
         thinSave: true,
-        skipIndexQueue: true
+        skipIndexQueue: true,
+        allowStaleBaseRebaseP550: true
       }))
       .then(function(res){
         const detailModalStillActiveP456 = !(typeof isCustomerDetailResponseStillRelevantP456_ === 'function') || isCustomerDetailResponseStillRelevantP456_(0, rowNo, targetCustomerNo);
@@ -2859,7 +2861,8 @@ function saveCustomerDetailDirtyBeforeSendP520_(customerNo, rowNo, options) {
       fastMode: true,
       noSynchronousRefresh: true,
       thinSave: true,
-      skipIndexQueue: true
+      skipIndexQueue: true,
+      allowStaleBaseRebaseP550: true
     })).then(function(res) {
       if (res && res.conflictP473) {
         try { if (op && typeof markDetailOperationFailedP457_ === 'function') markDetailOperationFailedP457_(op, new Error('저장 충돌 확인 필요'), true); } catch(e) {}

@@ -366,6 +366,24 @@ function ensureSaveQueueTriggerP473_() {
   }
 }
 
+// P550: 배포 전에 생성된 detailModal CONFLICT는 오래된 expectedValues에 의한 오탐일 수 있습니다.
+// 신규 서버 정책으로 단 한 번만 자동 재적용하며, 여전히 충돌하면 CONFLICT를 그대로 보존합니다.
+function shouldAutoRecoverPortalDetailConflictP550_(status, obj, payload) {
+  if (String(status || '').trim() !== PORTAL_SAVE_QUEUE_P473.STATUS.CONFLICT) return false;
+  const attempt = Number(obj && obj['시도횟수'] || 0) || 0;
+  if (attempt > 0) return false;
+  const methodName = String(obj && obj['methodName'] || '').trim();
+  if (['saveCustomerPatchFastP473','saveCustomerDetailFast','saveCustomerMemoFast'].indexOf(methodName) < 0) return false;
+  const source = String((payload && (payload.clientSaveSource || payload.source)) || (obj && obj['source']) || '').trim().toLowerCase();
+  return source.indexOf('detailmodal') >= 0;
+}
+
+// P550 배포 직후 수동 실행용: 기존 detailModal 오탐 충돌을 최대 50건까지 즉시 재처리합니다.
+function P550_executeEmergencyDetailConflictRecovery() {
+  const result = processSaveQueueP473({ maxJobs: 50, lockWaitMs: 5000 });
+  return Object.assign({ hotfix: 'P550_DETAIL_STALE_BASE_REBASE' }, result || {});
+}
+
 function processSaveQueueP473(options) {
   options = options || {};
   const sheet = getPortalSaveQueueSheetP473_();
@@ -415,9 +433,12 @@ function processSaveQueueP473(options) {
         }
       }
 
-      // P548: CONFLICT는 같은 payload를 반복 실행해도 해결되지 않습니다.
-      // 일시 오류인 QUEUED/RETRY만 재실행하며, 실제 충돌은 사용자 확인 상태로 보존합니다.
-      if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY].indexOf(status) < 0) continue;
+      const payloadForRecoveryP550 = parsePortalSaveQueueJsonP473_(obj['payloadJson'], {});
+      const autoRecoverConflictP550 = shouldAutoRecoverPortalDetailConflictP550_(status, obj, payloadForRecoveryP550);
+
+      // P550: 기존 detailModal 오탐 CONFLICT는 신규 rebase/merge 정책으로 1회 자동 복구합니다.
+      // 그 외 CONFLICT는 기존대로 사용자 확인 상태로 보존합니다.
+      if ([PORTAL_SAVE_QUEUE_P473.STATUS.QUEUED, PORTAL_SAVE_QUEUE_P473.STATUS.RETRY].indexOf(status) < 0 && !autoRecoverConflictP550) continue;
 
       const operationIdP548 = String(obj['작업ID'] || '').trim();
       const dependsOnP548 = String(obj['선행작업ID'] || '').trim();
@@ -443,12 +464,17 @@ function processSaveQueueP473(options) {
 
       const attempt = Number(obj['시도횟수'] || 0) + 1;
       try {
-        const payload = parsePortalSaveQueueJsonP473_(obj['payloadJson'], {});
+        const payload = Object.assign({}, payloadForRecoveryP550 || parsePortalSaveQueueJsonP473_(obj['payloadJson'], {}));
+        if (autoRecoverConflictP550) {
+          payload.allowStaleBaseRebaseP550 = true;
+          payload.autoRecoveredConflictP550 = true;
+        }
         const methodName = String(obj['methodName'] || 'saveCustomerDetailFast');
         let result = applyPortalQueuedSaveJobP473_(methodName, payload);
         result = Object.assign({}, result || {}, {
           ok: true,
           applied: true,
+          autoRecoveredConflictP550: autoRecoverConflictP550,
           fromSaveQueueP473: true,
           serverQueueAppliedP548: true,
           queueRowNo: rowNo,
